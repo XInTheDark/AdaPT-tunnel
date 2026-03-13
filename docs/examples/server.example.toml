@@ -1,0 +1,25 @@
+bind = "0.0.0.0:51820"
+endpoint_id = "edge-prod-1"
+admission_key = "file:/etc/adapt/shared-admission.key"
+server_static_private_key = "file:/etc/adapt/server-static-private.key"
+server_static_public_key = "file:/etc/adapt/server-static-public.key"
+cookie_key = "file:/etc/adapt/cookie.key"
+ticket_key = "file:/etc/adapt/ticket.key"
+interface_name = "apt0"
+tunnel_local_ipv4 = "10.77.0.1"
+tunnel_netmask = "255.255.255.0"
+tunnel_mtu = 1380
+egress_interface = "eth0"
+enable_ipv4_forwarding = true
+nat_ipv4 = true
+push_routes = ["0.0.0.0/0"]
+push_dns = ["1.1.1.1", "8.8.8.8"]
+keepalive_secs = 25
+session_idle_timeout_secs = 180
+udp_recv_buffer_bytes = 4194304
+udp_send_buffer_bytes = 4194304
+
+[[peers]]
+name = "laptop"
+client_static_public_key = "file:/etc/adapt/peers/laptop-client-static-public.key"
+tunnel_ipv4 = "10.77.0.2"

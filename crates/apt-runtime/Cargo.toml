@@ -1,0 +1,30 @@
+[package]
+name = "apt-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[dependencies]
+apt-admission.workspace = true
+apt-carriers.workspace = true
+apt-crypto.workspace = true
+apt-observability.workspace = true
+apt-tunnel.workspace = true
+apt-types.workspace = true
+base64.workspace = true
+bincode.workspace = true
+futures-util.workspace = true
+ipnet.workspace = true
+rand.workspace = true
+serde.workspace = true
+socket2.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tun.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

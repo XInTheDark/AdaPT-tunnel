@@ -6,6 +6,7 @@ members = [
   "crates/apt-admission",
   "crates/apt-tunnel",
   "crates/apt-carriers",
+  "crates/apt-runtime",
   "crates/apt-persona",
   "crates/apt-policy",
   "crates/apt-observability",
@@ -27,6 +28,7 @@ apt-crypto = { path = "crates/apt-crypto" }
 apt-admission = { path = "crates/apt-admission" }
 apt-tunnel = { path = "crates/apt-tunnel" }
 apt-carriers = { path = "crates/apt-carriers" }
+apt-runtime = { path = "crates/apt-runtime" }
 apt-persona = { path = "crates/apt-persona" }
 apt-policy = { path = "crates/apt-policy" }
 apt-observability = { path = "crates/apt-observability" }
@@ -37,7 +39,9 @@ bitflags = { version = "2.6", features = ["serde"] }
 blake2 = "0.10"
 chacha20poly1305 = { version = "0.10", features = ["std"] }
 clap = { version = "=4.5.4", features = ["derive"] }
+futures-util = { version = "0.3", features = ["sink"] }
 hkdf = "0.12"
+ipnet = { version = "2.11", features = ["serde"] }
 parking_lot = "0.12"
 rand = "0.8"
 rand_chacha = "0.3"
@@ -45,10 +49,13 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
 snow = { version = "=0.10.0-beta.1", features = ["risky-raw-split"] }
+socket2 = "0.5"
 thiserror = "2.0"
-tokio = { version = "1.44", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1.44", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tun = { version = "=0.7.13", features = ["async", "tokio"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -209,6 +209,9 @@ pub struct ClientCredential {
     pub auth_profile: AuthProfile,
     /// Optional per-user identifier.
     pub user_id: Option<String>,
+    /// Optional stable client static private key used to keep a deployment-local
+    /// identity even when authentication is still shared-deployment based.
+    pub client_static_private: Option<[u8; 32]>,
     /// Raw admission key.
     pub admission_key: [u8; 32],
     /// Server static public key.
@@ -464,6 +467,10 @@ pub struct EstablishedSession {
     pub resume_ticket: Option<SealedEnvelope>,
     /// Optional client identity surfaced inside the encrypted Noise payload.
     pub client_identity: Option<String>,
+    /// Optional client static public key observed during the Noise handshake.
+    pub client_static_public: Option<[u8; 32]>,
+    /// Optional encrypted extensions delivered during `S3`.
+    pub optional_extensions: Vec<Vec<u8>>,
 }
 
 /// Result of initiating `C0`.
@@ -813,6 +820,40 @@ impl AdmissionServer {
         packet: &AdmissionPacket,
         now_secs: u64,
     ) -> ServerResponse<EstablishedServerReply> {
+        self.handle_c2_with_extension_builder(source_id, carrier, packet, now_secs, |_| {
+            Ok(Vec::new())
+        })
+    }
+
+    /// Handles a `C2` packet while allowing the runtime to attach encrypted
+    /// `S3` extensions such as tunnel address assignments.
+    pub fn handle_c2_with_extensions<C: CarrierProfile>(
+        &mut self,
+        source_id: &str,
+        carrier: &C,
+        packet: &AdmissionPacket,
+        now_secs: u64,
+        s3_extensions: Vec<Vec<u8>>,
+    ) -> ServerResponse<EstablishedServerReply> {
+        self.handle_c2_with_extension_builder(source_id, carrier, packet, now_secs, move |_| {
+            Ok(s3_extensions)
+        })
+    }
+
+    /// Handles a `C2` packet while allowing the caller to compute encrypted
+    /// `S3` extensions from the tentative established session.
+    pub fn handle_c2_with_extension_builder<C, F>(
+        &mut self,
+        source_id: &str,
+        carrier: &C,
+        packet: &AdmissionPacket,
+        now_secs: u64,
+        extension_builder: F,
+    ) -> ServerResponse<EstablishedServerReply>
+    where
+        C: CarrierProfile,
+        F: FnOnce(&EstablishedSession) -> Result<Vec<Vec<u8>>, AdmissionError>,
+    {
         let result = (|| -> Result<EstablishedServerReply, AdmissionError> {
             let (c2, resolved) = self.open_c2(packet, carrier.binding(), now_secs)?;
             if c2.version != VERSION {
@@ -857,6 +898,7 @@ impl AdmissionServer {
             let _replayed_msg2 = noise.write_message(&responder_payload)?;
             let client_payload_bytes = noise.read_message(&c2.noise_msg3)?;
             let client_payload: NoiseInitiatorPayload = bincode::deserialize(&client_payload_bytes)?;
+            let client_static_public = noise.remote_static_public();
             let handshake_hash = noise.handshake_hash();
             let raw_split = noise.raw_split()?;
             let secrets = derive_session_secrets(
@@ -878,6 +920,22 @@ impl AdmissionServer {
                 secrets.resume_secret,
                 now_secs,
             )?;
+            let tentative_session = EstablishedSession {
+                session_id,
+                role: SessionRole::Responder,
+                chosen_carrier: cookie_payload.chosen_carrier,
+                chosen_suite: cookie_payload.chosen_suite,
+                policy_mode: cookie_payload.chosen_policy,
+                credential_identity: resolved.identity.clone(),
+                secrets,
+                tunnel_mtu: self.config.tunnel_mtu,
+                rekey_limits: self.config.rekey_limits,
+                resume_ticket: resume_ticket.clone(),
+                client_identity: client_payload.user_identity.clone(),
+                client_static_public,
+                optional_extensions: Vec::new(),
+            };
+            let s3_extensions = extension_builder(&tentative_session)?;
             let s3 = S3 {
                 version: VERSION.to_string(),
                 session_id,
@@ -885,7 +943,7 @@ impl AdmissionServer {
                 rekey_limits: self.config.rekey_limits,
                 ticket_issue_flag: resume_ticket.is_some(),
                 optional_resume_ticket: resume_ticket.clone(),
-                optional_extensions: Vec::new(),
+                optional_extensions: s3_extensions.clone(),
             };
             let confirmation = ServerConfirmationPacket {
                 envelope: SealedEnvelope::seal(
@@ -906,6 +964,8 @@ impl AdmissionServer {
                 rekey_limits: self.config.rekey_limits,
                 resume_ticket,
                 client_identity: client_payload.user_identity,
+                client_static_public,
+                optional_extensions: s3_extensions,
             };
             Ok(EstablishedServerReply {
                 packet: confirmation,
@@ -950,7 +1010,7 @@ pub fn initiate_c0<C: CarrierProfile>(
         role: SessionRole::Initiator,
         psk: per_epoch_admission_key,
         prologue: aad.clone(),
-        local_static_private: None,
+        local_static_private: credential.client_static_private,
         remote_static_public: None,
         fixed_ephemeral_private: None,
     })?;
@@ -1095,6 +1155,8 @@ impl ClientPendingS3 {
             rekey_limits: s3.rekey_limits,
             resume_ticket: s3.optional_resume_ticket,
             client_identity: None,
+            client_static_public: None,
+            optional_extensions: s3.optional_extensions,
         })
     }
 }
@@ -1122,6 +1184,7 @@ mod tests {
         let client_credential = ClientCredential {
             auth_profile: AuthProfile::SharedDeployment,
             user_id: None,
+            client_static_private: None,
             admission_key,
             server_static_public: static_keypair.public,
             enable_lookup_hint: false,

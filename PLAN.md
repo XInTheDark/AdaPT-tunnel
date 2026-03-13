@@ -1,380 +1,158 @@
-# Implementation Plan
+# Production Implementation Plan
 
-This plan follows `SPEC_v1.md` (treated as the intended `SPEC.md`, since it is the only spec file currently in the repository).
+This plan follows `SPEC_v1.md` and the confirmed deployment assumptions for the first usable release:
 
-## 1. Goal for the first buildable version
+- **server:** Linux
+- **client:** Linux and macOS
+- **topology:** combined edge+tunnel server daemon for v1
+- **authentication:** shared deployment key first, while keeping the code ready to grow into per-user credentials later
+- **primary production carrier:** `D1` over UDP
 
-Deliver a conservative **Milestone 1** implementation of APT/1-core that proves the architecture end to end:
+## 1. Product target for v1
 
-- authenticated admission handshake (`C0` → `S1` → `C2` → `S3`)
-- encrypted inner tunnel core
-- one datagram carrier (`D1` over UDP)
-- one stream carrier (`S1` over an encrypted stream transport abstraction)
-- simple persona/shaping engine with bounded jitter, coalescing, and padding
-- thin client / edge / tunnel-node binaries that exercise the libraries together
+Deliver a **fully usable point-to-site VPN** built on the existing APT protocol core.
 
-This first version should optimize for:
-- correctness of state machines
-- clean subsystem boundaries
-- observability for debugging
-- conservative defaults from the spec
+The first production release must support:
 
-It should **not** try to implement every advanced stealth feature immediately.
+- a long-running server daemon reachable over UDP
+- a long-running client that connects to the server and keeps the tunnel alive
+- a real TUN-based datapath
+- encrypted transport of full IP packets between client and server
+- server-side forwarding/NAT so client traffic can reach the broader network
+- configuration files, key material management, and operational docs
+- conservative hardening and automated test coverage
 
----
+## 2. Current starting point
 
-## 2. Proposed implementation phases
+Already implemented in the repo:
 
-### Phase 0 — Foundations and interfaces
+- shared protocol/domain types
+- cryptographic suite integration and key schedule
+- admission handshake (`C0 -> S1 -> C2 -> S3`)
+- encrypted inner tunnel core with replay protection and rekey support
+- carrier helpers for `D1` and `S1`
+- first-cut persona, policy, and observability crates
+- development/demo CLIs
 
-Objective: freeze the codebase layout and core boundaries before protocol logic is written.
+Missing before the product is deployable:
 
-Tasks:
-1. Finalize module boundaries for `types`, `crypto`, `admission`, `tunnel`, `carriers`, `persona`, `policy`, and `observability`.
-2. Define cross-cutting config objects:
-   - suite selection
-   - policy mode
-   - carrier capability bitmap
-   - coarse path-class inputs
-   - rekey limits
-   - logging/telemetry controls
-3. Decide what stays library-internal versus public API.
-4. Add workspace-wide linting, formatting, and test conventions.
-5. Establish a fixture strategy for handshake transcripts and protocol vectors.
+- production config model
+- runtime orchestration around sockets, timers, and sessions
+- TUN integration and OS routing
+- combined server daemon mode
+- client connect mode
+- NAT/forwarding setup
+- persistence for resumable client state
+- integration/hardening test coverage
 
-Exit criteria:
-- workspace structure is stable
-- crate ownership boundaries are documented
-- public API direction is clear enough to implement without large rewrites
+## 3. Delivery phases
 
-### Phase 1 — Shared types and cryptographic primitives
+### Phase A — Production runtime foundation
 
-Objective: implement the foundational types and security primitives needed by all higher layers.
-
-Tasks:
-1. In `apt-types`:
-   - coarse path classes (`path`, `mtu`, `rtt`, `loss`, `nat`)
-   - session IDs, ticket metadata wrappers, key phase markers
-   - carrier and suite capability enums/bitmaps
-   - control-frame and policy-mode enums
-2. In `apt-crypto`:
-   - Noise `XXpsk2` wrapper APIs
-   - HKDF label helpers for the derived secrets from §12.1
-   - XChaCha20-Poly1305 helpers for admission capsules
-   - cookie seal/open helpers bound to source address, carrier, nonce, expiry
-   - resumption ticket seal/open helpers under `TK`
-3. Add unit tests for:
-   - key derivation label correctness
-   - cookie rejection on address/carrier/expiry mismatch
-   - ticket confidentiality / integrity failures
-
-Exit criteria:
-- cryptographic helpers are deterministic where expected and fail closed
-- no higher-level state machine code needs to know crypto internals
-
-### Phase 2 — Admission plane
-
-Objective: implement the stealth-first logical admission handshake.
+Objective: add the missing app/runtime layer above the existing protocol engine.
 
 Tasks:
-1. Define logical messages for `C0`, `S1`, `C2`, `S3` as internal domain types.
-2. Implement encode/decode of logical structures independent from any fixed outer wire image.
-3. Implement server-side validation ordering exactly as §11 requires:
-   1. carrier binding validity
-   2. AEAD decrypt
-   3. epoch window
-   4. replay check
-   5. Noise message validity
-   6. policy checks
-4. Keep the server stateless until `C2` proves return reachability.
-5. Implement replay cache retention and cookie lifetime defaults from §25.
-6. Define invalid-input outcomes as carrier-driven silence / generic failure rather than APT-specific responses.
-7. Add transcript-driven tests for:
-   - successful 1.5 RTT establishment
-   - replayed `C0`
-   - expired cookie in `C2`
-   - invalid epoch slot
-   - malformed near-miss messages that must not yield a distinctive reply
+1. Add a shared runtime crate for:
+   - config loading
+   - key material parsing/loading
+   - runtime error types
+   - UDP transport helpers
+   - session/runtime status structures
+2. Define production config models for:
+   - combined server daemon
+   - client runtime
+   - TUN/network settings
+   - routing/NAT settings
+   - observability
+   - persistence
+3. Add client identity support suitable for shared-key deployments that may later evolve into richer auth.
+4. Add server-to-client tunnel assignment/config delivery during session establishment.
 
 Exit criteria:
-- the admission state machine is correct, deterministic, and quiet on unauthenticated failure
-- logical message handling remains carrier-agnostic
+- the workspace has a clean production configuration model
+- the runtime crate can instantiate the existing admission/tunnel core with real deployment settings
 
-### Phase 3 — Inner tunnel core
+### Phase B — Real UDP server/client runtime
 
-Objective: implement the encrypted datagram tunnel that carries IP packets and reliable control frames.
+Objective: turn the protocol engine into a long-running encrypted tunnel runtime.
 
 Tasks:
-1. Define tunnel packet header and frame model from §13.
-2. Implement packet number handling and nonce derivation.
-3. Implement replay window tracking (minimum 4096 packet window).
-4. Implement encryption/decryption for packets containing one or more frames.
-5. Implement reliable control-frame retransmission for:
-   - `SESSION_UPDATE`
-   - `PATH_CHALLENGE`
-   - `PATH_RESPONSE`
-   - `CLOSE`
-6. Implement rekey soft/hard limits from §§14 and 25.
-7. Add tests for:
-   - replay rejection
-   - key-phase transitions
-   - mixed frame packing
-   - retransmission expiry
+1. Implement a UDP server loop for `D1`:
+   - admission handling
+   - session creation
+   - per-session tunnel state
+   - periodic retransmit/rekey ticks
+2. Implement a UDP client loop for `D1`:
+   - handshake retries
+   - session establishment
+   - keepalive/rekey tick path
+   - reconnect-friendly ticket persistence
+3. Add session tables and peer/address tracking.
+4. Add operational logging and status reporting.
 
 Exit criteria:
-- two peers can exchange encrypted frames over an abstract transport
-- replay and rekey logic behave conservatively and fail closed
+- client and server can establish a session across real UDP sockets
+- encrypted tunnel packets flow in both directions without demo-only shortcuts
 
-### Phase 4 — Carrier layer (Milestone 1 bindings)
+### Phase C — TUN integration and VPN datapath
 
-Objective: provide two usable outer transports without freezing a global visible APT wire image.
+Objective: make the runtime usable as an actual VPN.
 
 Tasks:
-1. Define a carrier trait / abstraction that covers:
-   - logical message embedding
-   - max record size
-   - fragmentation rules
-   - invalid-input behaviour
-   - anti-amplification behaviour
-   - close semantics
-   - migration hooks
-2. Implement `D1`:
-   - opaque datagram over UDP
-   - silence on invalid input
-   - conservative MTU defaults
-3. Implement `S1`:
-   - encrypted stream transport abstraction
-   - generic standards-compliant failure / decoy-compatible invalid handling
-   - framing suitable for logical APT messages without exposing a stable cleartext header
-4. Add conformance tests shared across carriers so both pass the same logical admission/tunnel cases.
+1. Add async TUN integration for Linux/macOS clients and Linux servers.
+2. Configure interface addressing/MTU from runtime parameters.
+3. Install routes for client traffic.
+4. Preserve the route to the remote server when client default routes are redirected through the tunnel.
+5. Inject packets from TUN into the tunnel and write decrypted packets back to TUN.
+6. On the server, map tunnel-destination addresses to active sessions.
 
 Exit criteria:
-- the same logical admission/tunnel code can run over either `D1` or `S1`
-- carrier-specific behaviour remains outside the protocol core
+- packets can traverse the TUN interface on client and server
+- user traffic can pass through the encrypted tunnel end-to-end
 
-### Phase 5 — Persona engine and scheduler shaping
+### Phase D — Forwarding, NAT, and operational setup
 
-Objective: implement the first simple, bounded shaping system required by Milestone 1.
+Objective: make the server function as a practical VPN gateway.
 
 Tasks:
-1. Define persona inputs from §16.1.
-2. Define bounded persona outputs from §16.2.
-3. Implement a simple persona generator using:
-   - `persona_seed`
-   - coarse path classes
-   - chosen carrier family
-   - policy mode
-4. Implement scheduler profile outputs for:
-   - pacing family
-   - burst size targets
-   - packet-size bins
-   - padding budget
-   - keepalive mode
-   - idle-resume behaviour
-5. Add enforcement of bounds from §§16.3 and 18:
-   - no strictly periodic idle flow
-   - no universal fixed size target
-   - latency budget takes precedence when queues age out
-6. Add tests ensuring:
-   - session-to-session variation exists
-   - behaviour is coherent inside a session
-   - outputs stay inside policy bounds
+1. Enable Linux IPv4 forwarding when configured.
+2. Install NAT/masquerade rules when configured.
+3. Add configuration for tunnel subnets, pushed routes, and DNS hints.
+4. Add operational commands for key generation / config bootstrap.
+5. Document required privileges and service startup expectations.
 
 Exit criteria:
-- shaping is simple but spec-aligned
-- the first version avoids overfitting or synthetic-looking randomness
+- a Linux server can forward tunneled client traffic to external networks
+- a first-time operator can configure and start the system from docs
 
-### Phase 6 — Policy controller and local-normality bootstrap
+### Phase E — Hardening, testing, and performance work
 
-Objective: add enough adaptivity to support the intended default mode without overbuilding Milestone 2.
+Objective: reduce operational risk and tune the first release.
 
 Tasks:
-1. Implement policy modes (`stealth-first`, `balanced`, `speed-first`).
-2. Implement bootstrap local-normality profiles using only allowed metadata.
-3. Support the probation rule from §17.3 before learning aggressively.
-4. Implement coarse mode transitions from §20.3.
-5. Keep local observations local and coarse.
-6. Add tests for poisoning resistance basics:
-   - clipped updates
-   - robust quantile usage
-   - reduced weight for tunnel traffic versus non-tunnel metadata
+1. Add integration tests for:
+   - client/server UDP handshake
+   - session establishment
+   - tunnel packet exchange
+   - reconnect/resumption paths where practical
+2. Add negative tests for malformed/invalid traffic.
+3. Add benchmarks or stress-oriented checks for session runtime hot paths.
+4. Review allocations, batching opportunities, and socket buffer tuning.
+5. Update docs/README continuously to match the real state of the code.
+6. Commit incrementally as significant milestones land.
 
 Exit criteria:
-- a new network starts conservatively
-- permissive networks can relax toward balanced mode
-- interference signals can move the client back toward stealth-first
+- the release has clear setup docs
+- the runtime is validated beyond unit tests
+- the hot path is no longer “demo shaped”
 
-### Phase 7 — Application wiring
+## 4. Definition of done for the first production release
 
-Objective: make the system runnable in development form.
+The project will count as “production-usable v1” when all of the following are true:
 
-Tasks:
-1. `apt-client`
-   - load config and credentials
-   - maintain local network context
-   - initiate admission and manage session lifecycle
-   - expose a development packet source/sink before full OS integration
-2. `apt-edge`
-   - expose carrier listeners
-   - validate admission traffic
-   - issue cookies and confirm tunnel establishment
-   - forward tunnel setup to colocated or remote tunnel node abstraction
-3. `apt-tunneld`
-   - terminate tunnel sessions
-   - process data/control frames
-   - surface privacy-aware metrics/logs
-4. Add an end-to-end local harness covering:
-   - client ↔ edge ↔ tunnel-node startup
-   - UDP carrier success path
-   - stream carrier fallback success path
-   - one rekey event
-
-Exit criteria:
-- the scaffold becomes an executable development system
-- developers can observe the full session lifecycle locally
-
-### Phase 8 — Milestone 2 features
-
-Objective: expand from the first working system into the richer adaptive design promised by the spec.
-
-Tasks:
-1. Resumption tickets
-2. Per-network normality profiles
-3. Carrier migration
-4. Stream decoy surface support
-5. More complete policy/fallback behaviour
-
-Exit criteria:
-- adaptive behaviour persists across sessions and network contexts
-- fallback and migration are usable under degraded paths
-
-### Phase 9 — Milestone 3 features
-
-Objective: add the higher-complexity features only after the core is stable.
-
-Tasks:
-1. Optional hybrid PQ mode
-2. Standby path health checks
-3. Stronger poisoning resistance
-4. Operator controls for stealth / balanced / speed tradeoffs
-
-Exit criteria:
-- advanced features are added without destabilizing the core
-
----
-
-## 3. Testing strategy
-
-### Unit tests
-
-Every crate should own its local invariants:
-- `apt-crypto`: derivation, sealing, expiry, mismatch rejection
-- `apt-admission`: ordering, replay, cookie handling, quiet failure paths
-- `apt-tunnel`: replay window, packet numbering, control reliability, rekey triggers
-- `apt-persona`: bounded distributions and session coherence
-- `apt-policy`: bootstrap and transition logic
-
-### Integration tests
-
-Cross-crate tests should cover:
-- full admission transcript over abstract carrier fixtures
-- tunnel packet exchange after `S3`
-- policy-driven changes to shaping parameters
-- carrier fallback and later migration
-
-### Negative / adversarial tests
-
-Must include:
-- replay attempts
-- malformed near-miss capsules
-- invalid tickets and cookies
-- amplification pressure
-- MTU blackhole simulation
-- reset / blackhole / timeout behaviour
-
-### Interop / conformance vectors
-
-As the logical message formats stabilize, add deterministic transcript vectors for:
-- handshake success
-- failure classes
-- rekey transitions
-- resumption acceptance/rejection
-
----
-
-## 4. Operational defaults to freeze early
-
-These values should be codified early so tests and behaviour stay consistent:
-
-- initial policy mode: `stealth-first`
-- admission epoch slot: 300 seconds
-- replay cache retention: 10 minutes
-- cookie lifetime: 20 seconds
-- interactive added latency target: 10 ms
-- bulk added latency target: 50 ms
-- steady-state padding budget: 6%
-- probation padding budget: 20%
-- unknown NAT keepalive interval: 25 seconds ±35% jitter
-- soft rekey: 2 GiB or 20 minutes
-- hard rekey: 8 GiB or 60 minutes
-- minimum replay window: 4096 packets
-
----
-
-## 5. Open decisions to confirm before substantive implementation
-
-These are the biggest decisions still worth confirming before coding deeply:
-
-1. **Implementation language**
-   - Assumed: Rust workspace
-   - Alternative: Go if operational simplicity matters more than type-level modelling
-
-2. **Initial stream carrier shape**
-   - Should `S1` target a generic TLS-like encrypted stream abstraction first, or a concrete transport?
-   - Recommendation: start abstract, then bind to a concrete transport later.
-
-3. **First end-to-end demo target**
-   - Option A: in-memory logical handshake harness only
-   - Option B: localhost UDP `D1` first
-   - Recommendation: localhost UDP `D1` first, with in-memory fixtures for tests
-
-4. **Edge ↔ tunnel-node topology for v1**
-   - Option A: colocated roles only
-   - Option B: abstract split-role interface from day one
-   - Recommendation: keep binaries separate but allow a colocated local mode first
-
-5. **OS packet integration scope**
-   - Option A: defer TUN/TAP and use a development packet source/sink
-   - Option B: begin with full OS integration immediately
-   - Recommendation: defer full OS integration until the protocol core is stable
-
----
-
-## 6. Recommended first implementation slice after approval
-
-If implementation starts next, the best first slice is:
-
-1. `apt-types`
-2. `apt-crypto`
-3. `apt-admission`
-4. a minimal transcript test proving `C0`/`S1`/`C2`/`S3`
-
-Why this slice first:
-- it establishes the security and trust boundary correctly
-- it forces the core message/state abstractions to become concrete
-- it keeps carrier serialization and tunnel data-plane work unblocked later
-
----
-
-## 7. What is intentionally not implemented yet
-
-The current scaffold does **not** yet implement:
-- real admission encryption/decryption
-- Noise handshake execution
-- tunnel packet encryption
-- carrier wire formats
-- local-normality learning
-- migration, resumption, or hybrid PQ
-- TUN/TAP integration
-
-That work should begin only after the next implementation slice is explicitly confirmed.
+1. `apt-edge serve --config ...` starts a combined production server daemon.
+2. `apt-client connect --config ...` establishes a persistent encrypted session to the server.
+3. A TUN device is created/configured and routes are installed.
+4. Client traffic can traverse the server to external networks in NAT mode.
+5. The README documents real setup and usage instead of prototype-only behavior.
+6. The workspace test suite covers both core protocol logic and runtime integration paths.

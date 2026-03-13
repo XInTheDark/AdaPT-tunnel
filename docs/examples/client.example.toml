@@ -1,0 +1,17 @@
+server_addr = "203.0.113.10:51820"
+endpoint_id = "edge-prod-1"
+admission_key = "file:/etc/adapt/shared-admission.key"
+server_static_public_key = "file:/etc/adapt/server-static-public.key"
+client_static_private_key = "file:/etc/adapt/client-static-private.key"
+client_identity = "laptop"
+bind = "0.0.0.0:0"
+interface_name = "apt0"
+routes = ["0.0.0.0/0"]
+use_server_pushed_routes = true
+keepalive_secs = 25
+session_idle_timeout_secs = 180
+handshake_timeout_secs = 5
+handshake_retries = 5
+udp_recv_buffer_bytes = 4194304
+udp_send_buffer_bytes = 4194304
+state_path = "/var/lib/adapt/client-state.toml"
