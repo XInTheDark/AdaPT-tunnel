@@ -1,0 +1,25 @@
+# Client configuration for the first production-style APT runtime.
+
+server_addr = "203.0.113.10:51820"
+endpoint_id = "adapt-prod"
+
+# Secret material can be provided inline as 64 hex characters or via `file:/path/to/key`.
+admission_key = "file:./shared-admission.key"
+server_static_public_key = "file:./server-static-public.key"
+client_static_private_key = "file:./client-static-private.key"
+
+client_identity = "laptop"
+bind = "0.0.0.0:0"
+interface_name = "apt0"
+
+# Normally leave this empty and let the server push routes.
+routes = []
+use_server_pushed_routes = true
+
+keepalive_secs = 25
+session_idle_timeout_secs = 180
+handshake_timeout_secs = 5
+handshake_retries = 5
+udp_recv_buffer_bytes = 4194304
+udp_send_buffer_bytes = 4194304
+state_path = "./client-state.toml"

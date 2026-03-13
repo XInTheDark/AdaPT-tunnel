@@ -20,6 +20,7 @@ use apt_tunnel::{Frame, RekeyStatus, TunnelSession};
 use apt_types::{
     AuthProfile, CarrierBinding, CredentialIdentity, SessionRole, MINIMUM_REPLAY_WINDOW,
 };
+use serde::{Deserialize, Serialize};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     collections::HashMap,
@@ -35,13 +36,13 @@ use tracing::{debug, info};
 
 const DATAGRAM_BUFFER_SIZE: usize = 65_535;
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientRuntimeResult {
     pub status: ClientStatus,
     pub telemetry: TelemetrySnapshot,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerRuntimeResult {
     pub status: ServerStatus,
     pub telemetry: TelemetrySnapshot,

@@ -1,12 +1,14 @@
-//! Production CLI for the APT client runtime.
+//! Production client for the first usable APT VPN release.
 
-use apt_observability::{init_tracing, ObservabilityConfig};
-use apt_runtime::{generate_client_identity, write_key_file, ClientConfig, RuntimeError, run_client};
+use apt_runtime::{
+    encode_key_hex, generate_client_identity, run_client, write_key_file, ClientConfig,
+};
 use clap::{Parser, Subcommand};
+use serde_json::json;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[command(name = "apt-client", about = "APT production client")]
+#[command(name = "apt-client", about = "APT VPN client")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -14,12 +16,12 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Connect to a production APT server using the supplied config file.
+    /// Connect to the configured combined server and run the VPN tunnel.
     Connect {
         #[arg(long)]
         config: PathBuf,
     },
-    /// Generate a stable client Noise static identity for shared-key deployments.
+    /// Generate a stable client static identity into the supplied directory.
     GenIdentity {
         #[arg(long)]
         out_dir: PathBuf,
@@ -28,44 +30,36 @@ enum Command {
 
 #[tokio::main]
 async fn main() {
-    let cli = Cli::parse();
-    let observability = ObservabilityConfig::default();
-    init_tracing(&observability);
-
-    let result = match cli.command {
-        Command::Connect { config } => connect(config).await,
-        Command::GenIdentity { out_dir } => generate_identity(out_dir),
-    };
-
-    if let Err(error) = result {
-        eprintln!("error: {error}");
+    if let Err(error) = run().await {
+        eprintln!("apt-client failed: {error}");
         std::process::exit(1);
     }
 }
 
-async fn connect(config_path: PathBuf) -> Result<(), RuntimeError> {
-    let config = ClientConfig::load(&config_path)?.resolve()?;
-    let result = run_client(config).await?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&result.status).expect("client status should serialize to JSON")
-    );
-    Ok(())
-}
-
-fn generate_identity(out_dir: PathBuf) -> Result<(), RuntimeError> {
-    let identity = generate_client_identity()?;
-    let private_path = out_dir.join("client-static-private.key");
-    let public_path = out_dir.join("client-static-public.key");
-    write_key_file(&private_path, &identity.client_static_private_key)?;
-    write_key_file(&public_path, &identity.client_static_public_key)?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&serde_json::json!({
-            "client_static_private_key": private_path,
-            "client_static_public_key": public_path,
-        }))
-        .expect("key generation output should serialize")
-    );
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Connect { config } => {
+            let config = ClientConfig::load(&config)?.resolve()?;
+            let result = run_client(config).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::GenIdentity { out_dir } => {
+            let identity = generate_client_identity()?;
+            write_key_file(&out_dir.join("client-static-private.key"), &identity.client_static_private_key)?;
+            write_key_file(&out_dir.join("client-static-public.key"), &identity.client_static_public_key)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "out_dir": out_dir,
+                    "client_static_public_key": encode_key_hex(&identity.client_static_public_key),
+                    "files": {
+                        "client_static_private_key": "client-static-private.key",
+                        "client_static_public_key": "client-static-public.key"
+                    }
+                }))?
+            );
+        }
+    }
     Ok(())
 }

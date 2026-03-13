@@ -1,130 +1,116 @@
 # AdaPT Tunnel
 
-Rust implementation of the **Adaptive Persona Tunnel (APT/1-core)** from `SPEC_v1.md`, including a production-oriented UDP/TUN runtime for a first usable VPN release.
+Rust workspace implementing the **Adaptive Persona Tunnel (APT/1-core)** described in `SPEC_v1.md`.
 
 ## Current status
 
-The repository now contains:
+The repository now contains two major layers:
 
-- the APT protocol core
-  - Noise `XXpsk2` admission handshake
-  - encrypted tunnel packet core
-  - replay protection
-  - reliable control frames
-  - rekey support
-- a production-oriented runtime layer
-  - combined Linux server daemon
-  - Linux/macOS client runtime
-  - UDP `D1` transport
-  - TUN interface wiring
-  - route installation on client
-  - Linux forwarding/NAT setup on server
-  - shared-key authentication with per-client static Noise identities
-- operational CLIs
-  - `apt-edge serve`
-  - `apt-client connect`
-  - key-generation commands for server/client bootstrap
+1. a tested **APT protocol core**
+2. an initial **production-style UDP+TUN runtime** for a combined server daemon and client
 
-## WireGuard relationship
+Implemented today:
 
-APT is **not layered on top of WireGuard** in this repository.
+- shared protocol/runtime types
+- cryptographic helpers and Noise `XXpsk2` session establishment
+- admission handshake (`C0 -> S1 -> C2 -> S3`)
+- encrypted inner tunnel packet core with replay protection and rekey support
+- carrier helpers for `D1` datagram and `S1` encrypted-stream framing
+- first-cut persona, policy, and observability layers
+- combined server daemon runtime over UDP (`apt-edge serve`)
+- client runtime over UDP (`apt-client connect`)
+- key generation helpers for server/client material
+- TUN interface wiring and basic route/NAT orchestration
+- manual deployment/testing guides under `guides/`
 
-It uses a **WireGuard-like encrypted datagram tunnel discipline** for the inner dataplane:
+## What this repository is building
+
+APT is **not implemented on top of WireGuard** in this repository.
+
+Per `SPEC_v1.md`, the design uses a **WireGuard-like discipline** for the inner encrypted tunnel:
 
 - full IP packets inside encrypted frames
-- unreliable delivery for data packets
-- replay protection
-- rekey/key-phase transitions
+- unreliable data delivery
+- explicit replay protection
+- rekeying/key phases
 
-But the actual control and handshake layers are APT-specific:
+But the actual handshake and control design here are APT-specific:
 
-- `C0 -> S1 -> C2 -> S3` admission flow
-- APT cookies and resumption tickets
+- Noise `XXpsk2` admission handshake
+- APT admission cookies and tickets
 - APT tunnel/control frames
 - APT persona/policy layers
 
-## Supported v1 deployment target
+## Production-oriented commands
 
-- **server:** Linux
-- **client:** Linux and macOS
-- **carrier:** `D1` over UDP
-- **topology:** combined server daemon (`apt-edge serve`)
-- **auth:** one shared deployment admission key plus one static client identity per authorized client
+### Server
 
-## Quick start
-
-### 1. Generate server-side material
+Generate keys:
 
 ```bash
-cargo run --release -p apt-edge -- gen-keyset --out-dir /etc/adapt
+cargo run --release -p apt-edge -- gen-keys --out-dir /etc/adapt
 ```
 
-This writes:
-
-- `shared-admission.key`
-- `server-static-private.key`
-- `server-static-public.key`
-- `cookie.key`
-- `ticket.key`
-
-### 2. Generate a client identity
+Run the combined server daemon:
 
 ```bash
-cargo run --release -p apt-client -- gen-identity --out-dir /etc/adapt/peers/laptop
+sudo cargo run --release -p apt-edge -- serve --config /etc/adapt/server.toml
 ```
 
-This writes:
+### Client
 
-- `client-static-private.key`
-- `client-static-public.key`
-
-### 3. Create configs
-
-Use the included examples:
-
-- `docs/examples/server.example.toml`
-- `docs/examples/client.example.toml`
-
-### 4. Start the server
+Generate a stable client identity:
 
 ```bash
-cargo run --release -p apt-edge -- serve --config /etc/adapt/server.toml
+cargo run --release -p apt-client -- gen-identity --out-dir ./adapt-client
 ```
 
-### 5. Connect the client
+Connect to the server:
 
 ```bash
-cargo run --release -p apt-client -- connect --config /etc/adapt/client.toml
+sudo cargo run --release -p apt-client -- connect --config ./adapt-client/client.toml
 ```
 
-For a fuller setup walkthrough, see `docs/DEPLOYMENT.md`.
+## Guides
+
+- `guides/DEPLOYMENT.md` — step-by-step manual deployment
+- `guides/MANUAL-TESTING.md` — manual verification checklist
+- `guides/examples/server.toml` — example Linux server config
+- `guides/examples/client.toml` — example client config
 
 ## Workspace layout
 
-- `crates/apt-types` — shared domain types and protocol/runtime enums
+- `crates/apt-types` — shared domain types, configuration primitives, and protocol/runtime enums
 - `crates/apt-crypto` — cryptographic suite integration, Noise key schedule, cookies, and tickets
-- `crates/apt-admission` — `C0`, `S1`, `C2`, `S3` admission logic
-- `crates/apt-tunnel` — encrypted tunnel packet model, replay protection, and rekeying
-- `crates/apt-carriers` — carrier helpers (`D1`, `S1`)
-- `crates/apt-runtime` — production runtime, config loading, UDP/TUN orchestration, and deployment helpers
-- `crates/apt-persona` — persona generation and shaping defaults
-- `crates/apt-policy` — policy controller and local-normality support
-- `crates/apt-observability` — privacy-aware tracing and telemetry helpers
-- `apps/apt-client` — production client CLI
-- `apps/apt-edge` — combined production server CLI
-- `apps/apt-tunneld` — compatibility alias for the combined server runtime
+- `crates/apt-admission` — logical admission messages (`C0`, `S1`, `C2`, `S3`) and validation pipeline
+- `crates/apt-tunnel` — inner encrypted tunnel packet model, control frames, replay, and rekeying
+- `crates/apt-carriers` — carrier abstraction plus concrete helpers such as `D1` and `S1`
+- `crates/apt-runtime` — production runtime/config/TUN/route orchestration layer
+- `crates/apt-persona` — persona generation, scheduler knobs, and shaping profiles
+- `crates/apt-policy` — local-normality model, policy controller, and migration decisions
+- `crates/apt-observability` — privacy-aware logging, metrics, and tracing helpers
+- `apps/apt-client` — production client entrypoint
+- `apps/apt-edge` — combined production server daemon entrypoint
+- `apps/apt-tunneld` — compatibility alias for the combined server daemon
 
-## Validation
+## Important current limitations
 
-The repository currently validates with:
+The current runtime is designed to be **usable** for early manual deployments, but it is still the first production-oriented cut rather than a fully hardened final VPN product.
+
+Notable limitations still being worked on:
+
+- primary runtime path is UDP (`D1`) only
+- server runtime target is Linux
+- client runtime target is Linux/macOS, but automated runtime tests are still lighter than the final desired state
+- DNS automation is not yet applied automatically; route pushing is implemented first
+- advanced migration/decoy/fallback behaviors from later spec milestones are not yet complete
+
+## Validation status
+
+The repository currently builds successfully with:
 
 ```bash
 cargo check --workspace
-cargo test --workspace
 ```
 
-## Notes
-
-- The runtime is currently **IPv4-focused** for interface assignment and routed traffic.
-- Linux server NAT currently uses `iptables`.
-- Split-role server deployment and richer multi-carrier migration remain future work on top of the current usable baseline.
+As the runtime continues to harden, the README and `guides/` directory will remain the source of truth for operator-facing setup.

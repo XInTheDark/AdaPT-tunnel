@@ -22,6 +22,14 @@ The first production release must support:
 - configuration files, key material management, and operational docs
 - conservative hardening and automated test coverage
 
+## Progress snapshot
+
+Completed since the initial protocol prototype:
+
+- added `crates/apt-runtime` for production config, UDP runtime, TUN wiring, and route/NAT orchestration
+- added production-oriented CLI commands (`apt-edge serve`, `apt-edge gen-keys`, `apt-client connect`, `apt-client gen-identity`)
+- added deployment and manual testing guides under `guides/`
+
 ## 2. Current starting point
 
 Already implemented in the repo:

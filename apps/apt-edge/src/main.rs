@@ -1,8 +1,10 @@
-//! Production CLI for the combined APT server runtime.
+//! Combined production server daemon for the first usable APT release.
 
-use apt_observability::{init_tracing, ObservabilityConfig};
-use apt_runtime::{generate_server_keyset, write_key_file, ServerConfig, RuntimeError, run_server};
+use apt_runtime::{
+    encode_key_hex, generate_server_keyset, run_server, write_key_file, ServerConfig,
+};
 use clap::{Parser, Subcommand};
+use serde_json::json;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -14,13 +16,13 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Start the combined production server daemon.
+    /// Start the combined edge+tunnel UDP server.
     Serve {
         #[arg(long)]
         config: PathBuf,
     },
-    /// Generate server-side key material and supporting shared secrets.
-    GenKeyset {
+    /// Generate a fresh server keyset into the supplied directory.
+    GenKeys {
         #[arg(long)]
         out_dir: PathBuf,
     },
@@ -28,55 +30,43 @@ enum Command {
 
 #[tokio::main]
 async fn main() {
-    let cli = Cli::parse();
-    let observability = ObservabilityConfig::default();
-    init_tracing(&observability);
-
-    let result = match cli.command {
-        Command::Serve { config } => serve(config).await,
-        Command::GenKeyset { out_dir } => generate_keyset(out_dir),
-    };
-
-    if let Err(error) = result {
-        eprintln!("error: {error}");
+    if let Err(error) = run().await {
+        eprintln!("apt-edge failed: {error}");
         std::process::exit(1);
     }
 }
 
-async fn serve(config_path: PathBuf) -> Result<(), RuntimeError> {
-    let config = ServerConfig::load(&config_path)?.resolve()?;
-    let result = run_server(config).await?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&result.status).expect("server status should serialize to JSON")
-    );
-    Ok(())
-}
-
-fn generate_keyset(out_dir: PathBuf) -> Result<(), RuntimeError> {
-    let keyset = generate_server_keyset()?;
-    let admission_key = out_dir.join("shared-admission.key");
-    let static_private = out_dir.join("server-static-private.key");
-    let static_public = out_dir.join("server-static-public.key");
-    let cookie_key = out_dir.join("cookie.key");
-    let ticket_key = out_dir.join("ticket.key");
-
-    write_key_file(&admission_key, &keyset.admission_key)?;
-    write_key_file(&static_private, &keyset.server_static_private_key)?;
-    write_key_file(&static_public, &keyset.server_static_public_key)?;
-    write_key_file(&cookie_key, &keyset.cookie_key)?;
-    write_key_file(&ticket_key, &keyset.ticket_key)?;
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&serde_json::json!({
-            "shared_admission_key": admission_key,
-            "server_static_private_key": static_private,
-            "server_static_public_key": static_public,
-            "cookie_key": cookie_key,
-            "ticket_key": ticket_key,
-        }))
-        .expect("key generation output should serialize")
-    );
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Serve { config } => {
+            let config = ServerConfig::load(&config)?.resolve()?;
+            let result = run_server(config).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Command::GenKeys { out_dir } => {
+            let keyset = generate_server_keyset()?;
+            write_key_file(&out_dir.join("shared-admission.key"), &keyset.admission_key)?;
+            write_key_file(&out_dir.join("server-static-private.key"), &keyset.server_static_private_key)?;
+            write_key_file(&out_dir.join("server-static-public.key"), &keyset.server_static_public_key)?;
+            write_key_file(&out_dir.join("cookie.key"), &keyset.cookie_key)?;
+            write_key_file(&out_dir.join("ticket.key"), &keyset.ticket_key)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "out_dir": out_dir,
+                    "shared_admission_key": encode_key_hex(&keyset.admission_key),
+                    "server_static_public_key": encode_key_hex(&keyset.server_static_public_key),
+                    "files": {
+                        "shared_admission_key": "shared-admission.key",
+                        "server_static_private_key": "server-static-private.key",
+                        "server_static_public_key": "server-static-public.key",
+                        "cookie_key": "cookie.key",
+                        "ticket_key": "ticket.key"
+                    }
+                }))?
+            );
+        }
+    }
     Ok(())
 }

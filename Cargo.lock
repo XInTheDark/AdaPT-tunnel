@@ -121,7 +121,6 @@ dependencies = [
 name = "apt-client"
 version = "0.1.0"
 dependencies = [
- "apt-observability",
  "apt-runtime",
  "clap",
  "serde_json",
@@ -147,7 +146,6 @@ dependencies = [
 name = "apt-edge"
 version = "0.1.0"
 dependencies = [
- "apt-observability",
  "apt-runtime",
  "clap",
  "serde_json",
@@ -224,7 +222,6 @@ dependencies = [
 name = "apt-tunneld"
 version = "0.1.0"
 dependencies = [
- "apt-observability",
  "apt-runtime",
  "clap",
  "serde_json",
