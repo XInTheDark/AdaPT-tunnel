@@ -1,0 +1,12 @@
+[package]
+name = "apt-policy"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+apt-types.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

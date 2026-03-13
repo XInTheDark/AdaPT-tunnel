@@ -1,0 +1,18 @@
+[package]
+name = "apt-crypto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+apt-types.workspace = true
+bincode.workspace = true
+chacha20poly1305.workspace = true
+hkdf.workspace = true
+rand.workspace = true
+serde.workspace = true
+sha2.workspace = true
+snow.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,15 @@
+[package]
+name = "apt-tunnel"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+apt-crypto.workspace = true
+apt-types.workspace = true
+bincode.workspace = true
+rand.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

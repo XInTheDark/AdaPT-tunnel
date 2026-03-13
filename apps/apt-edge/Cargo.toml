@@ -1,0 +1,17 @@
+[package]
+name = "apt-edge"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+apt-admission.workspace = true
+apt-carriers.workspace = true
+apt-observability.workspace = true
+apt-persona.workspace = true
+apt-policy.workspace = true
+apt-types.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

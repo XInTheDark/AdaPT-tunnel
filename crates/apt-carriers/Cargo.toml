@@ -1,0 +1,11 @@
+[package]
+name = "apt-carriers"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+apt-types.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

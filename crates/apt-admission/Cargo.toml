@@ -1,0 +1,16 @@
+[package]
+name = "apt-admission"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+apt-carriers.workspace = true
+apt-crypto.workspace = true
+apt-types.workspace = true
+bincode.workspace = true
+rand.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
