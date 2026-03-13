@@ -1,6 +1,7 @@
 # Combined Linux server daemon configuration for the first production-style APT runtime.
 
 bind = "0.0.0.0:51820"
+public_endpoint = "203.0.113.10:51820"
 endpoint_id = "adapt-prod"
 
 # Secret material can be provided inline as 64 hex characters or via `file:/path/to/key`.

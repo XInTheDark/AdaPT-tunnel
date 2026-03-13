@@ -48,5 +48,14 @@ pub fn write_key_file(path: &Path, key: &[u8; 32]) -> Result<(), RuntimeError> {
         path: path.to_path_buf(),
         source,
     })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = fs::Permissions::from_mode(0o600);
+        fs::set_permissions(path, permissions).map_err(|source| RuntimeError::IoWithPath {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    }
     Ok(())
 }

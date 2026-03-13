@@ -5,7 +5,7 @@ use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
     path::{Path, PathBuf},
 };
 
@@ -56,7 +56,7 @@ fn default_state_path() -> PathBuf {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientConfig {
-    pub server_addr: SocketAddr,
+    pub server_addr: String,
     pub endpoint_id: String,
     pub admission_key: String,
     pub server_static_public_key: String,
@@ -95,16 +95,23 @@ impl ClientConfig {
             source,
         })?;
         let mut config: Self = toml::from_str(&raw)?;
+        let base = path.parent().unwrap_or_else(|| Path::new("."));
         if config.state_path.is_relative() {
-            let base = path.parent().unwrap_or_else(|| Path::new("."));
             config.state_path = base.join(&config.state_path);
         }
+        resolve_file_spec_relative_to_base(&mut config.admission_key, base);
+        resolve_file_spec_relative_to_base(&mut config.server_static_public_key, base);
+        resolve_file_spec_relative_to_base(&mut config.client_static_private_key, base);
         Ok(config)
+    }
+
+    pub fn store(&self, path: impl AsRef<Path>) -> Result<(), RuntimeError> {
+        store_toml(path.as_ref(), self)
     }
 
     pub fn resolve(&self) -> Result<ResolvedClientConfig, RuntimeError> {
         Ok(ResolvedClientConfig {
-            server_addr: self.server_addr,
+            server_addr: resolve_socket_addr(&self.server_addr)?,
             endpoint_id: EndpointId::new(self.endpoint_id.clone()),
             admission_key: load_key32(&self.admission_key)?,
             server_static_public_key: load_key32(&self.server_static_public_key)?,
@@ -135,6 +142,7 @@ pub struct AuthorizedPeerConfig {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub bind: SocketAddr,
+    pub public_endpoint: String,
     pub endpoint_id: String,
     pub admission_key: String,
     pub server_static_private_key: String,
@@ -176,12 +184,27 @@ impl ServerConfig {
             path: path.to_path_buf(),
             source,
         })?;
-        Ok(toml::from_str(&raw)?)
+        let mut config: Self = toml::from_str(&raw)?;
+        let base = path.parent().unwrap_or_else(|| Path::new("."));
+        resolve_file_spec_relative_to_base(&mut config.admission_key, base);
+        resolve_file_spec_relative_to_base(&mut config.server_static_private_key, base);
+        resolve_file_spec_relative_to_base(&mut config.server_static_public_key, base);
+        resolve_file_spec_relative_to_base(&mut config.cookie_key, base);
+        resolve_file_spec_relative_to_base(&mut config.ticket_key, base);
+        for peer in &mut config.peers {
+            resolve_file_spec_relative_to_base(&mut peer.client_static_public_key, base);
+        }
+        Ok(config)
+    }
+
+    pub fn store(&self, path: impl AsRef<Path>) -> Result<(), RuntimeError> {
+        store_toml(path.as_ref(), self)
     }
 
     pub fn resolve(&self) -> Result<ResolvedServerConfig, RuntimeError> {
         Ok(ResolvedServerConfig {
             bind: self.bind,
+            public_endpoint: self.public_endpoint.clone(),
             endpoint_id: EndpointId::new(self.endpoint_id.clone()),
             admission_key: load_key32(&self.admission_key)?,
             server_static_private_key: load_key32(&self.server_static_private_key)?,
@@ -251,6 +274,7 @@ impl ResolvedAuthorizedPeer {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedServerConfig {
     pub bind: SocketAddr,
+    pub public_endpoint: String,
     pub endpoint_id: EndpointId,
     pub admission_key: [u8; 32],
     pub server_static_private_key: [u8; 32],
@@ -376,6 +400,40 @@ pub fn encode_key_hex(bytes: &[u8; 32]) -> String {
     out
 }
 
+fn store_toml<T: Serialize>(path: &Path, value: &T) -> Result<(), RuntimeError> {
+    let serialized = toml::to_string_pretty(value)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| RuntimeError::IoWithPath {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    fs::write(path, serialized).map_err(|source| RuntimeError::IoWithPath {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(())
+}
+
+fn resolve_file_spec_relative_to_base(spec: &mut String, base: &Path) {
+    if let Some(path) = spec.strip_prefix("file:") {
+        let path = Path::new(path);
+        if path.is_relative() {
+            *spec = format!("file:{}", base.join(path).display());
+        }
+    }
+}
+
+fn resolve_socket_addr(spec: &str) -> Result<SocketAddr, RuntimeError> {
+    if let Ok(parsed) = spec.parse() {
+        return Ok(parsed);
+    }
+    spec.to_socket_addrs()
+        .map_err(|source| RuntimeError::InvalidConfig(format!("unable to resolve {spec}: {source}")))?
+        .next()
+        .ok_or_else(|| RuntimeError::InvalidConfig(format!("no socket addresses resolved for {spec}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,6 +454,76 @@ mod tests {
         let bytes = load_key32(&format!("file:{}", path.display())).unwrap();
         assert_eq!(bytes, [0x22; 32]);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn client_load_resolves_relative_key_paths() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("adapt-client-config-{unique}"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("shared-admission.key"), "11".repeat(32)).unwrap();
+        fs::write(dir.join("server-static-public.key"), "22".repeat(32)).unwrap();
+        fs::write(dir.join("client-static-private.key"), "33".repeat(32)).unwrap();
+        fs::write(
+            dir.join("client.toml"),
+            r#"
+server_addr = "198.51.100.10:51820"
+endpoint_id = "adapt-demo"
+admission_key = "file:./shared-admission.key"
+server_static_public_key = "file:./server-static-public.key"
+client_static_private_key = "file:./client-static-private.key"
+"#,
+        )
+        .unwrap();
+        let config = ClientConfig::load(dir.join("client.toml")).unwrap();
+        assert!(config.admission_key.contains(dir.to_string_lossy().as_ref()));
+        assert!(config.server_static_public_key.contains(dir.to_string_lossy().as_ref()));
+        assert!(config.client_static_private_key.contains(dir.to_string_lossy().as_ref()));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn server_load_resolves_relative_key_paths() {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("adapt-server-config-{unique}"));
+        fs::create_dir_all(dir.join("clients")).unwrap();
+        for file in [
+            "shared-admission.key",
+            "server-static-private.key",
+            "server-static-public.key",
+            "cookie.key",
+            "ticket.key",
+            "clients/laptop.client-static-public.key",
+        ] {
+            fs::write(dir.join(file), "44".repeat(32)).unwrap();
+        }
+        fs::write(
+            dir.join("server.toml"),
+            r#"
+bind = "0.0.0.0:51820"
+public_endpoint = "198.51.100.10:51820"
+endpoint_id = "adapt-demo"
+admission_key = "file:./shared-admission.key"
+server_static_private_key = "file:./server-static-private.key"
+server_static_public_key = "file:./server-static-public.key"
+cookie_key = "file:./cookie.key"
+ticket_key = "file:./ticket.key"
+tunnel_local_ipv4 = "10.77.0.1"
+tunnel_netmask = "255.255.255.0"
+
+[[peers]]
+name = "laptop"
+client_static_public_key = "file:./clients/laptop.client-static-public.key"
+tunnel_ipv4 = "10.77.0.2"
+"#,
+        )
+        .unwrap();
+        let config = ServerConfig::load(dir.join("server.toml")).unwrap();
+        assert!(config.admission_key.contains(dir.to_string_lossy().as_ref()));
+        assert!(config.peers[0]
+            .client_static_public_key
+            .contains(dir.to_string_lossy().as_ref()));
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

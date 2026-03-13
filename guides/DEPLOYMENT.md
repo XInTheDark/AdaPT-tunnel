@@ -1,16 +1,17 @@
-# Manual deployment guide
+# Guided deployment flow
 
-This guide covers a **single Linux server** and a **Linux or macOS client** using the current combined APT server daemon.
+This is the **recommended** way to deploy AdaPT now.
 
-## 1. What this guide assumes
+It uses the user-friendly CLI flow instead of hand-editing every file first.
 
-- server OS: Linux
-- client OS: Linux or macOS
+## Supported targets for this flow
+
+- server: Linux
+- client: Linux or macOS
 - transport: UDP (`D1`)
-- auth model: one shared deployment admission key, plus an authorized stable client static key per client
-- privileges: root/admin access on both ends for TUN setup and routing changes
+- auth model: shared deployment admission key + one authorized stable client identity per client
 
-## 2. Build the binaries
+## 1. Build the binaries
 
 From the repo root:
 
@@ -18,197 +19,114 @@ From the repo root:
 cargo build --release
 ```
 
-Binaries of interest:
+Main binaries:
 
 - `target/release/apt-edge`
 - `target/release/apt-client`
 
-## 3. Generate the server keyset
+## 2. Initialize the server
 
 On the server:
 
 ```bash
-mkdir -p /etc/adapt /etc/adapt/clients
-./target/release/apt-edge gen-keys --out-dir /etc/adapt
+./target/release/apt-edge init
 ```
 
-This produces:
+The command walks you through the main values, then creates:
 
-- `/etc/adapt/shared-admission.key`
-- `/etc/adapt/server-static-private.key`
-- `/etc/adapt/server-static-public.key`
-- `/etc/adapt/cookie.key`
-- `/etc/adapt/ticket.key`
+- `server.toml`
+- the server key files
+- a `bundles/` directory for client packages
 
-Keep all of those secret except `server-static-public.key`, which is meant to be copied to clients.
-
-## 4. Generate the client identity
-
-On the client:
+You can also run it non-interactively, for example:
 
 ```bash
-mkdir -p ./adapt-client
-./target/release/apt-client gen-identity --out-dir ./adapt-client
+./target/release/apt-edge init \
+  --out-dir /etc/adapt \
+  --bind 0.0.0.0:51820 \
+  --public-endpoint vpn.example.com:51820 \
+  --endpoint-id adapt-prod \
+  --egress-interface eth0 \
+  --tunnel-subnet 10.77.0.0/24 \
+  --interface-name aptsrv0 \
+  --push-route 0.0.0.0/0 \
+  --dns 1.1.1.1 \
+  --dns 1.0.0.1 \
+  --yes
 ```
 
-This produces:
+## 3. Generate a client bundle
 
-- `./adapt-client/client-static-private.key`
-- `./adapt-client/client-static-public.key`
-
-Copy the client public key to the server, for example:
+On the server:
 
 ```bash
-scp ./adapt-client/client-static-public.key server:/etc/adapt/clients/laptop.client-static-public.key
+./target/release/apt-edge add-client --config /etc/adapt/server.toml --name laptop
 ```
 
-## 5. Copy the required public/shared material to the client
+This command automatically:
 
-The client needs:
+- allocates a free client tunnel IP
+- generates the client's static keypair
+- updates the server's authorized peer list
+- writes a client bundle directory you can copy to the client device
 
-- the shared admission key
-- the server static public key
-
-Copy them securely from the server:
+You can override the output directory and client IP if needed:
 
 ```bash
-scp server:/etc/adapt/shared-admission.key ./adapt-client/shared-admission.key
-scp server:/etc/adapt/server-static-public.key ./adapt-client/server-static-public.key
+./target/release/apt-edge add-client \
+  --config /etc/adapt/server.toml \
+  --name laptop \
+  --out-dir /tmp/laptop-bundle \
+  --client-ip 10.77.0.2
 ```
 
-## 6. Prepare the config files
-
-### Server config
-
-Start from `guides/examples/server.toml` and save it as `/etc/adapt/server.toml`.
-
-Update at least:
-
-- `bind`
-- `endpoint_id`
-- `egress_interface`
-- the `[[peers]]` block(s)
-- `client_static_public_key` paths
-- client tunnel IP assignments
-
-### Client config
-
-Start from `guides/examples/client.toml` and save it near the client key files.
-
-Update at least:
-
-- `server_addr`
-- `endpoint_id`
-- the key file paths if you changed locations
-- optionally `interface_name`
-
-## 7. Open the UDP port on the server
-
-Example for port `51820`:
-
-```bash
-sudo ufw allow 51820/udp
-```
-
-Or configure your cloud/network firewall to allow inbound UDP on the chosen port.
-
-## 8. Start the server
+## 4. Start the server
 
 On the Linux server:
 
 ```bash
-sudo ./target/release/apt-edge serve --config /etc/adapt/server.toml
+sudo ./target/release/apt-edge start --config /etc/adapt/server.toml
 ```
 
-The server must run as root because it creates the TUN device and may enable forwarding/NAT.
+The server must run with privileges sufficient to:
 
-## 9. Start the client
+- create/configure the TUN interface
+- enable IPv4 forwarding when configured
+- install NAT rules when configured
 
-On the client:
+## 5. Copy the client bundle to the client device
+
+Copy the generated bundle directory from the server to the client.
+
+The bundle contains:
+
+- `client.toml`
+- `client-static-private.key`
+- `client-static-public.key`
+- `shared-admission.key`
+- `server-static-public.key`
+- `START-HERE.txt`
+
+## 6. Start the client
+
+On the client device, inside the copied bundle directory:
 
 ```bash
-sudo ./target/release/apt-client connect --config ./adapt-client/client.toml
+sudo ./target/release/apt-client up --config client.toml
 ```
 
-The client must run with sufficient privileges to create/configure the TUN device and install routes.
+If `client.toml` is in the current directory, this is the normal everyday command.
 
-## 10. What the runtime does for you
+## 7. Verify the VPN
 
-### Server
+Use the manual verification checklist in:
 
-When `enable_ipv4_forwarding = true` and `nat_ipv4 = true`, the runtime will:
+- `guides/MANUAL-TESTING.md`
 
-- create the server TUN device
-- enable Linux IPv4 forwarding
-- install NAT/masquerade rules using `iptables`
+## Notes
 
-### Client
-
-The client runtime will:
-
-- perform the encrypted admission handshake
-- create/configure the client TUN device after the server assigns tunnel parameters
-- install the pushed routes
-- preserve a direct route to the remote VPN server if full-tunnel routing is pushed
-
-## 11. Current config field reference
-
-### Shared key material fields
-
-All key fields accept either:
-
-- inline 64-character hex, or
-- `file:/absolute/or/relative/path`
-
-Fields:
-
-- `admission_key`
-- `server_static_private_key`
-- `server_static_public_key`
-- `cookie_key`
-- `ticket_key`
-- `client_static_public_key`
-- `client_static_private_key`
-
-### Server config
-
-- `bind` — UDP listen address
-- `endpoint_id` — logical APT endpoint identifier
-- `interface_name` — preferred server TUN name
-- `tunnel_local_ipv4` — server-side tunnel IP
-- `tunnel_netmask` — IPv4 netmask for the tunnel subnet
-- `tunnel_mtu` — TUN/interface MTU
-- `egress_interface` — Linux interface used for internet egress/NAT
-- `enable_ipv4_forwarding` — toggles `net.ipv4.ip_forward=1`
-- `nat_ipv4` — toggles `iptables` masquerading
-- `push_routes` — routes delivered to clients after handshake
-- `push_dns` — reserved for operator reference / future DNS automation
-- `keepalive_secs` — keepalive interval when idle
-- `session_idle_timeout_secs` — idle session timeout
-- `udp_recv_buffer_bytes` / `udp_send_buffer_bytes` — socket tuning
-
-### Client config
-
-- `server_addr` — remote server UDP address
-- `endpoint_id` — expected APT endpoint identifier
-- `client_identity` — optional human-readable label
-- `bind` — local UDP bind address
-- `interface_name` — preferred client TUN name
-- `routes` — fallback route list if server pushes none
-- `use_server_pushed_routes` — whether to prefer server-pushed routes
-- `keepalive_secs` — keepalive interval when idle
-- `session_idle_timeout_secs` — idle session timeout
-- `handshake_timeout_secs` — timeout per handshake wait step
-- `handshake_retries` — handshake retry count
-- `state_path` — where the client stores its resume ticket/status snapshot
-
-## 12. Recommended first deployment shape
-
-For the simplest full-tunnel deployment, use:
-
-- server tunnel IP: `10.77.0.1`
-- client tunnel IP(s): `10.77.0.x`
-- `push_routes = ["0.0.0.0/0"]`
-- `nat_ipv4 = true`
-
-That gives you a classic full-tunnel VPN path over the current APT UDP runtime.
+- The server runtime is Linux-only right now.
+- The client runtime is intended for Linux/macOS.
+- Full tunnel is typically achieved by pushing `0.0.0.0/0`.
+- The more raw/manual config-file-oriented flow lives in:
+  - `guides/MANUAL-CONFIG-SETUP.md`

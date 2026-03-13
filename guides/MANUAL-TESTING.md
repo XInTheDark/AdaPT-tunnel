@@ -7,13 +7,13 @@ Use this after following `guides/DEPLOYMENT.md`.
 Start the server:
 
 ```bash
-sudo ./target/release/apt-edge serve --config /etc/adapt/server.toml
+sudo ./target/release/apt-edge start --config /etc/adapt/server.toml
 ```
 
 Start the client:
 
 ```bash
-sudo ./target/release/apt-client connect --config ./adapt-client/client.toml
+sudo ./target/release/apt-client up --config ./adapt-client/client.toml
 ```
 
 Expected result:

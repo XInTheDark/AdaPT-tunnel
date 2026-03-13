@@ -6,7 +6,7 @@ edition.workspace = true
 [dependencies]
 apt-runtime.workspace = true
 clap.workspace = true
-serde_json.workspace = true
+ipnet.workspace = true
 tokio.workspace = true
 
 [lints]

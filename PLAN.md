@@ -27,7 +27,8 @@ The first production release must support:
 Completed since the initial protocol prototype:
 
 - added `crates/apt-runtime` for production config, UDP runtime, TUN wiring, and route/NAT orchestration
-- added production-oriented CLI commands (`apt-edge serve`, `apt-edge gen-keys`, `apt-client connect`, `apt-client gen-identity`)
+- added production-oriented CLI runtime commands (`apt-edge start`, `apt-client up`)
+- added guided setup commands (`apt-edge init`, `apt-edge add-client`)
 - added deployment and manual testing guides under `guides/`
 
 ## 2. Current starting point
@@ -40,7 +41,7 @@ Already implemented in the repo:
 - encrypted inner tunnel core with replay protection and rekey support
 - carrier helpers for `D1` and `S1`
 - first-cut persona, policy, and observability crates
-- development/demo CLIs
+- guided CLI setup flow for server/client usage
 
 Missing before the product is deployable:
 

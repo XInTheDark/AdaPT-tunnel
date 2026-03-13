@@ -4,10 +4,10 @@ Rust workspace implementing the **Adaptive Persona Tunnel (APT/1-core)** describ
 
 ## Current status
 
-The repository now contains two major layers:
+The project now has two layers:
 
 1. a tested **APT protocol core**
-2. an initial **production-style UDP+TUN runtime** for a combined server daemon and client
+2. an initial **user-facing VPN runtime and CLI flow** built around a combined server daemon and client
 
 Implemented today:
 
@@ -17,13 +17,139 @@ Implemented today:
 - encrypted inner tunnel packet core with replay protection and rekey support
 - carrier helpers for `D1` datagram and `S1` encrypted-stream framing
 - first-cut persona, policy, and observability layers
-- combined server daemon runtime over UDP (`apt-edge serve`)
-- client runtime over UDP (`apt-client connect`)
-- key generation helpers for server/client material
+- combined server daemon runtime over UDP (`apt-edge start`)
+- client runtime over UDP (`apt-client up`)
+- guided server initialization (`apt-edge init`)
+- ready-to-use client bundle generation (`apt-edge add-client`)
 - TUN interface wiring and basic route/NAT orchestration
-- manual deployment/testing guides under `guides/`
 
-## What this repository is building
+## The main way to use AdaPT going forward
+
+The intended day-to-day workflow is now CLI-driven.
+
+### Server operator flow
+
+#### 1) Create the server setup
+
+```bash
+apt-edge init
+```
+
+This guided command creates:
+
+- `server.toml`
+- the server key files
+- a `bundles/` directory for client packages
+
+#### 2) Create a ready-to-use client bundle
+
+```bash
+apt-edge add-client --config ./adapt-server/server.toml --name laptop
+```
+
+This command:
+
+- allocates a client tunnel IP
+- authorizes the client in `server.toml`
+- generates the client static identity
+- writes a client bundle directory you can copy to the device
+
+#### 3) Start the server
+
+```bash
+sudo apt-edge start --config ./adapt-server/server.toml
+```
+
+### Client flow
+
+Copy the generated client bundle to the client device, then run:
+
+```bash
+sudo apt-client up --config client.toml
+```
+
+If you are already in the bundle directory and `client.toml` is present, that is the main command you need.
+
+## Recommended quickstart
+
+### On the server
+
+```bash
+apt-edge init
+apt-edge add-client --config ./adapt-server/server.toml --name laptop
+sudo apt-edge start --config ./adapt-server/server.toml
+```
+
+### On the client
+
+After copying the generated bundle directory from the server:
+
+```bash
+cd laptop
+sudo apt-client up --config client.toml
+```
+
+## CLI reference
+
+### `apt-edge`
+
+#### `apt-edge init`
+Guided setup for a new server.
+
+Useful options:
+
+- `--out-dir` — where to write the server files
+- `--bind` — UDP listen address
+- `--public-endpoint` — public host:port clients should use
+- `--endpoint-id` — deployment identifier
+- `--egress-interface` — Linux egress interface for NAT
+- `--tunnel-subnet` — tunnel subnet, for example `10.77.0.0/24`
+- `--interface-name` — server TUN name
+- `--push-route` — route(s) to push to clients
+- `--dns` — DNS server(s) to suggest to clients
+- `--yes` — skip prompts and use defaults for omitted values
+
+#### `apt-edge add-client`
+Generate a ready-to-use client bundle and authorize it on the server.
+
+Useful options:
+
+- `--config` — server config path
+- `--name` — client name
+- `--out-dir` — where to write the client bundle
+- `--client-ip` — manually choose the client tunnel IP
+- `--yes` — skip prompts for missing values
+
+#### `apt-edge start`
+Start the combined server daemon.
+
+Useful option:
+
+- `--config` — server config path
+
+### `apt-client`
+
+#### `apt-client up`
+Start the VPN using a generated client bundle.
+
+Useful option:
+
+- `--config` — path to `client.toml`
+
+If omitted, the client tries common default locations first.
+
+## Guides
+
+### CLI-first setup
+- `guides/DEPLOYMENT.md` — step-by-step guided deployment using the user-friendly CLI flow
+- `guides/MANUAL-TESTING.md` — how to validate the tunnel manually after setup
+
+### Manual / advanced setup
+- `guides/MANUAL-CONFIG-SETUP.md` — raw config-file-oriented setup and manual details
+- `guides/examples/server.toml` — example server config
+- `guides/examples/client.toml` — example client config
+
+## WireGuard relationship
 
 APT is **not implemented on top of WireGuard** in this repository.
 
@@ -41,76 +167,25 @@ But the actual handshake and control design here are APT-specific:
 - APT tunnel/control frames
 - APT persona/policy layers
 
-## Production-oriented commands
-
-### Server
-
-Generate keys:
-
-```bash
-cargo run --release -p apt-edge -- gen-keys --out-dir /etc/adapt
-```
-
-Run the combined server daemon:
-
-```bash
-sudo cargo run --release -p apt-edge -- serve --config /etc/adapt/server.toml
-```
-
-### Client
-
-Generate a stable client identity:
-
-```bash
-cargo run --release -p apt-client -- gen-identity --out-dir ./adapt-client
-```
-
-Connect to the server:
-
-```bash
-sudo cargo run --release -p apt-client -- connect --config ./adapt-client/client.toml
-```
-
-## Guides
-
-- `guides/DEPLOYMENT.md` — step-by-step manual deployment
-- `guides/MANUAL-TESTING.md` — manual verification checklist
-- `guides/examples/server.toml` — example Linux server config
-- `guides/examples/client.toml` — example client config
-
-## Workspace layout
-
-- `crates/apt-types` — shared domain types, configuration primitives, and protocol/runtime enums
-- `crates/apt-crypto` — cryptographic suite integration, Noise key schedule, cookies, and tickets
-- `crates/apt-admission` — logical admission messages (`C0`, `S1`, `C2`, `S3`) and validation pipeline
-- `crates/apt-tunnel` — inner encrypted tunnel packet model, control frames, replay, and rekeying
-- `crates/apt-carriers` — carrier abstraction plus concrete helpers such as `D1` and `S1`
-- `crates/apt-runtime` — production runtime/config/TUN/route orchestration layer
-- `crates/apt-persona` — persona generation, scheduler knobs, and shaping profiles
-- `crates/apt-policy` — local-normality model, policy controller, and migration decisions
-- `crates/apt-observability` — privacy-aware logging, metrics, and tracing helpers
-- `apps/apt-client` — production client entrypoint
-- `apps/apt-edge` — combined production server daemon entrypoint
-- `apps/apt-tunneld` — compatibility alias for the combined server daemon
-
 ## Important current limitations
 
-The current runtime is designed to be **usable** for early manual deployments, but it is still the first production-oriented cut rather than a fully hardened final VPN product.
+This is now much more usable than the earlier prototype, but it is still the first production-oriented cut rather than the final hardened VPN product.
 
-Notable limitations still being worked on:
+Current limitations include:
 
 - primary runtime path is UDP (`D1`) only
 - server runtime target is Linux
-- client runtime target is Linux/macOS, but automated runtime tests are still lighter than the final desired state
+- client runtime target is Linux/macOS
 - DNS automation is not yet applied automatically; route pushing is implemented first
 - advanced migration/decoy/fallback behaviors from later spec milestones are not yet complete
 
 ## Validation status
 
-The repository currently builds successfully with:
+The repository currently validates with:
 
 ```bash
 cargo check --workspace
+cargo test --workspace
 ```
 
-As the runtime continues to harden, the README and `guides/` directory will remain the source of truth for operator-facing setup.
+The README is now CLI-first on purpose; the more manual/raw setup details live under `guides/`.

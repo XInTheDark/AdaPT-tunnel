@@ -123,7 +123,6 @@ version = "0.1.0"
 dependencies = [
  "apt-runtime",
  "clap",
- "serde_json",
  "tokio",
 ]
 
@@ -148,7 +147,7 @@ version = "0.1.0"
 dependencies = [
  "apt-runtime",
  "clap",
- "serde_json",
+ "ipnet",
  "tokio",
 ]
 

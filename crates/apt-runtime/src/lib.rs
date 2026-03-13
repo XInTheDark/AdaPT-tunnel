@@ -15,8 +15,9 @@ mod status;
 mod tun;
 
 pub use config::{
-    encode_key_hex, load_key32, ClientConfig, ClientPersistentState, ResolvedClientConfig,
-    ResolvedServerConfig, ServerConfig, ServerSessionExtension, SessionTransportParameters,
+    encode_key_hex, load_key32, AuthorizedPeerConfig, ClientConfig, ClientPersistentState,
+    ResolvedClientConfig, ResolvedServerConfig, ServerConfig, ServerSessionExtension,
+    SessionTransportParameters,
 };
 pub use error::RuntimeError;
 pub use keys::{

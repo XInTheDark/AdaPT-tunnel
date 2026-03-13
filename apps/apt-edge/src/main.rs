@@ -1,14 +1,25 @@
-//! Combined production server daemon for the first usable APT release.
+//! User-friendly CLI for the combined APT server daemon.
 
 use apt_runtime::{
-    encode_key_hex, generate_server_keyset, run_server, write_key_file, ServerConfig,
+    load_key32, write_key_file, AuthorizedPeerConfig, ClientConfig, ServerConfig,
+    generate_client_identity, generate_server_keyset, run_server,
 };
 use clap::{Parser, Subcommand};
-use serde_json::json;
-use std::path::PathBuf;
+use ipnet::{IpNet, Ipv4Net};
+use std::{
+    collections::HashSet,
+    fs,
+    io::{self, Write},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Parser)]
-#[command(name = "apt-edge", about = "APT combined server daemon")]
+#[command(
+    name = "apt-edge",
+    about = "APT VPN server",
+    long_about = "APT VPN server. Use `init` to create a server config, `add-client` to generate ready-to-use client bundles, and `start` to run the server."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -16,12 +27,66 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Start the combined edge+tunnel UDP server.
-    Serve {
+    /// Guided setup for a new server config + keyset.
+    Init {
+        /// Directory where server.toml and key files should be written.
         #[arg(long)]
-        config: PathBuf,
+        out_dir: Option<PathBuf>,
+        /// UDP listen address for the server.
+        #[arg(long)]
+        bind: Option<SocketAddr>,
+        /// Public host:port that clients should use, for example vpn.example.com:51820.
+        #[arg(long)]
+        public_endpoint: Option<String>,
+        /// Logical deployment identifier.
+        #[arg(long)]
+        endpoint_id: Option<String>,
+        /// Linux egress interface for NAT, for example eth0.
+        #[arg(long)]
+        egress_interface: Option<String>,
+        /// Tunnel subnet in CIDR form, for example 10.77.0.0/24.
+        #[arg(long)]
+        tunnel_subnet: Option<String>,
+        /// Preferred server TUN interface name.
+        #[arg(long)]
+        interface_name: Option<String>,
+        /// Route(s) that should be pushed to clients. Repeat for multiple entries.
+        #[arg(long = "push-route")]
+        push_routes: Vec<String>,
+        /// DNS server(s) suggested to clients. Repeat for multiple entries.
+        #[arg(long = "dns")]
+        dns_servers: Vec<IpAddr>,
+        /// Use defaults for any missing values instead of prompting.
+        #[arg(long, default_value_t = false)]
+        yes: bool,
     },
-    /// Generate a fresh server keyset into the supplied directory.
+    /// Create a ready-to-use client bundle and authorize it on the server.
+    AddClient {
+        /// Path to the server config created by `apt-edge init`.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Friendly client name, for example laptop.
+        #[arg(long)]
+        name: Option<String>,
+        /// Directory where the client bundle should be written.
+        #[arg(long)]
+        out_dir: Option<PathBuf>,
+        /// Specific client tunnel IP to assign. If omitted, the next free IP is chosen.
+        #[arg(long)]
+        client_ip: Option<Ipv4Addr>,
+        /// Use defaults for any missing values instead of prompting.
+        #[arg(long, default_value_t = false)]
+        yes: bool,
+    },
+    /// Start the combined server daemon.
+    #[command(alias = "serve", alias = "run")]
+    Start {
+        /// Path to the server config. If omitted, common default locations are searched.
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+    /// Advanced: generate only the raw key files.
+    #[command(hide = true)]
     GenKeys {
         #[arg(long)]
         out_dir: PathBuf,
@@ -37,36 +102,389 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
-    match cli.command {
-        Command::Serve { config } => {
-            let config = ServerConfig::load(&config)?.resolve()?;
-            let result = run_server(config).await?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
-        }
-        Command::GenKeys { out_dir } => {
-            let keyset = generate_server_keyset()?;
-            write_key_file(&out_dir.join("shared-admission.key"), &keyset.admission_key)?;
-            write_key_file(&out_dir.join("server-static-private.key"), &keyset.server_static_private_key)?;
-            write_key_file(&out_dir.join("server-static-public.key"), &keyset.server_static_public_key)?;
-            write_key_file(&out_dir.join("cookie.key"), &keyset.cookie_key)?;
-            write_key_file(&out_dir.join("ticket.key"), &keyset.ticket_key)?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&json!({
-                    "out_dir": out_dir,
-                    "shared_admission_key": encode_key_hex(&keyset.admission_key),
-                    "server_static_public_key": encode_key_hex(&keyset.server_static_public_key),
-                    "files": {
-                        "shared_admission_key": "shared-admission.key",
-                        "server_static_private_key": "server-static-private.key",
-                        "server_static_public_key": "server-static-public.key",
-                        "cookie_key": "cookie.key",
-                        "ticket_key": "ticket.key"
-                    }
-                }))?
-            );
-        }
+    match Cli::parse().command {
+        Command::Init {
+            out_dir,
+            bind,
+            public_endpoint,
+            endpoint_id,
+            egress_interface,
+            tunnel_subnet,
+            interface_name,
+            push_routes,
+            dns_servers,
+            yes,
+        } => init_server(
+            out_dir,
+            bind,
+            public_endpoint,
+            endpoint_id,
+            egress_interface,
+            tunnel_subnet,
+            interface_name,
+            push_routes,
+            dns_servers,
+            yes,
+        )?,
+        Command::AddClient {
+            config,
+            name,
+            out_dir,
+            client_ip,
+            yes,
+        } => add_client(config, name, out_dir, client_ip, yes)?,
+        Command::Start { config } => start_server(config).await?,
+        Command::GenKeys { out_dir } => write_server_keyset(&out_dir)?,
     }
     Ok(())
+}
+
+fn init_server(
+    out_dir: Option<PathBuf>,
+    bind: Option<SocketAddr>,
+    public_endpoint: Option<String>,
+    endpoint_id: Option<String>,
+    egress_interface: Option<String>,
+    tunnel_subnet: Option<String>,
+    interface_name: Option<String>,
+    push_routes: Vec<String>,
+    dns_servers: Vec<IpAddr>,
+    yes: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = out_dir.unwrap_or_else(|| PathBuf::from("./adapt-server"));
+    let bind = match bind {
+        Some(bind) => bind,
+        None if yes => "0.0.0.0:51820".parse()?,
+        None => prompt_parse("UDP listen address", Some("0.0.0.0:51820"))?,
+    };
+    let public_endpoint = match public_endpoint {
+        Some(value) => value,
+        None if yes && !bind.ip().is_unspecified() => bind.to_string(),
+        None if yes => {
+            return Err("--public-endpoint is required when using --yes with an unspecified bind address".into())
+        }
+        None => prompt_string(
+            "Public host:port clients should use",
+            Some("vpn.example.com:51820"),
+        )?,
+    };
+    let endpoint_id = match endpoint_id {
+        Some(value) => value,
+        None if yes => "adapt-prod".to_string(),
+        None => prompt_string("Deployment name / endpoint ID", Some("adapt-prod"))?,
+    };
+    let egress_interface = match egress_interface {
+        Some(value) => value,
+        None if yes => "eth0".to_string(),
+        None => prompt_string("Linux egress interface for internet access", Some("eth0"))?,
+    };
+    let tunnel_subnet = match tunnel_subnet {
+        Some(value) => value,
+        None if yes => "10.77.0.0/24".to_string(),
+        None => prompt_string("Tunnel subnet (CIDR)", Some("10.77.0.0/24"))?,
+    };
+    let subnet: Ipv4Net = tunnel_subnet
+        .parse()
+        .map_err(|error| format!("invalid tunnel subnet `{tunnel_subnet}`: {error}"))?;
+    let interface_name = match interface_name {
+        Some(value) => value,
+        None if yes => "aptsrv0".to_string(),
+        None => prompt_string("Server TUN interface name", Some("aptsrv0"))?,
+    };
+    let push_routes = if push_routes.is_empty() {
+        vec!["0.0.0.0/0".to_string()]
+    } else {
+        push_routes
+    };
+    let push_routes = push_routes
+        .into_iter()
+        .map(|route| route.parse::<IpNet>())
+        .collect::<Result<Vec<_>, _>>()?;
+    let push_dns = if dns_servers.is_empty() {
+        vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), IpAddr::V4(Ipv4Addr::new(1, 0, 0, 1))]
+    } else {
+        dns_servers
+    };
+
+    fs::create_dir_all(&out_dir)?;
+    let keyset = generate_server_keyset()?;
+    write_key_file(&out_dir.join("shared-admission.key"), &keyset.admission_key)?;
+    write_key_file(&out_dir.join("server-static-private.key"), &keyset.server_static_private_key)?;
+    write_key_file(&out_dir.join("server-static-public.key"), &keyset.server_static_public_key)?;
+    write_key_file(&out_dir.join("cookie.key"), &keyset.cookie_key)?;
+    write_key_file(&out_dir.join("ticket.key"), &keyset.ticket_key)?;
+    fs::create_dir_all(out_dir.join("bundles"))?;
+
+    let server_ip = first_usable_ipv4(subnet)?;
+    let config = ServerConfig {
+        bind,
+        public_endpoint,
+        endpoint_id,
+        admission_key: "file:./shared-admission.key".to_string(),
+        server_static_private_key: "file:./server-static-private.key".to_string(),
+        server_static_public_key: "file:./server-static-public.key".to_string(),
+        cookie_key: "file:./cookie.key".to_string(),
+        ticket_key: "file:./ticket.key".to_string(),
+        interface_name: Some(interface_name.clone()),
+        tunnel_local_ipv4: server_ip,
+        tunnel_netmask: ipv4_netmask(subnet.prefix_len()),
+        tunnel_mtu: 1380,
+        egress_interface: Some(egress_interface.clone()),
+        enable_ipv4_forwarding: true,
+        nat_ipv4: true,
+        push_routes,
+        push_dns,
+        keepalive_secs: 25,
+        session_idle_timeout_secs: 180,
+        udp_recv_buffer_bytes: 4 * 1024 * 1024,
+        udp_send_buffer_bytes: 4 * 1024 * 1024,
+        peers: Vec::new(),
+    };
+    let config_path = out_dir.join("server.toml");
+    config.store(&config_path)?;
+
+    println!("\nAPT server setup complete.\n");
+    println!("Created:");
+    println!("  • {}", config_path.display());
+    println!("  • {}/shared-admission.key", out_dir.display());
+    println!("  • {}/server-static-private.key", out_dir.display());
+    println!("  • {}/server-static-public.key", out_dir.display());
+    println!("  • {}/cookie.key", out_dir.display());
+    println!("  • {}/ticket.key", out_dir.display());
+    println!("  • {}/bundles/", out_dir.display());
+    println!("\nServer summary:");
+    println!("  • Listen on: {bind}");
+    println!("  • Public endpoint for clients: {}", config.public_endpoint);
+    println!("  • Tunnel subnet: {}", subnet);
+    println!("  • Server tunnel IP: {}", config.tunnel_local_ipv4);
+    println!("  • Egress interface: {egress_interface}");
+    println!("\nNext steps:");
+    println!("  1. Add a client bundle:");
+    println!("     apt-edge add-client --config {} --name laptop", config_path.display());
+    println!("  2. Start the server:");
+    println!("     sudo apt-edge start --config {}", config_path.display());
+    Ok(())
+}
+
+fn add_client(
+    config: Option<PathBuf>,
+    name: Option<String>,
+    out_dir: Option<PathBuf>,
+    client_ip: Option<Ipv4Addr>,
+    yes: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config_path = match config {
+        Some(path) => path,
+        None => match find_server_config() {
+            Some(path) => path,
+            None if yes => {
+                return Err("could not find a server config; pass --config or run `apt-edge init` first".into())
+            }
+            None => prompt_path("Server config path", Some("./adapt-server/server.toml"))?,
+        },
+    };
+    let mut server_config = ServerConfig::load(&config_path)?;
+    let name = match name {
+        Some(value) => value,
+        None if yes => return Err("--name is required when using --yes".into()),
+        None => prompt_string("Client name", Some("laptop"))?,
+    };
+    if server_config.peers.iter().any(|peer| peer.name == name) {
+        return Err(format!("a client named `{name}` already exists in {}", config_path.display()).into());
+    }
+    let bundle_dir = out_dir.unwrap_or_else(|| {
+        config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("bundles")
+            .join(&name)
+    });
+    let server_peer_key_path = config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("clients")
+        .join(format!("{name}.client-static-public.key"));
+    fs::create_dir_all(&bundle_dir)?;
+    if let Some(parent) = server_peer_key_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let client_ip = client_ip.unwrap_or(next_available_client_ipv4(&server_config)?);
+
+    let identity = generate_client_identity()?;
+    write_key_file(&server_peer_key_path, &identity.client_static_public_key)?;
+    server_config.peers.push(AuthorizedPeerConfig {
+        name: name.clone(),
+        client_static_public_key: format!("file:{}", server_peer_key_path.display()),
+        tunnel_ipv4: client_ip,
+    });
+    server_config.store(&config_path)?;
+
+    let shared_admission_key = load_key32(&server_config.admission_key)?;
+    let server_static_public_key = load_key32(&server_config.server_static_public_key)?;
+    write_key_file(&bundle_dir.join("shared-admission.key"), &shared_admission_key)?;
+    write_key_file(&bundle_dir.join("server-static-public.key"), &server_static_public_key)?;
+    write_key_file(&bundle_dir.join("client-static-private.key"), &identity.client_static_private_key)?;
+    write_key_file(&bundle_dir.join("client-static-public.key"), &identity.client_static_public_key)?;
+
+    let client_config = ClientConfig {
+        server_addr: server_config.public_endpoint.clone(),
+        endpoint_id: server_config.endpoint_id.clone(),
+        admission_key: "file:./shared-admission.key".to_string(),
+        server_static_public_key: "file:./server-static-public.key".to_string(),
+        client_static_private_key: "file:./client-static-private.key".to_string(),
+        client_identity: Some(name.clone()),
+        bind: "0.0.0.0:0".parse()?,
+        interface_name: Some("apt0".to_string()),
+        routes: Vec::new(),
+        use_server_pushed_routes: true,
+        keepalive_secs: 25,
+        session_idle_timeout_secs: 180,
+        handshake_timeout_secs: 5,
+        handshake_retries: 5,
+        udp_recv_buffer_bytes: 4 * 1024 * 1024,
+        udp_send_buffer_bytes: 4 * 1024 * 1024,
+        state_path: PathBuf::from("./client-state.toml"),
+    };
+    let client_config_path = bundle_dir.join("client.toml");
+    client_config.store(&client_config_path)?;
+    write_bundle_readme(&bundle_dir, &name)?;
+
+    println!("\nClient bundle created.\n");
+    println!("Updated server config:");
+    println!("  • {}", config_path.display());
+    println!("Client bundle:");
+    println!("  • {}", bundle_dir.display());
+    println!("Assigned tunnel IP: {client_ip}");
+    println!("\nWhat to do next:");
+    println!("  1. Copy this entire folder to the client device:");
+    println!("     {}", bundle_dir.display());
+    println!("  2. On the client, run:");
+    println!("     sudo apt-client up --config client.toml");
+    println!("  3. If the server is not already running, start it with:");
+    println!("     sudo apt-edge start --config {}", config_path.display());
+    Ok(())
+}
+
+async fn start_server(config: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+    let config_path = match config {
+        Some(path) => path,
+        None => match find_server_config() {
+            Some(path) => path,
+            None => prompt_path("Server config path", Some("./adapt-server/server.toml"))?,
+        },
+    };
+    println!("Starting APT server using {}", config_path.display());
+    println!("Press Ctrl-C to stop.\n");
+    let result = run_server(ServerConfig::load(&config_path)?.resolve()?).await?;
+    println!("\nServer stopped.");
+    println!("Active sessions at shutdown: {}", result.status.active_sessions);
+    Ok(())
+}
+
+fn write_server_keyset(out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let keyset = generate_server_keyset()?;
+    write_key_file(&out_dir.join("shared-admission.key"), &keyset.admission_key)?;
+    write_key_file(&out_dir.join("server-static-private.key"), &keyset.server_static_private_key)?;
+    write_key_file(&out_dir.join("server-static-public.key"), &keyset.server_static_public_key)?;
+    write_key_file(&out_dir.join("cookie.key"), &keyset.cookie_key)?;
+    write_key_file(&out_dir.join("ticket.key"), &keyset.ticket_key)?;
+    println!("Raw key files written to {}", out_dir.display());
+    Ok(())
+}
+
+fn write_bundle_readme(bundle_dir: &Path, name: &str) -> io::Result<()> {
+    fs::write(
+        bundle_dir.join("START-HERE.txt"),
+        format!(
+            "APT client bundle for {name}\n\n1. Copy this entire folder to the client device.\n2. On the client, change into this directory.\n3. Start the VPN:\n\n   sudo apt-client up --config client.toml\n"
+        ),
+    )
+}
+
+fn find_server_config() -> Option<PathBuf> {
+    [
+        PathBuf::from("./server.toml"),
+        PathBuf::from("./adapt-server/server.toml"),
+        PathBuf::from("/etc/adapt/server.toml"),
+    ]
+    .into_iter()
+    .find(|path| path.exists())
+}
+
+fn prompt_string(label: &str, default: Option<&str>) -> io::Result<String> {
+    let mut stdout = io::stdout();
+    match default {
+        Some(default) => write!(stdout, "{label} [{default}]: ")?,
+        None => write!(stdout, "{label}: ")?,
+    }
+    stdout.flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        Ok(default.unwrap_or_default().to_string())
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+fn prompt_parse<T>(label: &str, default: Option<&str>) -> Result<T, Box<dyn std::error::Error>>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    loop {
+        let value = prompt_string(label, default)?;
+        match value.parse() {
+            Ok(parsed) => return Ok(parsed),
+            Err(error) => eprintln!("Invalid value: {error}"),
+        }
+    }
+}
+
+fn prompt_path(label: &str, default: Option<&str>) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    Ok(PathBuf::from(prompt_string(label, default)?))
+}
+
+fn first_usable_ipv4(subnet: Ipv4Net) -> Result<Ipv4Addr, Box<dyn std::error::Error>> {
+    let network = u32::from(subnet.network());
+    let broadcast = u32::from(subnet.broadcast());
+    if broadcast <= network + 1 {
+        return Err("tunnel subnet is too small to allocate a server IP".into());
+    }
+    Ok(Ipv4Addr::from(network + 1))
+}
+
+fn next_available_client_ipv4(config: &ServerConfig) -> Result<Ipv4Addr, Box<dyn std::error::Error>> {
+    let subnet = subnet_from(config.tunnel_local_ipv4, config.tunnel_netmask)?;
+    let mut used = HashSet::new();
+    used.insert(config.tunnel_local_ipv4);
+    for peer in &config.peers {
+        used.insert(peer.tunnel_ipv4);
+    }
+    let start = u32::from(subnet.network()) + 1;
+    let end = u32::from(subnet.broadcast());
+    for candidate in (start + 1)..end {
+        let ip = Ipv4Addr::from(candidate);
+        if !used.contains(&ip) {
+            return Ok(ip);
+        }
+    }
+    Err("no free client IPs remain in the configured tunnel subnet".into())
+}
+
+fn subnet_from(ip: Ipv4Addr, netmask: Ipv4Addr) -> Result<Ipv4Net, Box<dyn std::error::Error>> {
+    let mask = u32::from(netmask);
+    let prefix = mask.count_ones() as u8;
+    let network = Ipv4Addr::from(u32::from(ip) & mask);
+    Ok(Ipv4Net::new(network, prefix)?)
+}
+
+fn ipv4_netmask(prefix_len: u8) -> Ipv4Addr {
+    let mask = if prefix_len == 0 {
+        0
+    } else {
+        u32::MAX << (32 - u32::from(prefix_len))
+    };
+    Ipv4Addr::from(mask)
 }
