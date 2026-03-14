@@ -1,0 +1,109 @@
+use super::*;
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(super) enum CliRuntimeMode {
+    Stealth,
+    Balanced,
+    Speed,
+}
+
+impl From<CliRuntimeMode> for RuntimeMode {
+    fn from(value: CliRuntimeMode) -> Self {
+        match value {
+            CliRuntimeMode::Stealth => Self::Stealth,
+            CliRuntimeMode::Balanced => Self::Balanced,
+            CliRuntimeMode::Speed => Self::Speed,
+        }
+    }
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "apt-edge",
+    about = "APT VPN server",
+    long_about = "APT VPN server. Use `init` to create a server config, `add-client` to generate ready-to-use client bundles, and `start` to run the server."
+)]
+pub(super) struct Cli {
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+pub(super) enum Command {
+    /// Guided setup for a new server config + keyset.
+    Init {
+        /// Directory where server.toml and key files should be written.
+        #[arg(long)]
+        out_dir: Option<PathBuf>,
+        /// UDP listen address for the server.
+        #[arg(long)]
+        bind: Option<SocketAddr>,
+        /// Client-reachable host:port that clients should use, for example 203.0.113.10:51820 or vpn.example.com:51820.
+        #[arg(long)]
+        public_endpoint: Option<String>,
+        /// TCP listen address for the stream fallback carrier.
+        #[arg(long)]
+        stream_bind: Option<SocketAddr>,
+        /// Client-reachable host:port for the stream fallback carrier.
+        #[arg(long)]
+        stream_public_endpoint: Option<String>,
+        /// Return a decoy-like HTTP surface on invalid stream input.
+        #[arg(long, default_value_t = true)]
+        stream_decoy_surface: bool,
+        /// Logical deployment identifier.
+        #[arg(long)]
+        endpoint_id: Option<String>,
+        /// Linux egress interface for NAT, for example eth0.
+        #[arg(long)]
+        egress_interface: Option<String>,
+        /// Tunnel subnet in CIDR form, for example 10.77.0.0/24.
+        #[arg(long)]
+        tunnel_subnet: Option<String>,
+        /// Preferred server TUN interface name.
+        #[arg(long)]
+        interface_name: Option<String>,
+        /// Route(s) that should be pushed to clients. Repeat for multiple entries.
+        #[arg(long = "push-route")]
+        push_routes: Vec<String>,
+        /// DNS server(s) suggested to clients. Repeat for multiple entries.
+        #[arg(long = "dns")]
+        dns_servers: Vec<IpAddr>,
+        /// Use defaults for any missing values instead of prompting.
+        #[arg(long, default_value_t = false)]
+        yes: bool,
+    },
+    /// Create a ready-to-use client bundle and authorize it on the server.
+    AddClient {
+        /// Path to the server config created by `apt-edge init`.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Friendly client name, for example laptop.
+        #[arg(long)]
+        name: Option<String>,
+        /// Directory where the client bundle should be written.
+        #[arg(long)]
+        out_dir: Option<PathBuf>,
+        /// Specific client tunnel IP to assign. If omitted, the next free IP is chosen.
+        #[arg(long)]
+        client_ip: Option<Ipv4Addr>,
+        /// Use defaults for any missing values instead of prompting.
+        #[arg(long, default_value_t = false)]
+        yes: bool,
+    },
+    /// Start the combined server daemon.
+    #[command(alias = "serve", alias = "run")]
+    Start {
+        /// Path to the server config. If omitted, common default locations are searched.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Override the runtime mode for this launch only.
+        #[arg(long, value_enum)]
+        mode: Option<CliRuntimeMode>,
+    },
+    /// Advanced: generate only the raw key files.
+    #[command(hide = true)]
+    GenKeys {
+        #[arg(long)]
+        out_dir: PathBuf,
+    },
+}
