@@ -30,7 +30,7 @@ Completed since the initial protocol prototype:
 - added production-oriented CLI runtime commands (`apt-edge start`, `apt-client up`)
 - added guided setup commands (`apt-edge init`, `apt-edge add-client`)
 - added deployment and manual testing guides under `guides/`
-- added GitHub release automation, static Linux release assets, and an installer/updater script
+- added GitHub release automation, static Linux release assets, and installer/update/uninstall scripts
 
 ## 2. Current starting point
 

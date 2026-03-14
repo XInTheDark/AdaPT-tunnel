@@ -88,11 +88,24 @@ By default, the installer:
 - installs binaries into `/usr/local/bin`
 - installs docs/update metadata into `/usr/local/share/adapt`
 - installs an updater command named `adapt-install`
+- installs an uninstall command named `adapt-uninstall`
 
 To update an existing installation later:
 
 ```bash
 sudo adapt-install update
+```
+
+To remove the installed release binaries/docs later:
+
+```bash
+sudo adapt-uninstall
+```
+
+To also remove the standard config and state directories:
+
+```bash
+sudo adapt-uninstall --purge-all
 ```
 
 You can point the installer at another GitHub repo or base if needed:
@@ -191,6 +204,7 @@ Each bundle includes:
 - `apt-client`
 - `apt-tunneld`
 - `install.sh`
+- `uninstall.sh`
 - the deployment/testing guides
 - example config files
 

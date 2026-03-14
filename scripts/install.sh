@@ -7,8 +7,10 @@ DEFAULT_GITHUB_WEB_BASE="https://github.com"
 DEFAULT_BIN_DIR="/usr/local/bin"
 DEFAULT_SHARE_DIR="/usr/local/share/adapt"
 DEFAULT_INSTALLER_NAME="adapt-install"
+DEFAULT_UNINSTALLER_NAME="adapt-uninstall"
 
 script_name="$(basename "$0")"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
 action="install"
 repo="${ADAPT_GITHUB_REPO:-$DEFAULT_GITHUB_REPO}"
 api_base="${ADAPT_GITHUB_API_BASE:-$DEFAULT_GITHUB_API_BASE}"
@@ -16,10 +18,14 @@ web_base="${ADAPT_GITHUB_WEB_BASE:-$DEFAULT_GITHUB_WEB_BASE}"
 bin_dir="${ADAPT_BIN_DIR:-$DEFAULT_BIN_DIR}"
 share_dir="${ADAPT_SHARE_DIR:-$DEFAULT_SHARE_DIR}"
 installer_name="${ADAPT_INSTALLER_NAME:-$DEFAULT_INSTALLER_NAME}"
+uninstaller_name="${ADAPT_UNINSTALLER_NAME:-$DEFAULT_UNINSTALLER_NAME}"
 repo_override=0
 api_base_override=0
 web_base_override=0
+bin_dir_override=0
+share_dir_override=0
 installer_name_override=0
+uninstaller_name_override=0
 tag=""
 target=""
 force=0
@@ -28,7 +34,10 @@ dry_run=0
 [[ -n "${ADAPT_GITHUB_REPO:-}" ]] && repo_override=1
 [[ -n "${ADAPT_GITHUB_API_BASE:-}" ]] && api_base_override=1
 [[ -n "${ADAPT_GITHUB_WEB_BASE:-}" ]] && web_base_override=1
+[[ -n "${ADAPT_BIN_DIR:-}" ]] && bin_dir_override=1
+[[ -n "${ADAPT_SHARE_DIR:-}" ]] && share_dir_override=1
 [[ -n "${ADAPT_INSTALLER_NAME:-}" ]] && installer_name_override=1
+[[ -n "${ADAPT_UNINSTALLER_NAME:-}" ]] && uninstaller_name_override=1
 
 usage() {
   cat <<USAGE
@@ -40,6 +49,7 @@ Downloads the matching AdaPT Tunnel release bundle from GitHub and installs:
   - apt-client
   - apt-tunneld
   - ${installer_name} (this installer script for later updates)
+  - ${uninstaller_name} (an uninstall helper)
 
 Default repository:
   ${DEFAULT_GITHUB_REPO}
@@ -57,6 +67,8 @@ Options:
   --bin-dir DIR         Install binaries into DIR (default: ${bin_dir})
   --share-dir DIR       Install docs/metadata into DIR (default: ${share_dir})
   --installer-name NAME Name of the installed updater command (default: ${installer_name})
+  --uninstaller-name NAME
+                        Name of the installed uninstall command (default: ${uninstaller_name})
   --force               Reinstall even if the same tag is already installed
   --dry-run             Print the chosen release/asset and exit without downloading
   -h, --help            Show this help text
@@ -68,6 +80,7 @@ Environment overrides:
   ADAPT_BIN_DIR
   ADAPT_SHARE_DIR
   ADAPT_INSTALLER_NAME
+  ADAPT_UNINSTALLER_NAME
   GH_TOKEN / GITHUB_TOKEN   Optional token for higher GitHub API limits or private repos
 
 Examples:
@@ -184,6 +197,29 @@ read_installed_value() {
   sed -n "s/^${key}=//p" "$meta_path" | tail -n 1
 }
 
+find_meta_path() {
+  local -a candidates=()
+  local candidate=""
+
+  candidates+=("${share_dir}/.install-meta")
+  candidate="$(cd "${script_dir}/.." && pwd)/share/adapt/.install-meta"
+  if [[ "$candidate" != "${share_dir}/.install-meta" ]]; then
+    candidates+=("$candidate")
+  fi
+  if [[ "${DEFAULT_SHARE_DIR}/.install-meta" != "${share_dir}/.install-meta" && "${DEFAULT_SHARE_DIR}/.install-meta" != "$candidate" ]]; then
+    candidates+=("${DEFAULT_SHARE_DIR}/.install-meta")
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 if [[ $# -gt 0 ]]; then
   case "$1" in
     install|update)
@@ -230,17 +266,25 @@ while [[ $# -gt 0 ]]; do
     --bin-dir)
       [[ $# -ge 2 ]] || die "missing value for --bin-dir"
       bin_dir="$2"
+      bin_dir_override=1
       shift 2
       ;;
     --share-dir)
       [[ $# -ge 2 ]] || die "missing value for --share-dir"
       share_dir="$2"
+      share_dir_override=1
       shift 2
       ;;
     --installer-name)
       [[ $# -ge 2 ]] || die "missing value for --installer-name"
       installer_name="$2"
       installer_name_override=1
+      shift 2
+      ;;
+    --uninstaller-name)
+      [[ $# -ge 2 ]] || die "missing value for --uninstaller-name"
+      uninstaller_name="$2"
+      uninstaller_name_override=1
       shift 2
       ;;
     --force)
@@ -279,7 +323,16 @@ case "$target" in
 esac
 
 meta_path="${share_dir}/.install-meta"
-if [[ -f "$meta_path" ]]; then
+if existing_meta_path="$(find_meta_path)"; then
+  meta_path="$existing_meta_path"
+  if [[ "$bin_dir_override" -eq 0 ]]; then
+    existing_bin_dir="$(read_installed_value bin_dir "$meta_path")"
+    [[ -n "$existing_bin_dir" ]] && bin_dir="$existing_bin_dir"
+  fi
+  if [[ "$share_dir_override" -eq 0 ]]; then
+    existing_share_dir="$(read_installed_value share_dir "$meta_path")"
+    [[ -n "$existing_share_dir" ]] && share_dir="$existing_share_dir"
+  fi
   if [[ "$repo_override" -eq 0 ]]; then
     existing_repo="$(read_installed_value repo "$meta_path")"
     [[ -n "$existing_repo" ]] && repo="$existing_repo"
@@ -296,7 +349,12 @@ if [[ -f "$meta_path" ]]; then
     existing_installer_name="$(read_installed_value installer_name "$meta_path")"
     [[ -n "$existing_installer_name" ]] && installer_name="$existing_installer_name"
   fi
+  if [[ "$uninstaller_name_override" -eq 0 ]]; then
+    existing_uninstaller_name="$(read_installed_value uninstaller_name "$meta_path")"
+    [[ -n "$existing_uninstaller_name" ]] && uninstaller_name="$existing_uninstaller_name"
+  fi
 fi
+meta_path="${share_dir}/.install-meta"
 
 tmpdir="$(mktemp -d 2>/dev/null || mktemp -d -t adapt-install)"
 cleanup() {
@@ -390,6 +448,7 @@ checksum_url=${checksum_url}
 bin_dir=${bin_dir}
 share_dir=${share_dir}
 installer_name=${installer_name}
+uninstaller_name=${uninstaller_name}
 installed_tag=${installed_tag}
 installed_target=${installed_target}
 DRYRUN
@@ -429,6 +488,7 @@ stage_dir="$extract_dir/adapt-tunnel-${target}"
 [[ -f "$stage_dir/bin/apt-client" ]] || die "release archive is missing apt-client"
 [[ -f "$stage_dir/bin/apt-tunneld" ]] || die "release archive is missing apt-tunneld"
 [[ -f "$stage_dir/install.sh" ]] || die "release archive is missing install.sh"
+[[ -f "$stage_dir/uninstall.sh" ]] || die "release archive is missing uninstall.sh"
 
 log "Installing binaries into ${bin_dir}"
 mkdir -p "$bin_dir"
@@ -436,6 +496,7 @@ install -m 0755 "$stage_dir/bin/apt-edge" "$bin_dir/apt-edge"
 install -m 0755 "$stage_dir/bin/apt-client" "$bin_dir/apt-client"
 install -m 0755 "$stage_dir/bin/apt-tunneld" "$bin_dir/apt-tunneld"
 install -m 0755 "$stage_dir/install.sh" "$bin_dir/$installer_name"
+install -m 0755 "$stage_dir/uninstall.sh" "$bin_dir/$uninstaller_name"
 
 log "Installing docs and metadata into ${share_dir}"
 mkdir -p "$share_dir"
@@ -444,14 +505,18 @@ install -m 0644 "$stage_dir/README.md" "$share_dir/README.md"
 install -m 0644 "$stage_dir/SPEC_v1.md" "$share_dir/SPEC_v1.md"
 cp -R "$stage_dir/guides" "$share_dir/guides"
 install -m 0755 "$stage_dir/install.sh" "$share_dir/install.sh"
+install -m 0755 "$stage_dir/uninstall.sh" "$share_dir/uninstall.sh"
 
 cat > "$meta_path" <<METADATA
+bin_dir=${bin_dir}
+share_dir=${share_dir}
 repo=${repo}
 api_base=${api_base}
 web_base=${web_base}
 tag=${release_tag}
 target=${target}
 installer_name=${installer_name}
+uninstaller_name=${uninstaller_name}
 installed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 METADATA
 
@@ -465,10 +530,12 @@ Installed AdaPT Tunnel ${release_tag}
   repo: ${repo}
   binaries: ${bin_dir}
   updater: ${bin_dir}/${installer_name}
+  uninstaller: ${bin_dir}/${uninstaller_name}
   docs: ${share_dir}
 
 Next steps:
   sudo apt-edge init
   sudo apt-edge start
   sudo ${installer_name} update
+  sudo ${uninstaller_name}
 SUMMARY

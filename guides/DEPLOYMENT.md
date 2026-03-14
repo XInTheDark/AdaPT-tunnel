@@ -31,11 +31,24 @@ By default, that script:
 - installs `apt-edge`, `apt-client`, and `apt-tunneld` into `/usr/local/bin`
 - installs docs and update metadata into `/usr/local/share/adapt`
 - installs an updater command named `adapt-install`
+- installs an uninstall command named `adapt-uninstall`
 
 To update later:
 
 ```bash
 sudo adapt-install update
+```
+
+To remove the installed release binaries/docs later:
+
+```bash
+sudo adapt-uninstall
+```
+
+To also remove the standard config and state directories:
+
+```bash
+sudo adapt-uninstall --purge-all
 ```
 
 If you need to install from a fork or alternate repository:
@@ -61,6 +74,7 @@ Each release bundle contains:
 - `apt-client`
 - `apt-tunneld`
 - `install.sh`
+- `uninstall.sh`
 - the guides in this directory
 - example config files
 
