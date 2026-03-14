@@ -543,8 +543,12 @@ pub async fn run_server(config: ResolvedServerConfig) -> Result<ServerRuntimeRes
                     if let Some(destination) = extract_destination_ipv4(&packet) {
                             if let Some(session_id) = sessions_by_client_ip.get(&destination).copied() {
                             if let Some(session) = sessions.get_mut(&session_id) {
-                                let (frames, payload_bytes, burst_len) =
-                                    collect_outbound_tun_frames(packet, &mut tun_rx, &session.adaptive);
+                                let (frames, payload_bytes, burst_len) = collect_outbound_tun_frames(
+                                    packet,
+                                    &mut tun_rx,
+                                    &session.adaptive,
+                                    session.primary_path.binding,
+                                );
                                 send_frames_to_server_path(
                                     &udp_socket,
                                     &stream_peers,
@@ -929,8 +933,12 @@ async fn run_client_session_loop(
                         let Some(active_path) = paths.get(&active_path_id) else {
                             return Err(RuntimeError::Timeout("all transports closed"));
                         };
-                        let (frames, payload_bytes, burst_len) =
-                            collect_outbound_tun_frames(packet, &mut tun_rx, &adaptive);
+                        let (frames, payload_bytes, burst_len) = collect_outbound_tun_frames(
+                            packet,
+                            &mut tun_rx,
+                            &adaptive,
+                            active_path.binding,
+                        );
                         send_frames_on_client_path(
                             carriers,
                             &config.endpoint_id,
@@ -1019,7 +1027,12 @@ async fn run_client_session_loop(
                         }
                     }
                 }
-                if config.allow_session_migration && standby_path_id.is_none() && now >= next_standby_probe_secs {
+                let should_attempt_standby_probe =
+                    config.allow_session_migration
+                        && standby_path_id.is_none()
+                        && now >= next_standby_probe_secs
+                        && (migration_pressure > 0 || config.standby_health_check_secs > 0);
+                if should_attempt_standby_probe {
                     if let Some(binding) = next_standby_candidate(config, &adaptive, &paths, active_path_id) {
                         match open_client_standby_path(
                             next_path_id,
@@ -1819,9 +1832,10 @@ async fn handle_server_decoded_packet(
                 path_to_session.remove(&path);
                 return Ok(());
             }
-            Frame::Ping => {
+            Frame::Ping if path_validated || validated_now => {
                 saw_switchworthy_traffic = true;
             }
+            Frame::Ping => {}
             _ => {}
         }
     }
@@ -2377,6 +2391,17 @@ async fn send_frames_on_client_path(
     frames: &[Frame],
     now: u64,
 ) -> Result<(), RuntimeError> {
+    if let Ok(outer) = encode_client_tunnel_packet_batch(
+        carriers,
+        endpoint_id,
+        outer_keys,
+        path.binding,
+        tunnel,
+        frames,
+        now,
+    ) {
+        return queue_path_payload(&path.sender, outer);
+    }
     for batch in plan_outbound_tunnel_batches(
         carriers,
         endpoint_id,
@@ -2439,6 +2464,17 @@ async fn send_frames_to_path_handle(
     frames: &[Frame],
     now: u64,
 ) -> Result<(), RuntimeError> {
+    if let Ok(outer) = encode_server_tunnel_packet_batch(
+        carriers,
+        endpoint_id,
+        outer_keys,
+        binding,
+        tunnel,
+        frames,
+        now,
+    ) {
+        return send_outer_to_path(udp_socket, stream_peers, path, outer).await;
+    }
     for batch in plan_outbound_tunnel_batches(
         carriers,
         endpoint_id,
@@ -2457,18 +2493,28 @@ async fn send_frames_to_path_handle(
             &batch,
             now,
         )?;
-        match path {
-            PathHandle::Datagram(peer_addr) => {
-                udp_socket.send_to(&outer, peer_addr).await?;
-            }
-            PathHandle::Stream(conn_id) => {
-                let Some(peer) = stream_peers.get(conn_id) else {
-                    return Err(RuntimeError::InvalidConfig(
-                        "missing stream peer sender".to_string(),
-                    ));
-                };
-                queue_path_payload(&PathSender::Stream(peer.sender.clone()), outer)?;
-            }
+        send_outer_to_path(udp_socket, stream_peers, path, outer).await?;
+    }
+    Ok(())
+}
+
+async fn send_outer_to_path(
+    udp_socket: &UdpSocket,
+    stream_peers: &HashMap<u64, ServerStreamPeer>,
+    path: &PathHandle,
+    outer: Vec<u8>,
+) -> Result<(), RuntimeError> {
+    match path {
+        PathHandle::Datagram(peer_addr) => {
+            udp_socket.send_to(&outer, peer_addr).await?;
+        }
+        PathHandle::Stream(conn_id) => {
+            let Some(peer) = stream_peers.get(conn_id) else {
+                return Err(RuntimeError::InvalidConfig(
+                    "missing stream peer sender".to_string(),
+                ));
+            };
+            queue_path_payload(&PathSender::Stream(peer.sender.clone()), outer)?;
         }
     }
     Ok(())
@@ -2953,6 +2999,7 @@ fn collect_outbound_tun_frames(
     first_packet: Vec<u8>,
     tun_rx: &mut mpsc::Receiver<Vec<u8>>,
     adaptive: &AdaptiveDatapath,
+    binding: CarrierBinding,
 ) -> (Vec<Frame>, usize, usize) {
     let mut frames = vec![Frame::IpData(first_packet)];
     let mut payload_bytes = match &frames[0] {
@@ -2960,7 +3007,9 @@ fn collect_outbound_tun_frames(
         _ => 0,
     };
     let mut burst_len = 1;
-    while burst_len < adaptive.burst_cap() {
+    let allow_batching =
+        matches!(binding, CarrierBinding::S1EncryptedStream) && payload_bytes < 512;
+    while allow_batching && burst_len < adaptive.burst_cap() {
         match tun_rx.try_recv() {
             Ok(packet) => {
                 payload_bytes = payload_bytes.saturating_add(packet.len());
@@ -2970,9 +3019,12 @@ fn collect_outbound_tun_frames(
             Err(_) => break,
         }
     }
-    if let Some(padding) = adaptive.maybe_padding_frame(payload_bytes, false) {
-        payload_bytes = payload_bytes.saturating_add(padding_len(&padding));
-        frames.push(padding);
+    let allow_padding = payload_bytes < 512;
+    if allow_padding {
+        if let Some(padding) = adaptive.maybe_padding_frame(payload_bytes, false) {
+            payload_bytes = payload_bytes.saturating_add(padding_len(&padding));
+            frames.push(padding);
+        }
     }
     (frames, payload_bytes, burst_len)
 }
