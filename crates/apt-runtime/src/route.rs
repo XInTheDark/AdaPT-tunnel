@@ -30,9 +30,18 @@ impl Drop for RouteGuard {
     }
 }
 
+#[allow(dead_code)]
 pub fn configure_client_network(
     interface_name: &str,
     server_addr: SocketAddr,
+    routes: &[IpNet],
+) -> Result<RouteGuard, RuntimeError> {
+    configure_client_network_for_endpoints(interface_name, &[server_addr], routes)
+}
+
+pub fn configure_client_network_for_endpoints(
+    interface_name: &str,
+    server_addrs: &[SocketAddr],
     routes: &[IpNet],
 ) -> Result<RouteGuard, RuntimeError> {
     if routes.is_empty() {
@@ -40,16 +49,16 @@ pub fn configure_client_network(
     }
     #[cfg(target_os = "linux")]
     {
-        configure_client_network_linux(interface_name, server_addr, routes)
+        configure_client_network_linux(interface_name, server_addrs, routes)
     }
     #[cfg(target_os = "macos")]
     {
-        configure_client_network_macos(interface_name, server_addr, routes)
+        configure_client_network_macos(interface_name, server_addrs, routes)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = interface_name;
-        let _ = server_addr;
+        let _ = server_addrs;
         let _ = routes;
         Err(RuntimeError::UnsupportedPlatform(
             "client route setup is only implemented for Linux and macOS",
@@ -78,31 +87,32 @@ pub fn configure_server_network(
 #[cfg(target_os = "linux")]
 fn configure_client_network_linux(
     interface_name: &str,
-    server_addr: SocketAddr,
+    server_addrs: &[SocketAddr],
     routes: &[IpNet],
 ) -> Result<RouteGuard, RuntimeError> {
     let mut guard = RouteGuard::default();
     if routes.iter().any(is_default_route) {
-        let server_ip = server_addr.ip();
-        let route = linux_route_to(server_ip)?;
-        let mut args = vec![
-            "route".to_string(),
-            "replace".to_string(),
-            host_prefix(server_ip),
-        ];
-        if let Some(gateway) = route.gateway {
-            args.push("via".to_string());
-            args.push(gateway.to_string());
+        for server_ip in unique_server_ips(server_addrs) {
+            let route = linux_route_to(server_ip)?;
+            let mut args = vec![
+                "route".to_string(),
+                "replace".to_string(),
+                host_prefix(server_ip),
+            ];
+            if let Some(gateway) = route.gateway {
+                args.push("via".to_string());
+                args.push(gateway.to_string());
+            }
+            args.push("dev".to_string());
+            args.push(route.interface_name.clone());
+            run_command("ip", &args)?;
+            guard.cleanup_commands.push(vec![
+                "ip".to_string(),
+                "route".to_string(),
+                "del".to_string(),
+                host_prefix(server_ip),
+            ]);
         }
-        args.push("dev".to_string());
-        args.push(route.interface_name.clone());
-        run_command("ip", &args)?;
-        guard.cleanup_commands.push(vec![
-            "ip".to_string(),
-            "route".to_string(),
-            "del".to_string(),
-            host_prefix(server_ip),
-        ]);
     }
 
     for route in routes {
@@ -154,35 +164,36 @@ fn configure_client_network_linux(
 #[cfg(target_os = "macos")]
 fn configure_client_network_macos(
     interface_name: &str,
-    server_addr: SocketAddr,
+    server_addrs: &[SocketAddr],
     routes: &[IpNet],
 ) -> Result<RouteGuard, RuntimeError> {
     let mut guard = RouteGuard::default();
     if routes.iter().any(is_default_route) {
-        let server_ip = server_addr.ip();
-        let route = macos_route_to(server_ip)?;
-        let gateway = route.gateway.ok_or_else(|| {
-            RuntimeError::CommandFailed(
-                "macOS default route lookup returned no gateway".to_string(),
-            )
-        })?;
-        run_command(
-            "route",
-            &[
+        for server_ip in unique_server_ips(server_addrs) {
+            let route = macos_route_to(server_ip)?;
+            let gateway = route.gateway.ok_or_else(|| {
+                RuntimeError::CommandFailed(
+                    "macOS default route lookup returned no gateway".to_string(),
+                )
+            })?;
+            run_command(
+                "route",
+                &[
+                    "-n".into(),
+                    "add".into(),
+                    "-host".into(),
+                    server_ip.to_string(),
+                    gateway.to_string(),
+                ],
+            )?;
+            guard.cleanup_commands.push(vec![
+                "route".into(),
                 "-n".into(),
-                "add".into(),
+                "delete".into(),
                 "-host".into(),
                 server_ip.to_string(),
-                gateway.to_string(),
-            ],
-        )?;
-        guard.cleanup_commands.push(vec![
-            "route".into(),
-            "-n".into(),
-            "delete".into(),
-            "-host".into(),
-            server_ip.to_string(),
-        ]);
+            ]);
+        }
     }
 
     for route in routes {
@@ -242,6 +253,16 @@ fn configure_client_network_macos(
         }
     }
     Ok(guard)
+}
+
+fn unique_server_ips(server_addrs: &[SocketAddr]) -> Vec<IpAddr> {
+    let mut ips = Vec::new();
+    for addr in server_addrs {
+        if !ips.contains(&addr.ip()) {
+            ips.push(addr.ip());
+        }
+    }
+    ips
 }
 
 #[cfg(target_os = "linux")]

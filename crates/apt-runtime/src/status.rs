@@ -1,3 +1,4 @@
+use apt_types::{CarrierBinding, PolicyMode};
 use serde::{Deserialize, Serialize};
 use std::{net::IpAddr, time::SystemTime};
 
@@ -12,6 +13,9 @@ pub enum RuntimeStatus {
 pub struct ClientStatus {
     pub status: RuntimeStatus,
     pub server: String,
+    pub active_carrier: Option<CarrierBinding>,
+    pub standby_carrier: Option<CarrierBinding>,
+    pub policy_mode: Option<PolicyMode>,
     pub tunnel_address: Option<IpAddr>,
     pub interface_name: Option<String>,
     pub last_transition_unix_secs: u64,
@@ -24,12 +28,18 @@ impl ClientStatus {
         server: String,
         tunnel_address: Option<IpAddr>,
         interface_name: Option<String>,
+        active_carrier: Option<CarrierBinding>,
+        standby_carrier: Option<CarrierBinding>,
+        policy_mode: Option<PolicyMode>,
     ) -> Self {
         Self {
             status,
             server,
             tunnel_address,
             interface_name,
+            active_carrier,
+            standby_carrier,
+            policy_mode,
             last_transition_unix_secs: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -41,6 +51,7 @@ impl ClientStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSummary {
     pub peer: String,
+    pub carrier: CarrierBinding,
     pub assigned_ipv4: Option<IpAddr>,
     pub established_unix_secs: u64,
 }
@@ -49,5 +60,9 @@ pub struct SessionSummary {
 pub struct ServerStatus {
     pub bind: String,
     pub interface_name: Option<String>,
+    pub listening_carriers: Vec<CarrierBinding>,
     pub active_sessions: usize,
+    pub active_carrier: Option<CarrierBinding>,
+    pub standby_carrier: Option<CarrierBinding>,
+    pub policy_mode: Option<PolicyMode>,
 }

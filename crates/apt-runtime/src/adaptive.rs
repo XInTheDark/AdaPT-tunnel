@@ -110,6 +110,28 @@ impl AdaptiveDatapath {
         self.controller.current_mode
     }
 
+    pub fn fallback_order(&self) -> Vec<CarrierBinding> {
+        let mut order = self.persona.scheduler.fallback_order.clone();
+        let controller_order = self.controller.fallback_order(self.chosen_carrier);
+        for carrier in controller_order.into_iter().rev() {
+            if let Some(index) = order.iter().position(|value| *value == carrier) {
+                let existing = order.remove(index);
+                order.insert(0, existing);
+            } else {
+                order.insert(0, carrier);
+            }
+        }
+        order
+    }
+
+    pub fn standby_health_check_secs(&self) -> u64 {
+        u64::from(self.persona.standby_health_check_secs)
+    }
+
+    pub fn migration_threshold(&self) -> u8 {
+        self.persona.scheduler.migration_threshold
+    }
+
     pub fn remembered_profile(&self) -> Option<RememberedProfile> {
         self.remembered_profile.clone()
     }

@@ -19,8 +19,8 @@ mod wire;
 pub use apt_types::SessionPolicy;
 pub use config::{
     encode_key_hex, load_key32, AuthorizedPeerConfig, ClientConfig, ClientPersistentState,
-    ResolvedClientConfig, ResolvedServerConfig, ServerConfig, ServerSessionExtension,
-    SessionTransportParameters,
+    ResolvedClientConfig, ResolvedServerConfig, RuntimeCarrierPreference, RuntimeMode,
+    ServerConfig, ServerSessionExtension, SessionTransportParameters,
 };
 pub use error::RuntimeError;
 pub use keys::{

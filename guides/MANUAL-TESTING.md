@@ -18,7 +18,7 @@ sudo ./target/release/apt-client up
 
 Expected result:
 
-- the client establishes a session and creates its TUN interface
+- the client establishes a session over either `D1` or `S1` and creates its TUN interface
 - the server creates its TUN interface and shows one active session
 
 ## 2. Validate the tunnel interfaces
@@ -105,16 +105,36 @@ Expected:
 On the server:
 
 ```bash
-sudo tcpdump -ni any udp port 51820
+sudo tcpdump -ni any 'udp port 51820 or tcp port 443'
 sudo tcpdump -ni aptsrv0
 ```
 
 Expected:
 
-- UDP traffic on the listening port
+- UDP traffic on the `D1` listening port and/or TCP traffic on the `S1` listening port
 - decrypted IP packets traversing the server TUN interface
 
-## 8. Resume-ticket smoke test
+## 8. Stream fallback smoke test
+
+If your server config includes `stream_bind` / `stream_public_endpoint`, you can validate the `S1` runtime directly:
+
+```bash
+sudo ./target/release/apt-client up --carrier s1
+```
+
+Expected:
+
+- the client still establishes a session successfully
+- the server logs a stream-carrier session
+- `ping 10.77.0.1` and full-tunnel checks still work over that forced carrier
+
+You can then return to the normal conservative preference order with:
+
+```bash
+sudo ./target/release/apt-client up --carrier auto
+```
+
+## 9. Resume-ticket smoke test
 
 1. Connect once.
 2. Stop the client cleanly.
@@ -124,16 +144,20 @@ Expected:
 
 - the client still reconnects successfully
 - the state file is preserved on disk
+- older state/config files are rewritten with newly added runtime fields as they are loaded
 
-## 9. Common failure checks
+## 10. Common failure checks
 
 If the client does not connect:
 
-- confirm the server UDP port is reachable
+- confirm the server UDP port is reachable for `D1`
+- confirm the server TCP stream port is reachable for `S1` when fallback is enabled
 - confirm `endpoint_id` matches on both sides
 - confirm the client has the correct `shared-admission.key`
 - confirm the client has the correct `server-static-public.key`
 - confirm the server `[[peers]]` entry matches the client public key
+- confirm `stream_server_addr` / `stream_public_endpoint` are correct if you are forcing or expecting `S1`
+- confirm you did not pin the client to the wrong carrier with `--carrier`
 - confirm both processes have the privileges needed to create TUN devices
 
 If the tunnel comes up but internet access fails:

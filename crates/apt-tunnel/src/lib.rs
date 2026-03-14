@@ -258,7 +258,7 @@ pub struct EncodedPacket {
     pub bytes: Vec<u8>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct ReplayWindow {
     largest_seen: Option<u64>,
     seen: BTreeSet<u64>,
@@ -334,7 +334,7 @@ pub enum RekeyStatus {
 }
 
 /// Live tunnel session state.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TunnelSession {
     /// Session identifier.
     pub session_id: SessionId,

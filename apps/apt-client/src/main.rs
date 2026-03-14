@@ -1,12 +1,49 @@
 //! User-friendly CLI for the APT VPN client.
 
-use apt_runtime::{generate_client_identity, run_client, write_key_file, ClientConfig};
-use clap::{Parser, Subcommand};
+use apt_runtime::{
+    generate_client_identity, run_client, write_key_file, ClientConfig, RuntimeCarrierPreference,
+    RuntimeMode,
+};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::{
     io::{self, Write},
     path::PathBuf,
 };
 use tracing_subscriber::{fmt, EnvFilter};
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CliRuntimeMode {
+    Stealth,
+    Balanced,
+    Speed,
+}
+
+impl From<CliRuntimeMode> for RuntimeMode {
+    fn from(value: CliRuntimeMode) -> Self {
+        match value {
+            CliRuntimeMode::Stealth => Self::Stealth,
+            CliRuntimeMode::Balanced => Self::Balanced,
+            CliRuntimeMode::Speed => Self::Speed,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CliCarrier {
+    Auto,
+    D1,
+    S1,
+}
+
+impl From<CliCarrier> for RuntimeCarrierPreference {
+    fn from(value: CliCarrier) -> Self {
+        match value {
+            CliCarrier::Auto => Self::Auto,
+            CliCarrier::D1 => Self::D1,
+            CliCarrier::S1 => Self::S1,
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -27,6 +64,12 @@ enum Command {
         /// Path to client.toml. If omitted, common default locations are searched.
         #[arg(long)]
         config: Option<PathBuf>,
+        /// Override the runtime mode for this launch only.
+        #[arg(long, value_enum)]
+        mode: Option<CliRuntimeMode>,
+        /// Override the preferred carrier for this launch only.
+        #[arg(long, value_enum)]
+        carrier: Option<CliCarrier>,
     },
     /// Advanced: generate only a standalone client identity.
     #[command(hide = true)]
@@ -47,20 +90,39 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().command {
-        Command::Up { config } => start_client(config).await?,
+        Command::Up {
+            config,
+            mode,
+            carrier,
+        } => start_client(config, mode, carrier).await?,
         Command::GenIdentity { out_dir } => generate_identity(&out_dir)?,
     }
     Ok(())
 }
 
-async fn start_client(config: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+async fn start_client(
+    config: Option<PathBuf>,
+    mode: Option<CliRuntimeMode>,
+    carrier: Option<CliCarrier>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = match config {
         Some(path) => path,
         None => find_client_config().unwrap_or(prompt_config_path()?),
     };
     println!("Using client bundle: {}", config_path.display());
     println!("Connecting to the VPN... Press Ctrl-C to disconnect.\n");
-    let result = run_client(ClientConfig::load(&config_path)?.resolve()?).await?;
+    let loaded = ClientConfig::load(&config_path)?;
+    let _ = loaded.store(&config_path);
+    let mut resolved = loaded.resolve()?;
+    if let Some(mode) = mode {
+        let mode: RuntimeMode = mode.into();
+        resolved.runtime_mode = mode;
+        mode.apply_to(&mut resolved.session_policy);
+    }
+    if let Some(carrier) = carrier {
+        resolved.preferred_carrier = carrier.into();
+    }
+    let result = run_client(resolved).await?;
     println!("\nVPN session ended.");
     if let Some(tunnel_ip) = result.status.tunnel_address {
         println!("Last tunnel IP: {tunnel_ip}");

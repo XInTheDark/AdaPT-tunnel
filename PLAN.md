@@ -7,9 +7,9 @@ Assumptions for the current codebase and roadmap:
 - **server target:** Linux
 - **client targets:** Linux and macOS
 - **topology:** combined edge+tunnel daemon first
-- **primary live carrier today:** `D1` over UDP
+- **primary live carriers today:** `D1` over UDP with `S1` stream fallback
 - **security core today:** implemented
-- **remaining gap:** finishing the stealth / adaptive / fallback layers so the runtime better matches the spec's stated goals
+- **remaining gap:** additional carrier families, broader platform/operator hardening, and full spec-completeness work
 
 ## 1. Product target
 
@@ -65,6 +65,16 @@ Completed in **Phase 1** in this turn:
   - opaque admission/tunnel wire wrappers
   - adaptive runtime logic
   - config persistence still parsing correctly
+
+Completed in **Phase 2** in this turn:
+
+- promoted `S1` from a framing helper into a live client/server runtime path
+- added live `S1` outer-key derivation and opaque admission/confirmation/tunnel wrapping
+- integrated stream invalid-input handling with either a generic HTTP failure or decoy-like HTTP surface
+- added conservative client carrier ordering, runtime carrier preference, and reconnect/fallback orchestration
+- added sparse standby probing and carrier promotion logic
+- wired `PATH_CHALLENGE` / `PATH_RESPONSE` into the live runtime for authenticated D1 path revalidation
+- added operator-facing stream/fallback/runtime-mode config fields and best-effort config auto-upgrade persistence
 
 ## 4. Three-phase roadmap
 
@@ -130,7 +140,7 @@ This phase intentionally stops short of adding a new carrier family. It strength
 
 **Priority:** high  
 **Estimated effectiveness:** **72–85%**  
-**Status:** pending
+**Status:** **completed**
 
 #### Objective
 
@@ -228,10 +238,10 @@ Phase 3 is complete when all of the following are true:
 
 ## 5. Immediate next target
 
-With Phase 1 complete, the next highest-value work is:
+With Phases 1 and 2 complete, the next highest-value work is:
 
-1. **real `S1` stream runtime path**
-2. **decoy-capable stream invalid-input behavior**
-3. **policy-driven fallback and migration orchestration**
+1. **additional carrier families where still justified (`D2`, optionally `H1`)**
+2. **per-user provisioning / operator hardening**
+3. **IPv6, DNS automation, and broader deployment polish**
 
-That is the fastest route to turning the current AdaPT runtime from "adaptive UDP-first tunnel" into something that is materially harder to suppress across hostile networks.
+That is the fastest route to turning the current AdaPT runtime from “adaptive multi-carrier tunnel” into a broader, more operator-ready platform.

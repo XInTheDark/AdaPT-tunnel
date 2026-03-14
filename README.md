@@ -15,13 +15,14 @@ Implemented today:
 - cryptographic helpers and Noise `XXpsk2` session establishment
 - admission handshake (`C0 -> S1 -> C2 -> S3`)
 - encrypted inner tunnel packet core with replay protection and rekey support
-- carrier helpers for `D1` datagram and `S1` encrypted-stream framing
+- carrier helpers and live runtime paths for `D1` datagram and `S1` encrypted-stream transport
 - first-cut persona, policy, and observability layers
-- combined server daemon runtime over UDP (`apt-edge start`)
-- client runtime over UDP (`apt-client up`)
+- combined server daemon runtime over `D1` + `S1` (`apt-edge start`)
+- client runtime with conservative `D1 -> S1` fallback (`apt-client up`)
 - guided server initialization (`apt-edge init`)
 - ready-to-use client bundle generation (`apt-edge add-client`)
 - TUN interface wiring and basic route/NAT orchestration
+- authenticated path revalidation and sparse standby probing
 
 ## The main way to use AdaPT going forward
 
@@ -158,6 +159,9 @@ Useful options:
 - `--egress-interface` — Linux egress interface for NAT
 - `--tunnel-subnet` — tunnel subnet, for example `10.77.0.0/24`
 - `--interface-name` — server TUN name
+- `--stream-bind` — TCP listen address for the `S1` fallback carrier
+- `--stream-public-endpoint` — client-reachable `S1` endpoint, usually `host:443`
+- `--stream-decoy-surface` — whether invalid unauthenticated stream input should get a decoy-like HTTP surface
 - `--push-route` — route(s) to push to clients
 - `--dns` — DNS server(s) to suggest to clients
 - `--yes` — skip prompts and use defaults for omitted values
@@ -179,6 +183,7 @@ Start the combined server daemon.
 Useful option:
 
 - `--config` — server config path
+- `--mode stealth|balanced|speed` — one-shot runtime mode override
 
 ### `apt-client`
 
@@ -188,6 +193,8 @@ Start the VPN using a generated client bundle.
 Useful option:
 
 - `--config` — path to `client.toml`
+- `--mode stealth|balanced|speed` — one-shot runtime mode override
+- `--carrier auto|d1|s1` — one-shot preferred-carrier override
 
 If omitted, the client tries common default locations first.
 
@@ -255,11 +262,13 @@ This is now much more usable than the earlier prototype, but it is still the fir
 
 Current limitations include:
 
-- primary runtime path is UDP (`D1`) only
 - server runtime target is Linux
 - client runtime target is Linux/macOS
 - DNS automation is not yet applied automatically; route pushing is implemented first
-- advanced migration/decoy/fallback behaviors from later spec milestones are not yet complete
+- the live fallback set is now `D1` + `S1`; `D2` and `H1` are still future work
+- IPv6 tunnel/runtime handling is still incomplete
+- the stream fallback carrier is a practical generic TCP stream runtime in this repo; it is not yet a polished outer-TLS impersonation layer
+- config auto-upgrade rewrites parsed TOML with new defaulted fields, so comments/formatting in older configs may be normalized on startup
 
 ## Validation status
 

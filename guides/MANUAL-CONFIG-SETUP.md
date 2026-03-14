@@ -46,19 +46,30 @@ Key points:
 
 - `bind` — UDP listen address
 - `public_endpoint` — what clients should dial
+- `stream_bind` — optional TCP listen address for the `S1` fallback carrier
+- `stream_public_endpoint` — optional client-facing `S1` endpoint, usually `host:443`
+- `stream_decoy_surface` — whether invalid unauthenticated stream input gets a decoy-like HTTP surface
+- `runtime_mode` — default runtime preset (`stealth`, `balanced`, or `speed`)
 - `endpoint_id` — deployment identifier
 - key fields support either inline hex or `file:/path`
 - `tunnel_local_ipv4` + `tunnel_netmask` define the tunnel subnet
 - `push_routes` usually contains `0.0.0.0/0` for full tunnel
+- `allow_session_migration` — enables authenticated path revalidation / migration handling
 - `[[peers]]` must include each authorized client public key and assigned tunnel IP
 
 ### Client config
 
 - `server_addr` — server host:port the client should connect to
+- `stream_server_addr` — optional TCP `S1` endpoint for fallback, usually `host:443`
+- `runtime_mode` — default runtime preset (`stealth`, `balanced`, or `speed`)
+- `preferred_carrier` — `d1`, `s1`, or `auto`
 - `endpoint_id` — must match the server
 - `admission_key` — shared deployment key
 - `server_static_public_key` — server public key
 - `client_static_private_key` — client's stable static private key
+- `enable_s1_fallback` — enables conservative UDP-to-stream fallback when `stream_server_addr` is present
+- `allow_session_migration` — enables authenticated path revalidation and standby promotion logic
+- `standby_health_check_secs` — override for standby probe cadence; `0` keeps the persona-selected sparse cadence
 - `use_server_pushed_routes = true` is usually the easiest choice
 
 ## 4. Start the server
@@ -67,17 +78,36 @@ Key points:
 sudo ./target/release/apt-edge start --config /etc/adapt/server.toml
 ```
 
+Optional one-shot override:
+
+- `--mode stealth|balanced|speed`
+
 ## 5. Start the client
 
 ```bash
 sudo ./target/release/apt-client up
 ```
 
+Optional one-shot overrides:
+
+- `--mode stealth|balanced|speed`
+- `--carrier auto|d1|s1`
+
 ## 6. Validate manually
 
 Use:
 
 - `guides/MANUAL-TESTING.md`
+
+## Config upgrade behavior
+
+Client and server config files are best-effort normalized on load so newly added defaults appear automatically in older TOML files.
+
+That is convenient for upgrades, but it also means:
+
+- comments may be dropped
+- formatting may be normalized
+- key ordering may change after a newer binary loads and rewrites the file
 
 ## When to use this manual path
 

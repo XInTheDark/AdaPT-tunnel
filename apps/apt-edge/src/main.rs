@@ -2,9 +2,10 @@
 
 use apt_runtime::{
     generate_client_identity, generate_server_keyset, load_key32, run_server, write_key_file,
-    AuthorizedPeerConfig, ClientConfig, ServerConfig, SessionPolicy,
+    AuthorizedPeerConfig, ClientConfig, RuntimeCarrierPreference, RuntimeMode, ServerConfig,
+    SessionPolicy,
 };
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use ipnet::{IpNet, Ipv4Net};
 use std::{
     collections::HashSet,
@@ -14,6 +15,23 @@ use std::{
     path::{Path, PathBuf},
 };
 use tracing_subscriber::{fmt, EnvFilter};
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CliRuntimeMode {
+    Stealth,
+    Balanced,
+    Speed,
+}
+
+impl From<CliRuntimeMode> for RuntimeMode {
+    fn from(value: CliRuntimeMode) -> Self {
+        match value {
+            CliRuntimeMode::Stealth => Self::Stealth,
+            CliRuntimeMode::Balanced => Self::Balanced,
+            CliRuntimeMode::Speed => Self::Speed,
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -39,6 +57,15 @@ enum Command {
         /// Client-reachable host:port that clients should use, for example 203.0.113.10:51820 or vpn.example.com:51820.
         #[arg(long)]
         public_endpoint: Option<String>,
+        /// TCP listen address for the stream fallback carrier.
+        #[arg(long)]
+        stream_bind: Option<SocketAddr>,
+        /// Client-reachable host:port for the stream fallback carrier.
+        #[arg(long)]
+        stream_public_endpoint: Option<String>,
+        /// Return a decoy-like HTTP surface on invalid stream input.
+        #[arg(long, default_value_t = true)]
+        stream_decoy_surface: bool,
         /// Logical deployment identifier.
         #[arg(long)]
         endpoint_id: Option<String>,
@@ -85,6 +112,9 @@ enum Command {
         /// Path to the server config. If omitted, common default locations are searched.
         #[arg(long)]
         config: Option<PathBuf>,
+        /// Override the runtime mode for this launch only.
+        #[arg(long, value_enum)]
+        mode: Option<CliRuntimeMode>,
     },
     /// Advanced: generate only the raw key files.
     #[command(hide = true)]
@@ -109,6 +139,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             out_dir,
             bind,
             public_endpoint,
+            stream_bind,
+            stream_public_endpoint,
+            stream_decoy_surface,
             endpoint_id,
             egress_interface,
             tunnel_subnet,
@@ -120,6 +153,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             out_dir,
             bind,
             public_endpoint,
+            stream_bind,
+            stream_public_endpoint,
+            stream_decoy_surface,
             endpoint_id,
             egress_interface,
             tunnel_subnet,
@@ -135,7 +171,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             client_ip,
             yes,
         } => add_client(config, name, out_dir, client_ip, yes)?,
-        Command::Start { config } => start_server(config).await?,
+        Command::Start { config, mode } => start_server(config, mode).await?,
         Command::GenKeys { out_dir } => write_server_keyset(&out_dir)?,
     }
     Ok(())
@@ -145,6 +181,9 @@ fn init_server(
     out_dir: Option<PathBuf>,
     bind: Option<SocketAddr>,
     public_endpoint: Option<String>,
+    stream_bind: Option<SocketAddr>,
+    stream_public_endpoint: Option<String>,
+    stream_decoy_surface: bool,
     endpoint_id: Option<String>,
     egress_interface: Option<String>,
     tunnel_subnet: Option<String>,
@@ -182,6 +221,41 @@ fn init_server(
                 }
             },
         };
+    let stream_bind = match stream_bind {
+        Some(bind) => Some(bind),
+        None if yes => Some("0.0.0.0:443".parse()?),
+        None => {
+            let value = prompt_string(
+                "Optional S1 stream listen address (blank to disable)",
+                Some("0.0.0.0:443"),
+            )?;
+            if value.trim().is_empty() {
+                None
+            } else {
+                Some(value.parse()?)
+            }
+        }
+    };
+    let stream_public_endpoint = match stream_public_endpoint {
+        Some(value) => {
+            validate_client_reachable_endpoint(&value)?;
+            Some(value)
+        }
+        None if stream_bind.is_some() && yes => derive_stream_public_endpoint(&public_endpoint),
+        None if stream_bind.is_some() => {
+            let value = prompt_string(
+                "Optional S1 client-reachable endpoint (blank to disable)",
+                derive_stream_public_endpoint(&public_endpoint).as_deref(),
+            )?;
+            if value.trim().is_empty() {
+                None
+            } else {
+                validate_client_reachable_endpoint(&value)?;
+                Some(value)
+            }
+        }
+        None => None,
+    };
     let endpoint_id = match endpoint_id {
         Some(value) => value,
         None if yes => "adapt-prod".to_string(),
@@ -242,6 +316,10 @@ fn init_server(
     let config = ServerConfig {
         bind,
         public_endpoint,
+        runtime_mode: RuntimeMode::Stealth,
+        stream_bind,
+        stream_public_endpoint,
+        stream_decoy_surface,
         endpoint_id,
         admission_key: "file:./shared-admission.key".to_string(),
         server_static_private_key: "file:./server-static-private.key".to_string(),
@@ -258,6 +336,7 @@ fn init_server(
         push_routes,
         push_dns,
         session_policy: SessionPolicy::default(),
+        allow_session_migration: true,
         keepalive_secs: 25,
         session_idle_timeout_secs: 180,
         udp_recv_buffer_bytes: 4 * 1024 * 1024,
@@ -282,6 +361,10 @@ fn init_server(
         "  • Public endpoint for clients: {}",
         config.public_endpoint
     );
+    match &config.stream_public_endpoint {
+        Some(endpoint) => println!("  • Stream fallback endpoint: {endpoint}"),
+        None => println!("  • Stream fallback endpoint: disabled"),
+    }
     println!("  • Tunnel subnet: {}", subnet);
     println!("  • Server tunnel IP: {}", config.tunnel_local_ipv4);
     println!("  • Egress interface: {egress_interface}");
@@ -379,6 +462,8 @@ fn add_client(
 
     let client_config = ClientConfig {
         server_addr: server_config.public_endpoint.clone(),
+        runtime_mode: server_config.runtime_mode,
+        preferred_carrier: RuntimeCarrierPreference::D1,
         endpoint_id: server_config.endpoint_id.clone(),
         admission_key: "file:./shared-admission.key".to_string(),
         server_static_public_key: "file:./server-static-public.key".to_string(),
@@ -389,6 +474,10 @@ fn add_client(
         routes: Vec::new(),
         use_server_pushed_routes: true,
         session_policy: SessionPolicy::default(),
+        enable_s1_fallback: true,
+        stream_server_addr: server_config.stream_public_endpoint.clone(),
+        allow_session_migration: true,
+        standby_health_check_secs: 0,
         keepalive_secs: 25,
         session_idle_timeout_secs: 180,
         handshake_timeout_secs: 5,
@@ -422,7 +511,10 @@ fn add_client(
     Ok(())
 }
 
-async fn start_server(config: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+async fn start_server(
+    config: Option<PathBuf>,
+    mode: Option<CliRuntimeMode>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = match config {
         Some(path) => path,
         None => match find_server_config() {
@@ -432,7 +524,15 @@ async fn start_server(config: Option<PathBuf>) -> Result<(), Box<dyn std::error:
     };
     println!("Starting APT server using {}", config_path.display());
     println!("Press Ctrl-C to stop.\n");
-    let result = run_server(ServerConfig::load(&config_path)?.resolve()?).await?;
+    let loaded = ServerConfig::load(&config_path)?;
+    let _ = loaded.store(&config_path);
+    let mut resolved = loaded.resolve()?;
+    if let Some(mode) = mode {
+        let mode: RuntimeMode = mode.into();
+        resolved.runtime_mode = mode;
+        mode.apply_to(&mut resolved.session_policy);
+    }
+    let result = run_server(resolved).await?;
     println!("\nServer stopped.");
     println!(
         "Active sessions at shutdown: {}",
@@ -528,6 +628,12 @@ fn validate_client_reachable_endpoint(endpoint: &str) -> Result<(), Box<dyn std:
         }
     }
     Ok(())
+}
+
+fn derive_stream_public_endpoint(endpoint: &str) -> Option<String> {
+    let trimmed = endpoint.trim();
+    let (host, _) = trimmed.rsplit_once(':')?;
+    Some(format!("{host}:443"))
 }
 
 fn first_usable_ipv4(subnet: Ipv4Net) -> Result<Ipv4Addr, Box<dyn std::error::Error>> {

@@ -8,7 +8,7 @@ It uses the user-friendly CLI flow instead of hand-editing every file first.
 
 - server: Linux
 - client: Linux or macOS
-- transport: UDP (`D1`)
+- transport: `D1` over UDP, with optional `S1` TCP stream fallback
 - auth model: shared deployment admission key + one authorized stable client identity per client
 
 ## 1. Get the binaries
@@ -106,6 +106,12 @@ The command walks you through the main values, then creates:
 - the server key files
 - a `bundles/` directory for client packages
 
+If you keep the stream fallback enabled, the resulting config also carries:
+
+- `stream_bind` for the server-side `S1` listener, typically `0.0.0.0:443`
+- `stream_public_endpoint` for the client-facing `S1` endpoint, typically `host:443`
+- `stream_decoy_surface = true` so unauthenticated stream input gets a decoy-like HTTP surface instead of an APT-specific error
+
 Important:
 
 - for the client-facing endpoint, enter the server's **real client-reachable IP:port or DNS name:port**
@@ -120,6 +126,9 @@ You can also run it non-interactively, for example:
   --out-dir /etc/adapt \
   --bind 0.0.0.0:51820 \
   --public-endpoint vpn.example.com:51820 \
+  --stream-bind 0.0.0.0:443 \
+  --stream-public-endpoint vpn.example.com:443 \
+  --stream-decoy-surface \
   --endpoint-id adapt-prod \
   --egress-interface eth0 \
   --tunnel-subnet 10.77.0.0/24 \
@@ -163,6 +172,14 @@ On the Linux server:
 sudo ./target/release/apt-edge start --config /etc/adapt/server.toml
 ```
 
+Useful one-shot overrides:
+
+- `--mode stealth` — most conservative behavior and the default
+- `--mode balanced` — less conservative pacing/fallback behavior
+- `--mode speed` — fastest policy preset
+
+When `stream_bind` is configured, the server listens on both the UDP `D1` address and the TCP `S1` fallback address.
+
 The server must run with privileges sufficient to:
 
 - create/configure the TUN interface
@@ -197,6 +214,13 @@ Then start the client using the default config location:
 sudo ./target/release/apt-client up
 ```
 
+Useful one-shot overrides:
+
+- `--mode stealth|balanced|speed` — temporary runtime-mode override
+- `--carrier auto|d1|s1` — temporary carrier preference override
+
+The generated bundle keeps `D1` as the normal first choice and uses `S1` conservatively when the stream endpoint is present and the datagram path is blocked or unstable.
+
 On macOS, leave `interface_name` unset in `client.toml` unless you intentionally want to target a specific `utunX` interface.
 When the session comes up, the client logs the assigned tunnel IP/interface and the server logs the accepted session.
 
@@ -218,6 +242,7 @@ Use the manual verification checklist in:
 
 - The server runtime is Linux-only right now.
 - The client runtime is intended for Linux/macOS.
+- Existing config files are best-effort auto-upgraded on load so newly added runtime fields appear automatically, but that rewrite normalizes TOML formatting and may drop comments from older files.
 - Full tunnel is typically achieved by pushing `0.0.0.0/0`.
 - The more raw/manual config-file-oriented flow lives in:
   - `guides/MANUAL-CONFIG-SETUP.md`

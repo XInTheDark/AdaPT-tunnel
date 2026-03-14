@@ -55,6 +55,36 @@ pub enum AptEvent {
         session_id: SessionId,
         mode: PolicyMode,
     },
+    /// The runtime switched carriers for the session.
+    CarrierSwitched {
+        session_id: SessionId,
+        from: CarrierBinding,
+        to: CarrierBinding,
+    },
+    /// The runtime failed over to a different carrier.
+    CarrierFallback {
+        session_id: SessionId,
+        from: Option<CarrierBinding>,
+        to: CarrierBinding,
+        reason: &'static str,
+    },
+    /// The runtime promoted a different carrier/path.
+    CarrierMigrated {
+        session_id: SessionId,
+        from: Option<CarrierBinding>,
+        to: CarrierBinding,
+    },
+    /// The peer address/path was revalidated and migrated.
+    PathMigrated {
+        session_id: SessionId,
+        carrier: CarrierBinding,
+    },
+    /// Sparse standby probe result.
+    StandbyProbeResult {
+        session_id: SessionId,
+        carrier: CarrierBinding,
+        success: bool,
+    },
 }
 
 /// Minimal telemetry snapshot for UIs and CLIs.
@@ -88,7 +118,12 @@ impl TelemetrySnapshot {
             AptEvent::AdmissionAccepted { .. } => self.accepted_admissions += 1,
             AptEvent::AdmissionRejected { .. } => self.rejected_admissions += 1,
             AptEvent::TunnelEstablished { .. } => self.established_sessions += 1,
-            AptEvent::PolicyModeChanged { .. } => {}
+            AptEvent::PolicyModeChanged { .. }
+            | AptEvent::CarrierSwitched { .. }
+            | AptEvent::CarrierFallback { .. }
+            | AptEvent::CarrierMigrated { .. }
+            | AptEvent::PathMigrated { .. }
+            | AptEvent::StandbyProbeResult { .. } => {}
         }
     }
 }
@@ -136,6 +171,57 @@ pub fn record_event(
         }
         AptEvent::PolicyModeChanged { session_id, mode } => {
             info!(session = %session_id, mode = ?mode, "policy mode changed");
+        }
+        AptEvent::CarrierSwitched {
+            session_id,
+            from,
+            to,
+        } => {
+            info!(session = %session_id, from = %from.as_str(), to = %to.as_str(), "carrier switched");
+        }
+        AptEvent::CarrierFallback {
+            session_id,
+            from,
+            to,
+            reason,
+        } => {
+            info!(
+                session = %session_id,
+                from = from.map(CarrierBinding::as_str),
+                to = %to.as_str(),
+                reason = *reason,
+                "carrier fallback"
+            );
+        }
+        AptEvent::CarrierMigrated {
+            session_id,
+            from,
+            to,
+        } => {
+            info!(
+                session = %session_id,
+                from = from.map(CarrierBinding::as_str),
+                to = %to.as_str(),
+                "carrier migrated"
+            );
+        }
+        AptEvent::PathMigrated {
+            session_id,
+            carrier,
+        } => {
+            info!(session = %session_id, carrier = %carrier.as_str(), "path migrated");
+        }
+        AptEvent::StandbyProbeResult {
+            session_id,
+            carrier,
+            success,
+        } => {
+            info!(
+                session = %session_id,
+                carrier = %carrier.as_str(),
+                success = *success,
+                "standby probe result"
+            );
         }
     }
 }

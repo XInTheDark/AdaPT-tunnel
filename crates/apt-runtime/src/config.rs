@@ -2,8 +2,8 @@ use crate::{error::RuntimeError, status::RuntimeStatus};
 use apt_persona::RememberedProfile;
 use apt_policy::LocalNormalityProfile;
 use apt_types::{
-    EndpointId, GatewayFingerprint, LinkType, LocalNetworkContext, PolicyMode, PublicRouteHint,
-    SessionPolicy,
+    CarrierBinding, EndpointId, GatewayFingerprint, LinkType, LocalNetworkContext, PolicyMode,
+    PublicRouteHint, SessionPolicy,
 };
 use base64::Engine as _;
 use ipnet::IpNet;
@@ -59,9 +59,77 @@ fn default_state_path() -> PathBuf {
     PathBuf::from(DEFAULT_STATE_PATH)
 }
 
+fn default_enable_s1_fallback() -> bool {
+    true
+}
+
+fn default_allow_session_migration() -> bool {
+    true
+}
+
+fn default_standby_health_check_secs() -> u64 {
+    0
+}
+
+fn default_preferred_carrier() -> RuntimeCarrierPreference {
+    RuntimeCarrierPreference::D1
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuntimeMode {
+    #[default]
+    Stealth,
+    Balanced,
+    Speed,
+}
+
+impl RuntimeMode {
+    pub fn apply_to(self, policy: &mut SessionPolicy) {
+        match self {
+            Self::Stealth => {
+                policy.initial_mode = PolicyMode::StealthFirst;
+                policy.allow_speed_first = false;
+            }
+            Self::Balanced => {
+                policy.initial_mode = PolicyMode::Balanced;
+                policy.allow_speed_first = true;
+            }
+            Self::Speed => {
+                policy.initial_mode = PolicyMode::SpeedFirst;
+                policy.allow_speed_first = true;
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuntimeCarrierPreference {
+    Auto,
+    #[default]
+    D1,
+    S1,
+}
+
+impl RuntimeCarrierPreference {
+    #[must_use]
+    pub const fn binding(self) -> Option<CarrierBinding> {
+        match self {
+            Self::Auto => None,
+            Self::D1 => Some(CarrierBinding::D1DatagramUdp),
+            Self::S1 => Some(CarrierBinding::S1EncryptedStream),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientConfig {
     pub server_addr: String,
+    #[serde(default)]
+    pub runtime_mode: RuntimeMode,
+    #[serde(default = "default_preferred_carrier")]
+    pub preferred_carrier: RuntimeCarrierPreference,
     pub endpoint_id: String,
     pub admission_key: String,
     pub server_static_public_key: String,
@@ -78,6 +146,14 @@ pub struct ClientConfig {
     pub use_server_pushed_routes: bool,
     #[serde(default)]
     pub session_policy: SessionPolicy,
+    #[serde(default = "default_enable_s1_fallback")]
+    pub enable_s1_fallback: bool,
+    #[serde(default)]
+    pub stream_server_addr: Option<String>,
+    #[serde(default = "default_allow_session_migration")]
+    pub allow_session_migration: bool,
+    #[serde(default = "default_standby_health_check_secs")]
+    pub standby_health_check_secs: u64,
     #[serde(default = "default_keepalive_secs")]
     pub keepalive_secs: u64,
     #[serde(default = "default_session_idle_timeout_secs")]
@@ -102,6 +178,7 @@ impl ClientConfig {
             source,
         })?;
         let mut config: Self = toml::from_str(&raw)?;
+        maybe_upgrade_toml_file(path, &raw, &config)?;
         let base = path.parent().unwrap_or_else(|| Path::new("."));
         if config.state_path.is_relative() {
             config.state_path = base.join(&config.state_path);
@@ -117,8 +194,12 @@ impl ClientConfig {
     }
 
     pub fn resolve(&self) -> Result<ResolvedClientConfig, RuntimeError> {
+        let mut session_policy = self.session_policy.clone();
+        self.runtime_mode.apply_to(&mut session_policy);
         Ok(ResolvedClientConfig {
             server_addr: resolve_socket_addr(&self.server_addr)?,
+            runtime_mode: self.runtime_mode,
+            preferred_carrier: self.preferred_carrier,
             endpoint_id: EndpointId::new(self.endpoint_id.clone()),
             admission_key: load_key32(&self.admission_key)?,
             server_static_public_key: load_key32(&self.server_static_public_key)?,
@@ -128,7 +209,15 @@ impl ClientConfig {
             interface_name: self.interface_name.clone(),
             routes: self.routes.clone(),
             use_server_pushed_routes: self.use_server_pushed_routes,
-            session_policy: self.session_policy.clone(),
+            session_policy,
+            enable_s1_fallback: self.enable_s1_fallback,
+            stream_server_addr: self
+                .stream_server_addr
+                .as_deref()
+                .map(resolve_socket_addr)
+                .transpose()?,
+            allow_session_migration: self.allow_session_migration,
+            standby_health_check_secs: self.standby_health_check_secs,
             keepalive_secs: self.keepalive_secs,
             session_idle_timeout_secs: self.session_idle_timeout_secs,
             handshake_timeout_secs: self.handshake_timeout_secs,
@@ -151,6 +240,14 @@ pub struct AuthorizedPeerConfig {
 pub struct ServerConfig {
     pub bind: SocketAddr,
     pub public_endpoint: String,
+    #[serde(default)]
+    pub runtime_mode: RuntimeMode,
+    #[serde(default)]
+    pub stream_bind: Option<SocketAddr>,
+    #[serde(default)]
+    pub stream_public_endpoint: Option<String>,
+    #[serde(default)]
+    pub stream_decoy_surface: bool,
     pub endpoint_id: String,
     pub admission_key: String,
     pub server_static_private_key: String,
@@ -175,6 +272,8 @@ pub struct ServerConfig {
     pub push_dns: Vec<IpAddr>,
     #[serde(default)]
     pub session_policy: SessionPolicy,
+    #[serde(default = "default_allow_session_migration")]
+    pub allow_session_migration: bool,
     #[serde(default = "default_keepalive_secs")]
     pub keepalive_secs: u64,
     #[serde(default = "default_session_idle_timeout_secs")]
@@ -195,6 +294,7 @@ impl ServerConfig {
             source,
         })?;
         let mut config: Self = toml::from_str(&raw)?;
+        maybe_upgrade_toml_file(path, &raw, &config)?;
         let base = path.parent().unwrap_or_else(|| Path::new("."));
         resolve_file_spec_relative_to_base(&mut config.admission_key, base);
         resolve_file_spec_relative_to_base(&mut config.server_static_private_key, base);
@@ -212,9 +312,18 @@ impl ServerConfig {
     }
 
     pub fn resolve(&self) -> Result<ResolvedServerConfig, RuntimeError> {
+        let mut session_policy = self.session_policy.clone();
+        self.runtime_mode.apply_to(&mut session_policy);
         Ok(ResolvedServerConfig {
             bind: self.bind,
             public_endpoint: self.public_endpoint.clone(),
+            runtime_mode: self.runtime_mode,
+            stream_bind: self.stream_bind.or(Some(self.bind)),
+            stream_public_endpoint: self
+                .stream_public_endpoint
+                .clone()
+                .or_else(|| Some(self.public_endpoint.clone())),
+            stream_decoy_surface: self.stream_decoy_surface,
             endpoint_id: EndpointId::new(self.endpoint_id.clone()),
             admission_key: load_key32(&self.admission_key)?,
             server_static_private_key: load_key32(&self.server_static_private_key)?,
@@ -230,7 +339,8 @@ impl ServerConfig {
             nat_ipv4: self.nat_ipv4,
             push_routes: self.push_routes.clone(),
             push_dns: self.push_dns.clone(),
-            session_policy: self.session_policy.clone(),
+            session_policy,
+            allow_session_migration: self.allow_session_migration,
             keepalive_secs: self.keepalive_secs,
             session_idle_timeout_secs: self.session_idle_timeout_secs,
             udp_recv_buffer_bytes: self.udp_recv_buffer_bytes,
@@ -247,6 +357,8 @@ impl ServerConfig {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedClientConfig {
     pub server_addr: SocketAddr,
+    pub runtime_mode: RuntimeMode,
+    pub preferred_carrier: RuntimeCarrierPreference,
     pub endpoint_id: EndpointId,
     pub admission_key: [u8; 32],
     pub server_static_public_key: [u8; 32],
@@ -257,6 +369,10 @@ pub struct ResolvedClientConfig {
     pub routes: Vec<IpNet>,
     pub use_server_pushed_routes: bool,
     pub session_policy: SessionPolicy,
+    pub enable_s1_fallback: bool,
+    pub stream_server_addr: Option<SocketAddr>,
+    pub allow_session_migration: bool,
+    pub standby_health_check_secs: u64,
     pub keepalive_secs: u64,
     pub session_idle_timeout_secs: u64,
     pub handshake_timeout_secs: u64,
@@ -287,6 +403,10 @@ impl ResolvedAuthorizedPeer {
 pub struct ResolvedServerConfig {
     pub bind: SocketAddr,
     pub public_endpoint: String,
+    pub runtime_mode: RuntimeMode,
+    pub stream_bind: Option<SocketAddr>,
+    pub stream_public_endpoint: Option<String>,
+    pub stream_decoy_surface: bool,
     pub endpoint_id: EndpointId,
     pub admission_key: [u8; 32],
     pub server_static_private_key: [u8; 32],
@@ -303,6 +423,7 @@ pub struct ResolvedServerConfig {
     pub push_routes: Vec<IpNet>,
     pub push_dns: Vec<IpAddr>,
     pub session_policy: SessionPolicy,
+    pub allow_session_migration: bool,
     pub keepalive_secs: u64,
     pub session_idle_timeout_secs: u64,
     pub udp_recv_buffer_bytes: usize,
@@ -356,13 +477,19 @@ pub struct ClientPersistentState {
     pub last_status: Option<RuntimeStatus>,
     pub resume_ticket: Option<Vec<u8>>,
     #[serde(default)]
+    pub last_successful_carrier: Option<CarrierBinding>,
+    #[serde(default)]
     pub network_profile: Option<PersistedNetworkProfile>,
 }
 
 impl ClientPersistentState {
     pub fn load(path: &Path) -> Result<Self, RuntimeError> {
         match fs::read_to_string(path) {
-            Ok(raw) => Ok(toml::from_str(&raw)?),
+            Ok(raw) => {
+                let state: Self = toml::from_str(&raw)?;
+                maybe_upgrade_toml_file(path, &raw, &state)?;
+                Ok(state)
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(source) => Err(RuntimeError::IoWithPath {
                 path: path.to_path_buf(),
@@ -452,6 +579,22 @@ fn store_toml<T: Serialize>(path: &Path, value: &T) -> Result<(), RuntimeError> 
             path: parent.to_path_buf(),
             source,
         })?;
+    }
+    fs::write(path, serialized).map_err(|source| RuntimeError::IoWithPath {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(())
+}
+
+fn maybe_upgrade_toml_file<T: Serialize>(
+    path: &Path,
+    raw: &str,
+    value: &T,
+) -> Result<(), RuntimeError> {
+    let serialized = toml::to_string_pretty(value)?;
+    if raw.trim() == serialized.trim() {
+        return Ok(());
     }
     fs::write(path, serialized).map_err(|source| RuntimeError::IoWithPath {
         path: path.to_path_buf(),
@@ -646,5 +789,85 @@ tunnel_ipv4 = "10.77.0.2"
         let parsed: ServerConfig = toml::from_str(&raw).unwrap();
         assert_eq!(parsed.endpoint_id, "edge-prod-1");
         assert_eq!(parsed.peers.len(), 1);
+    }
+
+    #[test]
+    fn client_load_upgrades_missing_phase_two_fields() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("adapt-client-upgrade-{unique}"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("shared-admission.key"), "11".repeat(32)).unwrap();
+        fs::write(dir.join("server-static-public.key"), "22".repeat(32)).unwrap();
+        fs::write(dir.join("client-static-private.key"), "33".repeat(32)).unwrap();
+        let config_path = dir.join("client.toml");
+        fs::write(
+            &config_path,
+            r#"
+server_addr = "198.51.100.10:51820"
+endpoint_id = "adapt-demo"
+admission_key = "file:./shared-admission.key"
+server_static_public_key = "file:./server-static-public.key"
+client_static_private_key = "file:./client-static-private.key"
+"#,
+        )
+        .unwrap();
+        let loaded = ClientConfig::load(&config_path).unwrap();
+        assert_eq!(loaded.runtime_mode, RuntimeMode::Stealth);
+        let upgraded = fs::read_to_string(&config_path).unwrap();
+        assert!(upgraded.contains("runtime_mode = \"stealth\""));
+        assert!(upgraded.contains("preferred_carrier = \"d1\""));
+        assert!(upgraded.contains("enable_s1_fallback = true"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn server_load_upgrades_missing_phase_two_fields() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("adapt-server-upgrade-{unique}"));
+        fs::create_dir_all(dir.join("clients")).unwrap();
+        for file in [
+            "shared-admission.key",
+            "server-static-private.key",
+            "server-static-public.key",
+            "cookie.key",
+            "ticket.key",
+            "clients/laptop.client-static-public.key",
+        ] {
+            fs::write(dir.join(file), "44".repeat(32)).unwrap();
+        }
+        let config_path = dir.join("server.toml");
+        fs::write(
+            &config_path,
+            r#"
+bind = "0.0.0.0:51820"
+public_endpoint = "203.0.113.10:51820"
+endpoint_id = "adapt-demo"
+admission_key = "file:./shared-admission.key"
+server_static_private_key = "file:./server-static-private.key"
+server_static_public_key = "file:./server-static-public.key"
+cookie_key = "file:./cookie.key"
+ticket_key = "file:./ticket.key"
+tunnel_local_ipv4 = "10.77.0.1"
+tunnel_netmask = "255.255.255.0"
+
+[[peers]]
+name = "laptop"
+client_static_public_key = "file:./clients/laptop.client-static-public.key"
+tunnel_ipv4 = "10.77.0.2"
+"#,
+        )
+        .unwrap();
+        let loaded = ServerConfig::load(&config_path).unwrap();
+        assert_eq!(loaded.runtime_mode, RuntimeMode::Stealth);
+        let upgraded = fs::read_to_string(&config_path).unwrap();
+        assert!(upgraded.contains("stream_decoy_surface = false"));
+        assert!(upgraded.contains("allow_session_migration = true"));
+        let _ = fs::remove_dir_all(dir);
     }
 }

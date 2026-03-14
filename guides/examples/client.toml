@@ -1,6 +1,9 @@
-# Client configuration for the first production-style APT runtime.
+# Client configuration for the current production-style APT runtime.
 
 server_addr = "203.0.113.10:51820"
+stream_server_addr = "203.0.113.10:443"
+runtime_mode = "stealth"
+preferred_carrier = "d1"
 endpoint_id = "adapt-prod"
 
 # Secret material can be provided inline as 64 hex characters or via `file:/path/to/key`.
@@ -18,6 +21,12 @@ bind = "0.0.0.0:0"
 # Normally leave this empty and let the server push routes.
 routes = []
 use_server_pushed_routes = true
+
+# Enable conservative UDP->stream fallback and authenticated D1 path revalidation.
+enable_s1_fallback = true
+allow_session_migration = true
+# 0 means "use the persona-selected sparse standby probe cadence".
+standby_health_check_secs = 0
 
 keepalive_secs = 25
 session_idle_timeout_secs = 180

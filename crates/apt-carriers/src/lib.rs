@@ -166,6 +166,34 @@ impl S1Carrier {
         Self::new(16_384, 1_120, false)
     }
 
+    /// Encodes one payload into a single length-prefixed stream record.
+    pub fn encode_record(&self, payload: &[u8]) -> Result<Vec<u8>, CarrierError> {
+        if payload.is_empty() || payload.len() > usize::from(self.max_record_size) {
+            return Err(CarrierError::MalformedRecord);
+        }
+        let len = u16::try_from(payload.len()).map_err(|_| CarrierError::Oversize)?;
+        let mut record = Vec::with_capacity(usize::from(len) + 2);
+        record.extend_from_slice(&len.to_be_bytes());
+        record.extend_from_slice(payload);
+        Ok(record)
+    }
+
+    /// Decodes exactly one length-prefixed stream record.
+    pub fn decode_record(&self, encoded: &[u8]) -> Result<Vec<u8>, CarrierError> {
+        if encoded.len() < 3 {
+            return Err(CarrierError::MalformedRecord);
+        }
+        let len = u16::from_be_bytes([encoded[0], encoded[1]]);
+        let payload_len = usize::from(len);
+        if payload_len == 0
+            || payload_len > usize::from(self.max_record_size)
+            || encoded.len() != payload_len + 2
+        {
+            return Err(CarrierError::MalformedRecord);
+        }
+        Ok(encoded[2..].to_vec())
+    }
+
     /// Encodes payload bytes into length-prefixed records suitable for an
     /// already-encrypted stream transport.
     pub fn encode_records(&self, payload: &[u8]) -> Result<Vec<Vec<u8>>, CarrierError> {
@@ -175,11 +203,7 @@ impl S1Carrier {
         let chunk_budget = usize::from(self.max_record_size);
         let mut records = Vec::new();
         for chunk in payload.chunks(chunk_budget) {
-            let len = u16::try_from(chunk.len()).map_err(|_| CarrierError::Oversize)?;
-            let mut record = Vec::with_capacity(usize::from(len) + 2);
-            record.extend_from_slice(&len.to_be_bytes());
-            record.extend_from_slice(chunk);
-            records.push(record);
+            records.push(self.encode_record(chunk)?);
         }
         Ok(records)
     }

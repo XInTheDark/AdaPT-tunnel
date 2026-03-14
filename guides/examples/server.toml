@@ -1,7 +1,11 @@
-# Combined Linux server daemon configuration for the first production-style APT runtime.
+# Combined Linux server daemon configuration for the current production-style APT runtime.
 
 bind = "0.0.0.0:51820"
 public_endpoint = "203.0.113.10:51820"
+stream_bind = "0.0.0.0:443"
+stream_public_endpoint = "203.0.113.10:443"
+runtime_mode = "stealth"
+stream_decoy_surface = true
 endpoint_id = "adapt-prod"
 
 # Secret material can be provided inline as 64 hex characters or via `file:/path/to/key`.
@@ -25,6 +29,8 @@ nat_ipv4 = true
 push_routes = ["0.0.0.0/0"]
 push_dns = ["1.1.1.1", "1.0.0.1"]
 
+# Enable authenticated path revalidation and the S1 stream fallback listener.
+allow_session_migration = true
 keepalive_secs = 25
 session_idle_timeout_secs = 180
 udp_recv_buffer_bytes = 4194304
