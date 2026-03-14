@@ -7,7 +7,7 @@ use apt_admission::{initiate_c0, ClientCredential, ClientSessionRequest};
 use apt_carriers::D1Carrier;
 use apt_types::{AuthProfile, EndpointId, RekeyLimits};
 use std::{
-    net::{Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::PathBuf,
 };
 
@@ -102,10 +102,14 @@ fn test_server_config() -> ResolvedServerConfig {
         interface_name: Some("aptsrv0".to_string()),
         tunnel_local_ipv4: Ipv4Addr::new(10, 77, 0, 1),
         tunnel_netmask: Ipv4Addr::new(255, 255, 255, 0),
+        tunnel_local_ipv6: Some("fd77:77::1".parse().unwrap()),
+        tunnel_ipv6_prefix_len: Some(64),
         tunnel_mtu: 1380,
         egress_interface: Some("eth0".to_string()),
         enable_ipv4_forwarding: true,
         nat_ipv4: true,
+        enable_ipv6_forwarding: true,
+        nat_ipv6: true,
         push_routes: Vec::new(),
         push_dns: Vec::new(),
         session_policy: apt_types::SessionPolicy::default(),
@@ -121,6 +125,7 @@ fn test_server_config() -> ResolvedServerConfig {
             admission_key: Some([0x77; 32]),
             client_static_public_key: [0x88; 32],
             tunnel_ipv4: Ipv4Addr::new(10, 77, 0, 2),
+            tunnel_ipv6: Some("fd77:77::2".parse().unwrap()),
         }],
     }
 }
@@ -131,8 +136,21 @@ fn ipv4_destination_parsing_works() {
         0x45, 0x00, 0x00, 0x14, 0, 0, 0, 0, 64, 17, 0, 0, 10, 77, 0, 2, 8, 8, 8, 8,
     ];
     assert_eq!(
-        extract_destination_ipv4(&packet),
-        Some(Ipv4Addr::new(8, 8, 8, 8))
+        extract_destination_ip(&packet),
+        Some(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)))
+    );
+}
+
+#[test]
+fn ipv6_destination_parsing_works() {
+    let packet = [
+        0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x40, 0xfd, 0x77, 0x00, 0x77, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    ];
+    assert_eq!(
+        extract_destination_ip(&packet),
+        Some(IpAddr::V6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1)))
     );
 }
 

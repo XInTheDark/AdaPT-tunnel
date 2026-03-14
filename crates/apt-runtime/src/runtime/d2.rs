@@ -16,7 +16,7 @@ pub(super) async fn open_client_d2_connection(
         config.session_idle_timeout_secs,
     )?;
     let endpoint = build_client_d2_endpoint(
-        config.bind,
+        client_bind_for_remote(config.bind, d2.endpoint.addr),
         config.udp_recv_buffer_bytes,
         config.udp_send_buffer_bytes,
         client_config,

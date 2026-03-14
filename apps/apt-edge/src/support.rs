@@ -135,6 +135,43 @@ pub(super) fn next_available_client_ipv4(config: &ServerConfig) -> CliResult<Ipv
     Err("no free client IPs remain in the configured tunnel subnet".into())
 }
 
+pub(super) fn first_usable_ipv6(subnet: Ipv6Net) -> CliResult<Ipv6Addr> {
+    let candidate = Ipv6Addr::from(u128::from(subnet.network()).saturating_add(1));
+    if subnet.contains(&candidate) {
+        Ok(candidate)
+    } else {
+        Err("IPv6 tunnel subnet is too small to allocate a server IP".into())
+    }
+}
+
+pub(super) fn next_available_client_ipv6(config: &ServerConfig) -> CliResult<Option<Ipv6Addr>> {
+    let (Some(tunnel_local_ipv6), Some(prefix_len)) =
+        (config.tunnel_local_ipv6, config.tunnel_ipv6_prefix_len)
+    else {
+        return Ok(None);
+    };
+    let subnet = ipv6_subnet_from(tunnel_local_ipv6, prefix_len)?;
+    let mut used = HashSet::new();
+    used.insert(tunnel_local_ipv6);
+    for peer in &config.peers {
+        if let Some(tunnel_ipv6) = peer.tunnel_ipv6 {
+            used.insert(tunnel_ipv6);
+        }
+    }
+    let mut candidate = u128::from(subnet.network()).saturating_add(2);
+    loop {
+        let ip = Ipv6Addr::from(candidate);
+        if !subnet.contains(&ip) {
+            break;
+        }
+        if !used.contains(&ip) {
+            return Ok(Some(ip));
+        }
+        candidate = candidate.saturating_add(1);
+    }
+    Err("no free client IPv6 addresses remain in the configured tunnel subnet".into())
+}
+
 pub(super) fn init_logging() {
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,apt_runtime=info"));
@@ -150,6 +187,10 @@ fn subnet_from(ip: Ipv4Addr, netmask: Ipv4Addr) -> CliResult<Ipv4Net> {
     let prefix = mask.count_ones() as u8;
     let network = Ipv4Addr::from(u32::from(ip) & mask);
     Ok(Ipv4Net::new(network, prefix)?)
+}
+
+fn ipv6_subnet_from(ip: Ipv6Addr, prefix_len: u8) -> CliResult<Ipv6Net> {
+    Ok(Ipv6Net::new(ip, prefix_len)?.trunc())
 }
 
 pub(super) fn ipv4_netmask(prefix_len: u8) -> Ipv4Addr {
@@ -177,7 +218,7 @@ pub(super) fn is_path_within(base: &Path, candidate: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_client_reachable_endpoint;
+    use super::*;
 
     #[test]
     fn placeholder_public_endpoint_is_rejected() {
@@ -197,5 +238,68 @@ mod tests {
     #[test]
     fn dns_public_endpoint_is_allowed() {
         assert!(validate_client_reachable_endpoint("vpn.my-domain.test:51820").is_ok());
+    }
+
+    #[test]
+    fn first_ipv6_server_address_comes_from_the_subnet() {
+        let subnet: Ipv6Net = "fd77:77::/64".parse().unwrap();
+        assert_eq!(
+            first_usable_ipv6(subnet).unwrap(),
+            "fd77:77::1".parse::<Ipv6Addr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn next_client_ipv6_skips_used_assignments() {
+        let config = ServerConfig {
+            bind: "0.0.0.0:51820".parse().unwrap(),
+            public_endpoint: "203.0.113.10:51820".to_string(),
+            runtime_mode: RuntimeMode::Stealth,
+            d2_bind: None,
+            d2_public_endpoint: None,
+            d2_certificate: None,
+            d2_private_key: None,
+            stream_bind: None,
+            stream_public_endpoint: None,
+            stream_decoy_surface: false,
+            endpoint_id: "adapt-demo".to_string(),
+            admission_key: "11".repeat(32),
+            server_static_private_key: "22".repeat(32),
+            server_static_public_key: "33".repeat(32),
+            cookie_key: "44".repeat(32),
+            ticket_key: "55".repeat(32),
+            interface_name: Some("aptsrv0".to_string()),
+            tunnel_local_ipv4: Ipv4Addr::new(10, 77, 0, 1),
+            tunnel_netmask: Ipv4Addr::new(255, 255, 255, 0),
+            tunnel_local_ipv6: Some("fd77:77::1".parse().unwrap()),
+            tunnel_ipv6_prefix_len: Some(64),
+            tunnel_mtu: 1380,
+            egress_interface: Some("eth0".to_string()),
+            enable_ipv4_forwarding: true,
+            nat_ipv4: true,
+            enable_ipv6_forwarding: true,
+            nat_ipv6: true,
+            push_routes: Vec::new(),
+            push_dns: Vec::new(),
+            session_policy: SessionPolicy::default(),
+            allow_session_migration: true,
+            keepalive_secs: 25,
+            session_idle_timeout_secs: 180,
+            udp_recv_buffer_bytes: 4 * 1024 * 1024,
+            udp_send_buffer_bytes: 4 * 1024 * 1024,
+            peers: vec![AuthorizedPeerConfig {
+                name: "alpha".to_string(),
+                auth_profile: AuthProfile::PerUser,
+                user_id: Some("alpha".to_string()),
+                admission_key: Some("file:/tmp/alpha.key".to_string()),
+                client_static_public_key: "file:/tmp/alpha.pub".to_string(),
+                tunnel_ipv4: Ipv4Addr::new(10, 77, 0, 2),
+                tunnel_ipv6: Some("fd77:77::2".parse().unwrap()),
+            }],
+        };
+        assert_eq!(
+            next_available_client_ipv6(&config).unwrap(),
+            Some("fd77:77::3".parse::<Ipv6Addr>().unwrap())
+        );
     }
 }

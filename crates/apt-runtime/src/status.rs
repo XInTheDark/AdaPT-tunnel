@@ -17,6 +17,8 @@ pub struct ClientStatus {
     pub standby_carrier: Option<CarrierBinding>,
     pub policy_mode: Option<PolicyMode>,
     pub tunnel_address: Option<IpAddr>,
+    #[serde(default)]
+    pub tunnel_addresses: Vec<IpAddr>,
     pub interface_name: Option<String>,
     pub last_transition_unix_secs: u64,
 }
@@ -27,6 +29,7 @@ impl ClientStatus {
         status: RuntimeStatus,
         server: String,
         tunnel_address: Option<IpAddr>,
+        tunnel_addresses: Vec<IpAddr>,
         interface_name: Option<String>,
         active_carrier: Option<CarrierBinding>,
         standby_carrier: Option<CarrierBinding>,
@@ -36,6 +39,7 @@ impl ClientStatus {
             status,
             server,
             tunnel_address,
+            tunnel_addresses,
             interface_name,
             active_carrier,
             standby_carrier,
@@ -53,6 +57,7 @@ pub struct SessionSummary {
     pub peer: String,
     pub carrier: CarrierBinding,
     pub assigned_ipv4: Option<IpAddr>,
+    pub assigned_ipv6: Option<IpAddr>,
     pub established_unix_secs: u64,
 }
 

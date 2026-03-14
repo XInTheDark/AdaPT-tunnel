@@ -42,7 +42,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     collections::HashMap,
     io,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -207,6 +207,7 @@ struct PendingPathValidation {
 struct ServerSessionState {
     session_id: SessionId,
     assigned_ipv4: Ipv4Addr,
+    assigned_ipv6: Option<Ipv6Addr>,
     tunnel: TunnelSession,
     adaptive: AdaptiveDatapath,
     outer_keys: RuntimeOuterKeys,

@@ -131,7 +131,12 @@ async fn start_client(
     }
     let result = run_client(resolved).await?;
     println!("\nVPN session ended.");
-    if let Some(tunnel_ip) = result.status.tunnel_address {
+    if !result.status.tunnel_addresses.is_empty() {
+        println!("Last tunnel IPs:");
+        for address in &result.status.tunnel_addresses {
+            println!("  • {address}");
+        }
+    } else if let Some(tunnel_ip) = result.status.tunnel_address {
         println!("Last tunnel IP: {tunnel_ip}");
     }
     Ok(())

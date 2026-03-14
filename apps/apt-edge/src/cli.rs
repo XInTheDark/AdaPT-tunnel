@@ -102,6 +102,9 @@ pub(super) enum Command {
         /// Tunnel subnet in CIDR form, for example 10.77.0.0/24.
         #[arg(long)]
         tunnel_subnet: Option<String>,
+        /// Optional IPv6 tunnel subnet in CIDR form, for example fd77:77::/64.
+        #[arg(long)]
+        tunnel_subnet6: Option<String>,
         /// Preferred server TUN interface name.
         #[arg(long)]
         interface_name: Option<String>,
@@ -132,6 +135,9 @@ pub(super) enum Command {
         /// Specific client tunnel IP to assign. If omitted, the next free IP is chosen.
         #[arg(long)]
         client_ip: Option<Ipv4Addr>,
+        /// Specific client tunnel IPv6 to assign. If omitted, the next free IPv6 is chosen when the server has IPv6 enabled.
+        #[arg(long)]
+        client_ipv6: Option<Ipv6Addr>,
         /// Use defaults for any missing values instead of prompting.
         #[arg(long, default_value_t = false)]
         yes: bool,

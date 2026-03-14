@@ -14,6 +14,7 @@ pub(super) fn init_server(
     endpoint_id: Option<String>,
     egress_interface: Option<String>,
     tunnel_subnet: Option<String>,
+    tunnel_subnet6: Option<String>,
     interface_name: Option<String>,
     push_routes: Vec<String>,
     dns_servers: Vec<IpAddr>,
@@ -145,13 +146,34 @@ pub(super) fn init_server(
     let subnet: Ipv4Net = tunnel_subnet
         .parse()
         .map_err(|error| format!("invalid tunnel subnet `{tunnel_subnet}`: {error}"))?;
+    let tunnel_subnet6 = match tunnel_subnet6 {
+        Some(value) => Some(value),
+        None if yes => Some("fd77:77::/64".to_string()),
+        None if prompt_bool("Enable IPv6 tunnel addressing", true)? => Some(prompt_string(
+            "IPv6 tunnel subnet (CIDR)",
+            Some("fd77:77::/64"),
+        )?),
+        None => None,
+    };
+    let subnet6 = tunnel_subnet6
+        .as_deref()
+        .map(|value| {
+            value
+                .parse::<Ipv6Net>()
+                .map_err(|error| format!("invalid IPv6 tunnel subnet `{value}`: {error}"))
+        })
+        .transpose()?;
     let interface_name = match interface_name {
         Some(value) => value,
         None if yes => "aptsrv0".to_string(),
         None => prompt_string("Server TUN interface name", Some("aptsrv0"))?,
     };
     let push_routes = if push_routes.is_empty() {
-        vec!["0.0.0.0/0".to_string()]
+        let mut defaults = vec!["0.0.0.0/0".to_string()];
+        if subnet6.is_some() {
+            defaults.push("::/0".to_string());
+        }
+        defaults
     } else {
         push_routes
     };
@@ -194,6 +216,11 @@ pub(super) fn init_server(
     };
 
     let server_ip = first_usable_ipv4(subnet)?;
+    let server_ipv6 = subnet6
+        .as_ref()
+        .copied()
+        .map(first_usable_ipv6)
+        .transpose()?;
     let config = ServerConfig {
         bind,
         public_endpoint,
@@ -214,10 +241,14 @@ pub(super) fn init_server(
         interface_name: Some(interface_name.clone()),
         tunnel_local_ipv4: server_ip,
         tunnel_netmask: ipv4_netmask(subnet.prefix_len()),
+        tunnel_local_ipv6: server_ipv6,
+        tunnel_ipv6_prefix_len: subnet6.as_ref().map(Ipv6Net::prefix_len),
         tunnel_mtu: 1380,
         egress_interface: Some(egress_interface.clone()),
         enable_ipv4_forwarding: true,
         nat_ipv4: true,
+        enable_ipv6_forwarding: server_ipv6.is_some(),
+        nat_ipv6: server_ipv6.is_some(),
         push_routes,
         push_dns,
         session_policy: SessionPolicy::default(),
@@ -259,6 +290,13 @@ pub(super) fn init_server(
     }
     println!("  • Tunnel subnet: {}", subnet);
     println!("  • Server tunnel IP: {}", config.tunnel_local_ipv4);
+    match (subnet6, config.tunnel_local_ipv6) {
+        (Some(subnet6), Some(ipv6)) => {
+            println!("  • Tunnel IPv6 subnet: {subnet6}");
+            println!("  • Server tunnel IPv6: {ipv6}");
+        }
+        _ => println!("  • Tunnel IPv6: disabled"),
+    }
     println!("  • Egress interface: {egress_interface}");
     println!("\nNext steps:");
     println!("  1. Add a client bundle:");

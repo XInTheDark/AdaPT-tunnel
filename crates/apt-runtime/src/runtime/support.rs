@@ -181,15 +181,27 @@ pub(super) fn persist_client_learning(
             });
 }
 
-pub(super) fn extract_destination_ipv4(packet: &[u8]) -> Option<Ipv4Addr> {
+pub(super) fn extract_destination_ip(packet: &[u8]) -> Option<IpAddr> {
     let version = packet.first().map(|value| value >> 4)?;
     if version == 4 && packet.len() >= 20 {
-        Some(Ipv4Addr::new(
+        Some(IpAddr::V4(Ipv4Addr::new(
             packet[16], packet[17], packet[18], packet[19],
-        ))
+        )))
+    } else if version == 6 && packet.len() >= 40 {
+        let mut octets = [0_u8; 16];
+        octets.copy_from_slice(&packet[24..40]);
+        Some(IpAddr::V6(Ipv6Addr::from(octets)))
     } else {
         None
     }
+}
+
+pub(super) fn tunnel_addresses(transport: &SessionTransportParameters) -> Vec<IpAddr> {
+    let mut addresses = vec![IpAddr::V4(transport.client_ipv4)];
+    if let Some(ipv6) = transport.client_ipv6 {
+        addresses.push(IpAddr::V6(ipv6));
+    }
+    addresses
 }
 
 pub(super) fn candidate_epoch_slots(now_secs: u64) -> [u64; 3] {

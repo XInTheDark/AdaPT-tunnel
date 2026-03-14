@@ -271,7 +271,7 @@ pub(super) fn handle_server_path_loss(
 pub(super) fn expire_server_session(
     sessions: &mut HashMap<SessionId, ServerSessionState>,
     path_to_session: &mut HashMap<PathHandle, SessionId>,
-    sessions_by_client_ip: &mut HashMap<Ipv4Addr, SessionId>,
+    sessions_by_tunnel_ip: &mut HashMap<IpAddr, SessionId>,
     session_id: SessionId,
 ) {
     if let Some(session) = sessions.remove(&session_id) {
@@ -279,7 +279,10 @@ pub(super) fn expire_server_session(
         if let Some(standby) = session.standby_path {
             path_to_session.remove(&standby.handle);
         }
-        sessions_by_client_ip.remove(&session.assigned_ipv4);
+        sessions_by_tunnel_ip.remove(&IpAddr::V4(session.assigned_ipv4));
+        if let Some(ipv6) = session.assigned_ipv6 {
+            sessions_by_tunnel_ip.remove(&IpAddr::V6(ipv6));
+        }
     }
 }
 

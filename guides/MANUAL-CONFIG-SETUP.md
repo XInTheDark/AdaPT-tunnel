@@ -60,10 +60,13 @@ Key points:
 - `endpoint_id` — deployment identifier
 - the core 32-byte APT keys support either inline hex or `file:/path`
 - `tunnel_local_ipv4` + `tunnel_netmask` define the tunnel subnet
-- `push_routes` usually contains `0.0.0.0/0` for full tunnel
+- `tunnel_local_ipv6` + `tunnel_ipv6_prefix_len` optionally enable an IPv6 tunnel subnet
+- `enable_ipv4_forwarding` / `nat_ipv4` control Linux IPv4 forwarding and NAT
+- `enable_ipv6_forwarding` / `nat_ipv6` control Linux IPv6 forwarding and NAT66
+- `push_routes` usually contains `0.0.0.0/0` and `::/0` for full tunnel
 - `push_dns` is applied automatically where supported by the client platform
 - `allow_session_migration` — enables authenticated path revalidation / migration handling
-- `[[peers]]` must include each authorized client public key and assigned tunnel IP
+- `[[peers]]` must include each authorized client public key and assigned tunnel IPv4, and can also assign `tunnel_ipv6`
 - for the recommended per-user model, each `[[peers]]` entry should also set:
   - `auth_profile = "per-user"`
   - `user_id = "..."` (or let it default to `name`)

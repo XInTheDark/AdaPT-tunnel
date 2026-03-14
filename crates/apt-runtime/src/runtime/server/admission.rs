@@ -12,7 +12,7 @@ pub(super) async fn handle_server_admission_datagram(
     decoded: DecodedServerAdmissionPacket,
     sessions: &mut HashMap<SessionId, ServerSessionState>,
     path_to_session: &mut HashMap<PathHandle, SessionId>,
-    sessions_by_client_ip: &mut HashMap<Ipv4Addr, SessionId>,
+    sessions_by_tunnel_ip: &mut HashMap<IpAddr, SessionId>,
     telemetry: &mut TelemetrySnapshot,
     observability: &ObservabilityConfig,
 ) -> Result<bool, RuntimeError> {
@@ -72,7 +72,7 @@ pub(super) async fn handle_server_admission_datagram(
         config,
         sessions,
         path_to_session,
-        sessions_by_client_ip,
+        sessions_by_tunnel_ip,
         telemetry,
         observability,
         server_reply.session,
@@ -93,7 +93,7 @@ pub(super) async fn handle_server_admission_stream(
     decoded: DecodedServerAdmissionPacket,
     sessions: &mut HashMap<SessionId, ServerSessionState>,
     path_to_session: &mut HashMap<PathHandle, SessionId>,
-    sessions_by_client_ip: &mut HashMap<Ipv4Addr, SessionId>,
+    sessions_by_tunnel_ip: &mut HashMap<IpAddr, SessionId>,
     telemetry: &mut TelemetrySnapshot,
     observability: &ObservabilityConfig,
 ) -> Result<bool, RuntimeError> {
@@ -151,7 +151,7 @@ pub(super) async fn handle_server_admission_stream(
         config,
         sessions,
         path_to_session,
-        sessions_by_client_ip,
+        sessions_by_tunnel_ip,
         telemetry,
         observability,
         server_reply.session,
@@ -173,7 +173,7 @@ pub(super) async fn handle_server_admission_d2(
     decoded: DecodedServerAdmissionPacket,
     sessions: &mut HashMap<SessionId, ServerSessionState>,
     path_to_session: &mut HashMap<PathHandle, SessionId>,
-    sessions_by_client_ip: &mut HashMap<Ipv4Addr, SessionId>,
+    sessions_by_tunnel_ip: &mut HashMap<IpAddr, SessionId>,
     telemetry: &mut TelemetrySnapshot,
     observability: &ObservabilityConfig,
 ) -> Result<bool, RuntimeError> {
@@ -239,7 +239,7 @@ pub(super) async fn handle_server_admission_d2(
         config,
         sessions,
         path_to_session,
-        sessions_by_client_ip,
+        sessions_by_tunnel_ip,
         telemetry,
         observability,
         server_reply.session,
@@ -254,7 +254,7 @@ fn install_server_session(
     config: &ResolvedServerConfig,
     sessions: &mut HashMap<SessionId, ServerSessionState>,
     path_to_session: &mut HashMap<PathHandle, SessionId>,
-    sessions_by_client_ip: &mut HashMap<Ipv4Addr, SessionId>,
+    sessions_by_tunnel_ip: &mut HashMap<IpAddr, SessionId>,
     telemetry: &mut TelemetrySnapshot,
     observability: &ObservabilityConfig,
     session: EstablishedSession,
@@ -269,8 +269,21 @@ fn install_server_session(
         last_recv_secs: now_secs(),
     };
     let session_id = session.session_id;
-    if let Some(existing_session_id) = sessions_by_client_ip.insert(peer.tunnel_ipv4, session_id) {
-        sessions.remove(&existing_session_id);
+    let assigned_ips = peer_tunnel_addresses(&peer);
+    let conflicting_sessions = assigned_ips
+        .iter()
+        .filter_map(|assigned_ip| sessions_by_tunnel_ip.get(assigned_ip).copied())
+        .collect::<std::collections::HashSet<_>>();
+    for existing_session_id in conflicting_sessions {
+        expire_server_session(
+            sessions,
+            path_to_session,
+            sessions_by_tunnel_ip,
+            existing_session_id,
+        );
+    }
+    for assigned_ip in &assigned_ips {
+        sessions_by_tunnel_ip.insert(*assigned_ip, session_id);
     }
     path_to_session.insert(path_handle, session_id);
     let adaptive = AdaptiveDatapath::new_server(
@@ -294,6 +307,7 @@ fn install_server_session(
         ServerSessionState {
             session_id,
             assigned_ipv4: peer.tunnel_ipv4,
+            assigned_ipv6: peer.tunnel_ipv6,
             tunnel,
             adaptive,
             outer_keys: RuntimeOuterKeys {
@@ -312,6 +326,7 @@ fn install_server_session(
     info!(
         peer = %peer.name,
         assigned_ipv4 = %peer.tunnel_ipv4,
+        assigned_ipv6 = ?peer.tunnel_ipv6,
         credential = %credential_label,
         carrier = %binding.as_str(),
         "server session established"
@@ -337,4 +352,12 @@ fn install_server_session(
         observability,
     );
     Ok(true)
+}
+
+fn peer_tunnel_addresses(peer: &ResolvedAuthorizedPeer) -> Vec<IpAddr> {
+    let mut ips = vec![IpAddr::V4(peer.tunnel_ipv4)];
+    if let Some(ipv6) = peer.tunnel_ipv6 {
+        ips.push(IpAddr::V6(ipv6));
+    }
+    ips
 }

@@ -30,6 +30,8 @@ pub(super) async fn run_client(
         local_ipv4: transport.client_ipv4,
         peer_ipv4: transport.server_ipv4,
         netmask: transport.netmask,
+        local_ipv6: transport.client_ipv6,
+        ipv6_prefix_len: transport.ipv6_prefix_len,
         mtu: transport.mtu,
     })
     .await?;
@@ -60,8 +62,10 @@ pub(super) async fn run_client(
 
     info!(
         server = %config.server_addr,
-        tunnel_ip = %transport.client_ipv4,
+        tunnel_ipv4 = %transport.client_ipv4,
+        tunnel_ipv6 = ?transport.client_ipv6,
         server_tunnel_ip = %transport.server_ipv4,
+        server_tunnel_ipv6 = ?transport.server_ipv6,
         interface = %tun.interface_name,
         routes = ?effective_routes,
         carrier = %handshake.binding.as_str(),

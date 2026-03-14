@@ -181,7 +181,8 @@ You can also override the output file and client IP if needed:
   --name laptop \
   --auth per-user \
   --out-file /tmp/laptop.aptbundle \
-  --client-ip 10.77.0.2
+  --client-ip 10.77.0.2 \
+  --client-ipv6 fd77:77::2
 ```
 
 If a device is retired or lost, revoke it cleanly on the server with:

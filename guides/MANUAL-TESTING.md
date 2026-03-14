@@ -32,7 +32,8 @@ ip addr show aptsrv0
 Expected:
 
 - interface exists
-- server tunnel IP is present, for example `10.77.0.1/24`
+- server tunnel IPv4 is present, for example `10.77.0.1/24`
+- if IPv6 is enabled, the server tunnel IPv6 is also present, for example `fd77:77::1/64`
 
 ### On the client (Linux)
 
@@ -48,7 +49,8 @@ ifconfig | grep -A4 utun
 
 Expected:
 
-- a TUN/utun interface exists with the assigned client tunnel IP
+- a TUN/utun interface exists with the assigned client tunnel IPv4
+- if IPv6 is enabled, the assigned client tunnel IPv6 is also present
 
 ## 3. Ping across the encrypted tunnel
 
@@ -62,13 +64,36 @@ Expected:
 
 - replies from the server tunnel IP
 
+If IPv6 is enabled, also verify:
+
+```bash
+ping6 fd77:77::1
+```
+
+Expected:
+
+- replies from the server tunnel IPv6
+
 ## 4. Validate full-tunnel internet egress
 
-If the server pushes `0.0.0.0/0` and NAT is enabled:
+If the server pushes `0.0.0.0/0` and/or `::/0` and forwarding/NAT are enabled:
+
+On Linux:
+
+```bash
+ip route get 1.1.1.1
+ip -6 route get 2606:4700:4700::1111
+curl https://ifconfig.me
+curl -6 https://ifconfig.me
+```
+
+On macOS:
 
 ```bash
 route -n get 1.1.1.1
+route -n get -inet6 2606:4700:4700::1111
 curl https://ifconfig.me
+curl -6 https://ifconfig.me
 ```
 
 Expected:
@@ -116,14 +141,19 @@ On the Linux server:
 
 ```bash
 sysctl net.ipv4.ip_forward
+sysctl net.ipv6.conf.all.forwarding
 sudo iptables -t nat -S | grep MASQUERADE
+sudo ip6tables -t nat -S | grep MASQUERADE
 sudo iptables -S FORWARD
+sudo ip6tables -S FORWARD
 ```
 
 Expected:
 
 - `net.ipv4.ip_forward = 1`
+- if IPv6 is enabled, `net.ipv6.conf.all.forwarding = 1`
 - a `MASQUERADE` rule for the tunnel subnet
+- if IPv6 NAT66 is enabled, a matching `ip6tables` `MASQUERADE` rule for the IPv6 tunnel subnet
 - `FORWARD` accept rules for the tunnel interface
 
 ## 8. Packet inspection (optional)

@@ -10,7 +10,7 @@ use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs},
     path::{Path, PathBuf},
 };
 

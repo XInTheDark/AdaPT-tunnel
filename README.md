@@ -174,6 +174,7 @@ Useful options:
 - `--endpoint-id` — deployment identifier
 - `--egress-interface` — Linux egress interface for NAT
 - `--tunnel-subnet` — tunnel subnet, for example `10.77.0.0/24`
+- `--tunnel-subnet6` — optional IPv6 tunnel subnet, for example `fd77:77::/64`
 - `--interface-name` — server TUN name
 - `--stream-bind` — TCP listen address for the `S1` fallback carrier
 - `--stream-public-endpoint` — client-reachable `S1` endpoint, usually `host:443`
@@ -195,6 +196,7 @@ Useful options:
 - `--auth shared|per-user` — choose the admission model; `per-user` is the recommended default
 - `--out-file` — where to write the single-file client bundle
 - `--client-ip` — manually choose the client tunnel IP
+- `--client-ipv6` — manually choose the client tunnel IPv6 when the server IPv6 tunnel is enabled
 - `--yes` — skip prompts for missing values
 
 #### `apt-edge list-clients`
@@ -312,7 +314,7 @@ Current limitations include:
 - client runtime target is Linux/macOS
 - DNS automation is best-effort rather than universal: Linux currently uses `resolvectl`, and macOS temporarily overrides the primary network service DNS while the tunnel is up
 - the live carrier set is now `D1`, optional `D2`, and optional `S1`; `H1` remains future work
-- IPv6 tunnel/runtime handling is still incomplete
+- IPv6 tunnel addressing, routing, and Linux server forwarding/NAT are now supported; fresh `apt-edge init` runs generate both IPv4 and IPv6 tunnel ranges by default
 - the stream fallback carrier is a practical generic TCP stream runtime in this repo; it is not yet a polished outer-TLS impersonation layer
 - config auto-upgrade rewrites parsed TOML with new defaulted fields, so comments/formatting in older configs may be normalized on startup
 

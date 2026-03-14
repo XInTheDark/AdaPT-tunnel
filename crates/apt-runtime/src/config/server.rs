@@ -12,6 +12,8 @@ pub struct AuthorizedPeerConfig {
     pub admission_key: Option<String>,
     pub client_static_public_key: String,
     pub tunnel_ipv4: Ipv4Addr,
+    #[serde(default)]
+    pub tunnel_ipv6: Option<Ipv6Addr>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,6 +46,10 @@ pub struct ServerConfig {
     pub interface_name: Option<String>,
     pub tunnel_local_ipv4: Ipv4Addr,
     pub tunnel_netmask: Ipv4Addr,
+    #[serde(default)]
+    pub tunnel_local_ipv6: Option<Ipv6Addr>,
+    #[serde(default)]
+    pub tunnel_ipv6_prefix_len: Option<u8>,
     #[serde(default = "default_tunnel_mtu")]
     pub tunnel_mtu: u16,
     #[serde(default)]
@@ -52,6 +58,10 @@ pub struct ServerConfig {
     pub enable_ipv4_forwarding: bool,
     #[serde(default)]
     pub nat_ipv4: bool,
+    #[serde(default)]
+    pub enable_ipv6_forwarding: bool,
+    #[serde(default)]
+    pub nat_ipv6: bool,
     #[serde(default)]
     pub push_routes: Vec<IpNet>,
     #[serde(default)]
@@ -112,8 +122,15 @@ impl ServerConfig {
                 "allow_hybrid_pq is not supported yet in the live runtime".to_string(),
             ));
         }
+        validate_ipv6_config(self)?;
         let mut session_policy = self.session_policy.clone();
         self.runtime_mode.apply_to(&mut session_policy);
+        let peers = self
+            .peers
+            .iter()
+            .map(ResolvedAuthorizedPeer::from_config)
+            .collect::<Result<Vec<_>, _>>()?;
+        validate_peer_assignments(self, &peers)?;
         Ok(ResolvedServerConfig {
             bind: self.bind,
             public_endpoint: self.public_endpoint.clone(),
@@ -134,10 +151,14 @@ impl ServerConfig {
             interface_name: self.interface_name.clone(),
             tunnel_local_ipv4: self.tunnel_local_ipv4,
             tunnel_netmask: self.tunnel_netmask,
+            tunnel_local_ipv6: self.tunnel_local_ipv6,
+            tunnel_ipv6_prefix_len: self.tunnel_ipv6_prefix_len,
             tunnel_mtu: self.tunnel_mtu,
             egress_interface: self.egress_interface.clone(),
             enable_ipv4_forwarding: self.enable_ipv4_forwarding,
             nat_ipv4: self.nat_ipv4,
+            enable_ipv6_forwarding: self.enable_ipv6_forwarding,
+            nat_ipv6: self.nat_ipv6,
             push_routes: self.push_routes.clone(),
             push_dns: self.push_dns.clone(),
             session_policy,
@@ -146,11 +167,7 @@ impl ServerConfig {
             session_idle_timeout_secs: self.session_idle_timeout_secs,
             udp_recv_buffer_bytes: self.udp_recv_buffer_bytes,
             udp_send_buffer_bytes: self.udp_send_buffer_bytes,
-            peers: self
-                .peers
-                .iter()
-                .map(ResolvedAuthorizedPeer::from_config)
-                .collect::<Result<Vec<_>, _>>()?,
+            peers,
         })
     }
 }
@@ -163,6 +180,7 @@ pub struct ResolvedAuthorizedPeer {
     pub admission_key: Option<[u8; 32]>,
     pub client_static_public_key: [u8; 32],
     pub tunnel_ipv4: Ipv4Addr,
+    pub tunnel_ipv6: Option<Ipv6Addr>,
 }
 
 impl ResolvedAuthorizedPeer {
@@ -187,6 +205,7 @@ impl ResolvedAuthorizedPeer {
                 .transpose()?,
             client_static_public_key: load_key32(&config.client_static_public_key)?,
             tunnel_ipv4: config.tunnel_ipv4,
+            tunnel_ipv6: config.tunnel_ipv6,
         })
     }
 }
@@ -217,10 +236,14 @@ pub struct ResolvedServerConfig {
     pub interface_name: Option<String>,
     pub tunnel_local_ipv4: Ipv4Addr,
     pub tunnel_netmask: Ipv4Addr,
+    pub tunnel_local_ipv6: Option<Ipv6Addr>,
+    pub tunnel_ipv6_prefix_len: Option<u8>,
     pub tunnel_mtu: u16,
     pub egress_interface: Option<String>,
     pub enable_ipv4_forwarding: bool,
     pub nat_ipv4: bool,
+    pub enable_ipv6_forwarding: bool,
+    pub nat_ipv6: bool,
     pub push_routes: Vec<IpNet>,
     pub push_dns: Vec<IpAddr>,
     pub session_policy: SessionPolicy,
@@ -237,6 +260,9 @@ pub struct SessionTransportParameters {
     pub client_ipv4: Ipv4Addr,
     pub server_ipv4: Ipv4Addr,
     pub netmask: Ipv4Addr,
+    pub client_ipv6: Option<Ipv6Addr>,
+    pub server_ipv6: Option<Ipv6Addr>,
+    pub ipv6_prefix_len: Option<u8>,
     pub mtu: u16,
     pub routes: Vec<IpNet>,
     pub dns_servers: Vec<IpAddr>,
@@ -287,4 +313,52 @@ fn resolve_server_d2_config(
         certificate_spec,
         private_key_spec,
     }))
+}
+
+fn validate_ipv6_config(config: &ServerConfig) -> Result<(), RuntimeError> {
+    if config.tunnel_local_ipv6.is_some() != config.tunnel_ipv6_prefix_len.is_some() {
+        return Err(RuntimeError::InvalidConfig(
+            "IPv6 tunnel settings require both tunnel_local_ipv6 and tunnel_ipv6_prefix_len"
+                .to_string(),
+        ));
+    }
+    if let Some(prefix_len) = config.tunnel_ipv6_prefix_len {
+        if prefix_len > 128 {
+            return Err(RuntimeError::InvalidConfig(
+                "tunnel_ipv6_prefix_len must be between 0 and 128".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_peer_assignments(
+    config: &ServerConfig,
+    peers: &[ResolvedAuthorizedPeer],
+) -> Result<(), RuntimeError> {
+    let mut tunnel_ipv4 = std::collections::HashSet::new();
+    let mut tunnel_ipv6 = std::collections::HashSet::new();
+    for peer in peers {
+        if !tunnel_ipv4.insert(peer.tunnel_ipv4) {
+            return Err(RuntimeError::InvalidConfig(format!(
+                "duplicate tunnel_ipv4 assignment detected for peer `{}`",
+                peer.name
+            )));
+        }
+        if let Some(ipv6) = peer.tunnel_ipv6 {
+            if config.tunnel_local_ipv6.is_none() || config.tunnel_ipv6_prefix_len.is_none() {
+                return Err(RuntimeError::InvalidConfig(format!(
+                    "peer `{}` has tunnel_ipv6 configured, but the server IPv6 tunnel is not enabled",
+                    peer.name
+                )));
+            }
+            if !tunnel_ipv6.insert(ipv6) {
+                return Err(RuntimeError::InvalidConfig(format!(
+                    "duplicate tunnel_ipv6 assignment detected for peer `{}`",
+                    peer.name
+                )));
+            }
+        }
+    }
+    Ok(())
 }

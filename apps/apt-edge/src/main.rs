@@ -9,12 +9,12 @@ use apt_runtime::{
 };
 use apt_types::AuthProfile;
 use clap::{Parser, Subcommand, ValueEnum};
-use ipnet::{IpNet, Ipv4Net};
+use ipnet::{IpNet, Ipv4Net, Ipv6Net};
 use std::{
     collections::HashSet,
     fs,
     io::{self, Write},
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
 };
 use tracing_subscriber::{fmt, EnvFilter};
@@ -59,6 +59,7 @@ async fn run() -> CliResult {
             endpoint_id,
             egress_interface,
             tunnel_subnet,
+            tunnel_subnet6,
             interface_name,
             push_routes,
             dns_servers,
@@ -76,6 +77,7 @@ async fn run() -> CliResult {
             endpoint_id,
             egress_interface,
             tunnel_subnet,
+            tunnel_subnet6,
             interface_name,
             push_routes,
             dns_servers,
@@ -87,8 +89,9 @@ async fn run() -> CliResult {
             auth,
             out_file,
             client_ip,
+            client_ipv6,
             yes,
-        } => add_client(config, name, auth, out_file, client_ip, yes)?,
+        } => add_client(config, name, auth, out_file, client_ip, client_ipv6, yes)?,
         Command::ListClients { config } => list_clients(config)?,
         Command::RevokeClient { config, name, yes } => revoke_client(config, name, yes)?,
         Command::Start { config, mode } => start_server(config, mode).await?,

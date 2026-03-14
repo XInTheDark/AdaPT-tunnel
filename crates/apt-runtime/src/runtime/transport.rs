@@ -15,7 +15,7 @@ pub(super) async fn open_client_standby_path(
     match binding {
         CarrierBinding::D1DatagramUdp => {
             let socket = build_udp_socket(
-                config.bind,
+                client_bind_for_remote(config.bind, config.server_addr),
                 config.udp_recv_buffer_bytes,
                 config.udp_send_buffer_bytes,
             )?;
@@ -210,9 +210,24 @@ pub(super) fn build_udp_socket(
     let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_nonblocking(true)?;
     socket.set_reuse_address(true)?;
+    if bind.is_ipv6() {
+        let _ = socket.set_only_v6(false);
+    }
     socket.set_recv_buffer_size(recv_buffer_bytes)?;
     socket.set_send_buffer_size(send_buffer_bytes)?;
     socket.bind(&bind.into())?;
     let std_socket: std::net::UdpSocket = socket.into();
     Ok(UdpSocket::from_std(std_socket)?)
+}
+
+pub(super) fn client_bind_for_remote(bind: SocketAddr, remote: SocketAddr) -> SocketAddr {
+    match (bind, remote) {
+        (SocketAddr::V4(bind_v4), SocketAddr::V6(_)) if bind_v4.ip().is_unspecified() => {
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), bind_v4.port())
+        }
+        (SocketAddr::V6(bind_v6), SocketAddr::V4(_)) if bind_v6.ip().is_unspecified() => {
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), bind_v6.port())
+        }
+        _ => bind,
+    }
 }

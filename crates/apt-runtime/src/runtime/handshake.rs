@@ -98,7 +98,7 @@ async fn attempt_client_handshake_d1(
     supported_carriers: &[CarrierBinding],
 ) -> Result<HandshakeSuccess, RuntimeError> {
     let socket = build_udp_socket(
-        config.bind,
+        client_bind_for_remote(config.bind, config.server_addr),
         config.udp_recv_buffer_bytes,
         config.udp_send_buffer_bytes,
     )?;
@@ -521,6 +521,9 @@ pub(super) fn assign_transport_parameters(
         client_ipv4: peer.tunnel_ipv4,
         server_ipv4: config.tunnel_local_ipv4,
         netmask: config.tunnel_netmask,
+        client_ipv6: peer.tunnel_ipv6,
+        server_ipv6: config.tunnel_local_ipv6,
+        ipv6_prefix_len: config.tunnel_ipv6_prefix_len,
         mtu: effective_tunnel_mtu,
         routes: config.push_routes.clone(),
         dns_servers: config.push_dns.clone(),

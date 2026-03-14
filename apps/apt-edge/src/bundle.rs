@@ -8,6 +8,7 @@ pub(super) fn add_client(
     auth: Option<CliAuthProfile>,
     out_file: Option<PathBuf>,
     client_ip: Option<Ipv4Addr>,
+    client_ipv6: Option<Ipv6Addr>,
     yes: bool,
 ) -> CliResult {
     let config_path =
@@ -59,6 +60,19 @@ pub(super) fn add_client(
         fs::create_dir_all(parent)?;
     }
     let client_ip = client_ip.unwrap_or(next_available_client_ipv4(&server_config)?);
+    if client_ipv6.is_some()
+        && (server_config.tunnel_local_ipv6.is_none()
+            || server_config.tunnel_ipv6_prefix_len.is_none())
+    {
+        return Err(
+            "this server config does not have IPv6 tunnel addressing enabled; remove --client-ipv6 or enable IPv6 in server.toml first"
+                .into(),
+        );
+    }
+    let client_ipv6 = match client_ipv6 {
+        Some(ipv6) => Some(ipv6),
+        None => next_available_client_ipv6(&server_config)?,
+    };
 
     let identity = generate_client_identity()?;
     write_key_file(&server_peer_key_path, &identity.client_static_public_key)?;
@@ -88,6 +102,7 @@ pub(super) fn add_client(
         admission_key: admission_key_spec,
         client_static_public_key: format!("file:{}", server_peer_key_path.display()),
         tunnel_ipv4: client_ip,
+        tunnel_ipv6: client_ipv6,
     });
     server_config.store(&config_path)?;
 
@@ -136,7 +151,10 @@ pub(super) fn add_client(
     println!("  • {}", config_path.display());
     println!("Client bundle:");
     println!("  • {}", bundle_path.display());
-    println!("Assigned tunnel IP: {client_ip}");
+    println!("Assigned tunnel IPv4: {client_ip}");
+    if let Some(client_ipv6) = client_ipv6 {
+        println!("Assigned tunnel IPv6: {client_ipv6}");
+    }
     println!("Admission profile: {}", auth_profile_label(auth_profile));
     println!("\nWhat to do next:");
     println!("  1. Copy this single bundle file to the client device:");
@@ -271,7 +289,13 @@ fn render_client_listing(peers: &[AuthorizedPeerConfig]) -> String {
     }
 
     let mut ordered = peers.to_vec();
-    ordered.sort_by_key(|peer| (u32::from(peer.tunnel_ipv4), peer.name.clone()));
+    ordered.sort_by_key(|peer| {
+        (
+            u32::from(peer.tunnel_ipv4),
+            peer.tunnel_ipv6.map(u128::from),
+            peer.name.clone(),
+        )
+    });
 
     let mut output = String::new();
     for peer in ordered {
@@ -284,6 +308,9 @@ fn render_client_listing(peers: &[AuthorizedPeerConfig]) -> String {
             output.push_str(&format!("  user_id: {user_id}\n"));
         }
         output.push_str(&format!("  tunnel_ipv4: {}\n", peer.tunnel_ipv4));
+        if let Some(tunnel_ipv6) = peer.tunnel_ipv6 {
+            output.push_str(&format!("  tunnel_ipv6: {tunnel_ipv6}\n"));
+        }
     }
     output.trim_end().to_string()
 }
@@ -342,6 +369,7 @@ mod tests {
                 admission_key: None,
                 client_static_public_key: "file:/tmp/beta.key".to_string(),
                 tunnel_ipv4: Ipv4Addr::new(10, 77, 0, 3),
+                tunnel_ipv6: Some("fd77:77::3".parse().unwrap()),
             },
             AuthorizedPeerConfig {
                 name: "alpha".to_string(),
@@ -350,6 +378,7 @@ mod tests {
                 admission_key: Some("file:/tmp/alice.key".to_string()),
                 client_static_public_key: "file:/tmp/alpha.key".to_string(),
                 tunnel_ipv4: Ipv4Addr::new(10, 77, 0, 2),
+                tunnel_ipv6: Some("fd77:77::2".parse().unwrap()),
             },
         ]);
 
@@ -357,6 +386,7 @@ mod tests {
         assert!(rendered.contains("  auth: per-user\n"));
         assert!(rendered.contains("  user_id: alice\n"));
         assert!(rendered.contains("  tunnel_ipv4: 10.77.0.2\n"));
-        assert!(rendered.ends_with("tunnel_ipv4: 10.77.0.3"));
+        assert!(rendered.contains("  tunnel_ipv6: fd77:77::2\n"));
+        assert!(rendered.ends_with("tunnel_ipv6: fd77:77::3"));
     }
 }
