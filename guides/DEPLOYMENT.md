@@ -11,7 +11,25 @@ It uses the user-friendly CLI flow instead of hand-editing every file first.
 - transport: UDP (`D1`)
 - auth model: shared deployment admission key + one authorized stable client identity per client
 
-## 1. Build the binaries
+## 1. Get the binaries
+
+You have two supported options.
+
+### Option A: download a GitHub Release bundle
+
+When a GitHub Release is published, CI attaches ready-to-run tarballs for supported targets.
+
+Each release bundle contains:
+
+- `apt-edge`
+- `apt-client`
+- `apt-tunneld`
+- the guides in this directory
+- example config files
+
+After extracting the tarball, the binaries live under `bin/`.
+
+### Option B: build from source
 
 From the repo root:
 
@@ -29,12 +47,12 @@ Main binaries:
 On the server:
 
 ```bash
-./target/release/apt-edge init
+sudo ./target/release/apt-edge init
 ```
 
 The command walks you through the main values, then creates:
 
-- `server.toml`
+- `/etc/adapt/server.toml` by default
 - the server key files
 - a `bundles/` directory for client packages
 
@@ -109,13 +127,26 @@ The bundle contains:
 
 ## 6. Start the client
 
-On the client device, inside the copied bundle directory:
+Recommended: install the bundle into `/etc/adapt` on the client:
+
+```bash
+sudo mkdir -p /etc/adapt
+sudo cp -R /path/to/laptop-bundle/* /etc/adapt/
+```
+
+Then start the client using the default config location:
+
+```bash
+sudo ./target/release/apt-client up
+```
+
+Alternative: if you want to run the bundle directly from another directory:
 
 ```bash
 sudo ./target/release/apt-client up --config client.toml
 ```
 
-If `client.toml` is in the current directory, this is the normal everyday command.
+If `client.toml` is in the current directory, that direct mode still works.
 
 ## 7. Verify the VPN
 

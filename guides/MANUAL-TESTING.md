@@ -13,7 +13,7 @@ sudo ./target/release/apt-edge start --config /etc/adapt/server.toml
 Start the client:
 
 ```bash
-sudo ./target/release/apt-client up --config ./adapt-client/client.toml
+sudo ./target/release/apt-client up
 ```
 
 Expected result:

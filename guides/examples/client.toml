@@ -4,9 +4,9 @@ server_addr = "203.0.113.10:51820"
 endpoint_id = "adapt-prod"
 
 # Secret material can be provided inline as 64 hex characters or via `file:/path/to/key`.
-admission_key = "file:./shared-admission.key"
-server_static_public_key = "file:./server-static-public.key"
-client_static_private_key = "file:./client-static-private.key"
+admission_key = "file:/etc/adapt/shared-admission.key"
+server_static_public_key = "file:/etc/adapt/server-static-public.key"
+client_static_private_key = "file:/etc/adapt/client-static-private.key"
 
 client_identity = "laptop"
 bind = "0.0.0.0:0"
@@ -22,4 +22,4 @@ handshake_timeout_secs = 5
 handshake_retries = 5
 udp_recv_buffer_bytes = 4194304
 udp_send_buffer_bytes = 4194304
-state_path = "./client-state.toml"
+state_path = "/var/lib/adapt/client-state.toml"

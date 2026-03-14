@@ -7,14 +7,18 @@ use std::path::PathBuf;
 #[derive(Debug, Parser)]
 #[command(name = "apt-tunneld", about = "Compatibility alias for the combined APT server daemon")]
 struct Cli {
+    /// Path to the server config. If omitted, /etc/adapt/server.toml is used.
     #[arg(long)]
-    config: PathBuf,
+    config: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    match ServerConfig::load(&cli.config)
+    let config_path = cli
+        .config
+        .unwrap_or_else(|| PathBuf::from("/etc/adapt/server.toml"));
+    match ServerConfig::load(&config_path)
         .and_then(|config| config.resolve())
         .map_err(Box::<dyn std::error::Error>::from)
     {

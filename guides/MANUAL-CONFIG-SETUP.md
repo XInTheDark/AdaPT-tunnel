@@ -23,13 +23,13 @@ This produces:
 ## 2. Generate a standalone client identity
 
 ```bash
-./target/release/apt-client gen-identity --out-dir ./adapt-client
+./target/release/apt-client gen-identity --out-dir /etc/adapt
 ```
 
 This produces:
 
-- `./adapt-client/client-static-private.key`
-- `./adapt-client/client-static-public.key`
+- `/etc/adapt/client-static-private.key`
+- `/etc/adapt/client-static-public.key`
 
 Copy the client public key to the server.
 
@@ -70,7 +70,7 @@ sudo ./target/release/apt-edge start --config /etc/adapt/server.toml
 ## 5. Start the client
 
 ```bash
-sudo ./target/release/apt-client up --config ./adapt-client/client.toml
+sudo ./target/release/apt-client up
 ```
 
 ## 6. Validate manually

@@ -151,7 +151,7 @@ fn init_server(
     dns_servers: Vec<IpAddr>,
     yes: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let out_dir = out_dir.unwrap_or_else(|| PathBuf::from("./adapt-server"));
+    let out_dir = out_dir.unwrap_or_else(|| PathBuf::from("/etc/adapt"));
     let bind = match bind {
         Some(bind) => bind,
         None if yes => "0.0.0.0:51820".parse()?,
@@ -274,15 +274,15 @@ fn add_client(
     yes: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = match config {
-        Some(path) => path,
-        None => match find_server_config() {
             Some(path) => path,
-            None if yes => {
-                return Err("could not find a server config; pass --config or run `apt-edge init` first".into())
-            }
-            None => prompt_path("Server config path", Some("./adapt-server/server.toml"))?,
-        },
-    };
+            None => match find_server_config() {
+                Some(path) => path,
+                None if yes => {
+                    return Err("could not find a server config; pass --config or run `apt-edge init` first".into())
+                }
+                None => prompt_path("Server config path", Some("/etc/adapt/server.toml"))?,
+            },
+        };
     let mut server_config = ServerConfig::load(&config_path)?;
     let name = match name {
         Some(value) => value,
@@ -358,8 +358,10 @@ fn add_client(
     println!("\nWhat to do next:");
     println!("  1. Copy this entire folder to the client device:");
     println!("     {}", bundle_dir.display());
-    println!("  2. On the client, run:");
-    println!("     sudo apt-client up --config client.toml");
+    println!("  2. Recommended on the client:");
+    println!("     sudo mkdir -p /etc/adapt");
+    println!("     sudo cp -R {}/* /etc/adapt/", bundle_dir.display());
+    println!("     sudo apt-client up");
     println!("  3. If the server is not already running, start it with:");
     println!("     sudo apt-edge start --config {}", config_path.display());
     Ok(())
@@ -370,7 +372,7 @@ async fn start_server(config: Option<PathBuf>) -> Result<(), Box<dyn std::error:
         Some(path) => path,
         None => match find_server_config() {
             Some(path) => path,
-            None => prompt_path("Server config path", Some("./adapt-server/server.toml"))?,
+            None => prompt_path("Server config path", Some("/etc/adapt/server.toml"))?,
         },
     };
     println!("Starting APT server using {}", config_path.display());
@@ -396,16 +398,16 @@ fn write_bundle_readme(bundle_dir: &Path, name: &str) -> io::Result<()> {
     fs::write(
         bundle_dir.join("START-HERE.txt"),
         format!(
-            "APT client bundle for {name}\n\n1. Copy this entire folder to the client device.\n2. On the client, change into this directory.\n3. Start the VPN:\n\n   sudo apt-client up --config client.toml\n"
+            "APT client bundle for {name}\n\nRecommended install location on the client:\n  /etc/adapt\n\nRecommended steps:\n1. Copy this entire folder to the client device.\n2. On the client, install the bundle into /etc/adapt:\n\n   sudo mkdir -p /etc/adapt\n   sudo cp -R ./* /etc/adapt/\n\n3. Start the VPN using the default config location:\n\n   sudo apt-client up\n\nAlternative: you can also run directly from this folder with:\n\n   sudo apt-client up --config client.toml\n"
         ),
     )
 }
 
 fn find_server_config() -> Option<PathBuf> {
     [
+        PathBuf::from("/etc/adapt/server.toml"),
         PathBuf::from("./server.toml"),
         PathBuf::from("./adapt-server/server.toml"),
-        PathBuf::from("/etc/adapt/server.toml"),
     ]
     .into_iter()
     .find(|path| path.exists())

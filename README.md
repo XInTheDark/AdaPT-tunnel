@@ -32,19 +32,19 @@ The intended day-to-day workflow is now CLI-driven.
 #### 1) Create the server setup
 
 ```bash
-apt-edge init
+sudo apt-edge init
 ```
 
 This guided command creates:
 
-- `server.toml`
+- `/etc/adapt/server.toml` by default
 - the server key files
 - a `bundles/` directory for client packages
 
 #### 2) Create a ready-to-use client bundle
 
 ```bash
-apt-edge add-client --config ./adapt-server/server.toml --name laptop
+sudo apt-edge add-client --config /etc/adapt/server.toml --name laptop
 ```
 
 This command:
@@ -57,36 +57,35 @@ This command:
 #### 3) Start the server
 
 ```bash
-sudo apt-edge start --config ./adapt-server/server.toml
+sudo apt-edge start
 ```
 
 ### Client flow
 
-Copy the generated client bundle to the client device, then run:
+Copy the generated client bundle contents into `/etc/adapt` on the client device, then run:
 
 ```bash
-sudo apt-client up --config client.toml
+sudo apt-client up
 ```
 
-If you are already in the bundle directory and `client.toml` is present, that is the main command you need.
+If you prefer not to install the bundle into `/etc/adapt`, you can still run it directly with `--config client.toml`.
 
 ## Recommended quickstart
 
 ### On the server
 
 ```bash
-apt-edge init
-apt-edge add-client --config ./adapt-server/server.toml --name laptop
-sudo apt-edge start --config ./adapt-server/server.toml
+sudo apt-edge init
+sudo apt-edge add-client --config /etc/adapt/server.toml --name laptop
+sudo apt-edge start
 ```
 
 ### On the client
 
-After copying the generated bundle directory from the server:
+After copying the generated bundle contents into `/etc/adapt` on the client:
 
 ```bash
-cd laptop
-sudo apt-client up --config client.toml
+sudo apt-client up
 ```
 
 ## CLI reference
@@ -137,6 +136,26 @@ Useful option:
 - `--config` — path to `client.toml`
 
 If omitted, the client tries common default locations first.
+
+## GitHub release assets
+
+GitHub Actions now builds downloadable release bundles automatically when a GitHub Release is published.
+
+Each release attaches tarballs for:
+
+- `x86_64-unknown-linux-gnu`
+- `x86_64-apple-darwin`
+- `aarch64-apple-darwin`
+
+Each bundle includes:
+
+- `apt-edge`
+- `apt-client`
+- `apt-tunneld`
+- the deployment/testing guides
+- example config files
+
+That means most operators can download a release bundle directly instead of building from source.
 
 ## Guides
 

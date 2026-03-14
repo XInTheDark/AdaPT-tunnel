@@ -11,7 +11,7 @@ use std::{
 #[command(
     name = "apt-client",
     about = "APT VPN client",
-    long_about = "APT VPN client. The usual workflow is: receive a client bundle from the server operator, then run `apt-client up --config client.toml`."
+    long_about = "APT VPN client. The usual workflow is: install the client bundle into `/etc/adapt`, then run `apt-client up`."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -76,9 +76,9 @@ fn generate_identity(out_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>
 
 fn find_client_config() -> Option<PathBuf> {
     [
+        PathBuf::from("/etc/adapt/client.toml"),
         PathBuf::from("./client.toml"),
         PathBuf::from("./adapt-client/client.toml"),
-        PathBuf::from("/etc/adapt/client.toml"),
     ]
     .into_iter()
     .find(|path| path.exists())
@@ -86,9 +86,14 @@ fn find_client_config() -> Option<PathBuf> {
 
 fn prompt_config_path() -> io::Result<PathBuf> {
     let mut stdout = io::stdout();
-    write!(stdout, "Path to client.toml: ")?;
+    write!(stdout, "Path to client.toml [/etc/adapt/client.toml]: ")?;
     stdout.flush()?;
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
-    Ok(PathBuf::from(input.trim()))
+    let trimmed = input.trim();
+    Ok(if trimmed.is_empty() {
+        PathBuf::from("/etc/adapt/client.toml")
+    } else {
+        PathBuf::from(trimmed)
+    })
 }
