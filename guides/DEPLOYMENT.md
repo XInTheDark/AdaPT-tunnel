@@ -152,7 +152,7 @@ You can also run it non-interactively, for example:
 For an existing deployment that already has a `server.toml`, you can enable or refresh `D2` in place with:
 
 ```bash
-./target/release/apt-edge enable-d2 --config /etc/adapt/server.toml --d2-public-endpoint vpn.example.com:443
+./target/release/apt-edge utils enable-d2 --config /etc/adapt/server.toml --d2-public-endpoint vpn.example.com:443
 ```
 
 ## 3. Generate a client bundle

@@ -44,6 +44,25 @@ pub(super) struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+pub(super) enum UtilsCommand {
+    /// Enable or refresh the D2 QUIC carrier on an existing server config.
+    EnableD2 {
+        /// Path to the server config created by `apt-edge init`.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// UDP listen address for the D2 QUIC carrier.
+        #[arg(long)]
+        d2_bind: Option<SocketAddr>,
+        /// Client-reachable host:port for the D2 QUIC carrier.
+        #[arg(long)]
+        d2_public_endpoint: Option<String>,
+        /// Use defaults for any missing values instead of prompting.
+        #[arg(long, default_value_t = false)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub(super) enum Command {
     /// Guided setup for a new server config + keyset.
     Init {
@@ -117,21 +136,6 @@ pub(super) enum Command {
         #[arg(long, default_value_t = false)]
         yes: bool,
     },
-    /// Enable or refresh the D2 QUIC carrier on an existing server config.
-    EnableD2 {
-        /// Path to the server config created by `apt-edge init`.
-        #[arg(long)]
-        config: Option<PathBuf>,
-        /// UDP listen address for the D2 QUIC carrier.
-        #[arg(long)]
-        d2_bind: Option<SocketAddr>,
-        /// Client-reachable host:port for the D2 QUIC carrier.
-        #[arg(long)]
-        d2_public_endpoint: Option<String>,
-        /// Use defaults for any missing values instead of prompting.
-        #[arg(long, default_value_t = false)]
-        yes: bool,
-    },
     /// Revoke a client and remove it from the server config.
     #[command(alias = "remove-client", alias = "del-client")]
     RevokeClient {
@@ -154,6 +158,11 @@ pub(super) enum Command {
         /// Override the runtime mode for this launch only.
         #[arg(long, value_enum)]
         mode: Option<CliRuntimeMode>,
+    },
+    /// Operator utilities and maintenance helpers.
+    Utils {
+        #[command(subcommand)]
+        command: UtilsCommand,
     },
     /// Advanced: generate only the raw key files.
     #[command(hide = true)]

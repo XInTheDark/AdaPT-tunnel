@@ -20,7 +20,7 @@ Implemented today:
 - combined server daemon runtime over `D1`, optional `D2`, and optional `S1` (`apt-edge start`)
 - client runtime with conservative `D1 -> D2 -> S1` fallback when the optional carriers are configured (`apt-client up`)
 - guided server initialization (`apt-edge init`)
-- guided D2 enablement / certificate generation for existing deployments (`apt-edge enable-d2`)
+- guided D2 enablement / certificate generation for existing deployments (`apt-edge utils enable-d2`)
 - shared/per-user client bundle provisioning and revocation (`apt-edge add-client`, `apt-edge revoke-client`)
 - TUN interface wiring, route/NAT orchestration, and best-effort pushed DNS automation
 - authenticated path revalidation and sparse standby probing
@@ -204,7 +204,7 @@ Useful options:
 - `--name` — client name to revoke
 - `--yes` — skip prompts for missing values
 
-#### `apt-edge enable-d2`
+#### `apt-edge utils enable-d2`
 Enable or refresh the `D2` QUIC-datagram carrier on an existing server config.
 
 Useful options:

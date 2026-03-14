@@ -20,7 +20,6 @@ pub(super) fn init_server(
     yes: bool,
 ) -> CliResult {
     let out_dir = out_dir.unwrap_or_else(|| PathBuf::from("/etc/adapt"));
-    let d2_requested = enable_d2 || d2_bind.is_some() || d2_public_endpoint.is_some();
     let bind = match bind {
         Some(bind) => bind,
         None if yes => "0.0.0.0:51820".parse()?,
@@ -49,40 +48,84 @@ pub(super) fn init_server(
                 }
             },
         };
-    let stream_bind = match stream_bind {
-        Some(bind) => Some(bind),
-        None if yes => Some("0.0.0.0:443".parse()?),
-        None => {
-            let value = prompt_string(
-                "Optional S1 stream listen address (blank to disable)",
-                Some("0.0.0.0:443"),
-            )?;
-            if value.trim().is_empty() {
-                None
-            } else {
-                Some(value.parse()?)
-            }
-        }
+    let d2_requested = if enable_d2 || d2_bind.is_some() || d2_public_endpoint.is_some() {
+        true
+    } else if yes {
+        false
+    } else {
+        prompt_bool("Enable optional D2 QUIC carrier", false)?
     };
-    let stream_public_endpoint = match stream_public_endpoint {
-        Some(value) => {
-            validate_client_reachable_endpoint(&value)?;
-            Some(value)
+    let d2_bind = if d2_requested {
+        match d2_bind {
+            Some(bind) => Some(bind),
+            None if yes => Some(d2_default_bind()),
+            None => Some(prompt_parse(
+                "D2 QUIC listen address",
+                Some(&d2_default_bind().to_string()),
+            )?),
         }
-        None if stream_bind.is_some() && yes => derive_stream_public_endpoint(&public_endpoint),
-        None if stream_bind.is_some() => {
-            let value = prompt_string(
-                "Optional S1 client-reachable endpoint (blank to disable)",
-                derive_stream_public_endpoint(&public_endpoint).as_deref(),
-            )?;
-            if value.trim().is_empty() {
-                None
-            } else {
+    } else {
+        None
+    };
+    let d2_public_endpoint = if d2_requested {
+        let default_endpoint = derive_d2_public_endpoint(&public_endpoint).ok_or_else(|| {
+            "could not derive a default D2 public endpoint from the main public endpoint"
+                .to_string()
+        })?;
+        match d2_public_endpoint {
+            Some(value) => {
+                validate_client_reachable_endpoint(&value)?;
+                Some(value)
+            }
+            None if yes => Some(default_endpoint),
+            None => {
+                let value = prompt_string("D2 client-reachable endpoint", Some(&default_endpoint))?;
                 validate_client_reachable_endpoint(&value)?;
                 Some(value)
             }
         }
-        None => None,
+    } else {
+        None
+    };
+    let stream_enabled = if stream_bind.is_some() || stream_public_endpoint.is_some() {
+        true
+    } else if yes {
+        true
+    } else {
+        prompt_bool("Enable optional S1 stream fallback", true)?
+    };
+    let stream_bind = if stream_enabled {
+        match stream_bind {
+            Some(bind) => Some(bind),
+            None if yes => Some("0.0.0.0:443".parse()?),
+            None => Some(prompt_parse(
+                "S1 stream listen address",
+                Some("0.0.0.0:443"),
+            )?),
+        }
+    } else {
+        None
+    };
+    let stream_public_endpoint = if stream_enabled {
+        let default_endpoint =
+            derive_stream_public_endpoint(&public_endpoint).ok_or_else(|| {
+                "could not derive a default S1 public endpoint from the main public endpoint"
+                    .to_string()
+            })?;
+        match stream_public_endpoint {
+            Some(value) => {
+                validate_client_reachable_endpoint(&value)?;
+                Some(value)
+            }
+            None if yes => Some(default_endpoint),
+            None => {
+                let value = prompt_string("S1 client-reachable endpoint", Some(&default_endpoint))?;
+                validate_client_reachable_endpoint(&value)?;
+                Some(value)
+            }
+        }
+    } else {
+        None
     };
     let endpoint_id = match endpoint_id {
         Some(value) => value,

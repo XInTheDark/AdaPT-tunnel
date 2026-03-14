@@ -27,6 +27,27 @@ pub(super) fn prompt_string(label: &str, default: Option<&str>) -> io::Result<St
     }
 }
 
+pub(super) fn prompt_bool(label: &str, default: bool) -> CliResult<bool> {
+    let mut stdout = io::stdout();
+    loop {
+        write!(
+            stdout,
+            "{} [{}]: ",
+            label,
+            if default { "Y/n" } else { "y/N" }
+        )?;
+        stdout.flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        match input.trim().to_ascii_lowercase().as_str() {
+            "" => return Ok(default),
+            "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            _ => eprintln!("Invalid value: enter `y` or `n`"),
+        }
+    }
+}
+
 pub(super) fn prompt_parse<T>(label: &str, default: Option<&str>) -> CliResult<T>
 where
     T: std::str::FromStr,

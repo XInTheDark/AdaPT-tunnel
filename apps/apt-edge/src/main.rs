@@ -27,7 +27,7 @@ mod support;
 
 use self::{
     bundle::{add_client, revoke_client, write_server_keyset},
-    cli::{Cli, CliAuthProfile, CliRuntimeMode, Command},
+    cli::{Cli, CliAuthProfile, CliRuntimeMode, Command, UtilsCommand},
     init::{enable_d2_for_server, init_server},
     start::start_server,
     support::*,
@@ -89,14 +89,16 @@ async fn run() -> CliResult {
             client_ip,
             yes,
         } => add_client(config, name, auth, out_file, client_ip, yes)?,
-        Command::EnableD2 {
-            config,
-            d2_bind,
-            d2_public_endpoint,
-            yes,
-        } => enable_d2_for_server(config, d2_bind, d2_public_endpoint, yes)?,
         Command::RevokeClient { config, name, yes } => revoke_client(config, name, yes)?,
         Command::Start { config, mode } => start_server(config, mode).await?,
+        Command::Utils { command } => match command {
+            UtilsCommand::EnableD2 {
+                config,
+                d2_bind,
+                d2_public_endpoint,
+                yes,
+            } => enable_d2_for_server(config, d2_bind, d2_public_endpoint, yes)?,
+        },
         Command::GenKeys { out_dir } => write_server_keyset(&out_dir)?,
     }
     Ok(())
