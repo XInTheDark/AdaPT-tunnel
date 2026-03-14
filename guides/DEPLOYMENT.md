@@ -19,6 +19,8 @@ You have two supported options.
 
 When a GitHub Release is published, CI attaches ready-to-run tarballs for supported targets.
 
+For `x86_64` Linux servers and clients, the GNU/Linux release bundle is built on an `ubuntu-22.04` baseline so it does not pick up the newest glibc requirement from `ubuntu-latest`.
+
 Each release bundle contains:
 
 - `apt-edge`
