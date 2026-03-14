@@ -159,6 +159,23 @@ pub(super) fn add_client(
     Ok(())
 }
 
+pub(super) fn list_clients(config: Option<PathBuf>) -> CliResult {
+    let config_path = match config {
+        Some(path) => path,
+        None => match find_server_config() {
+            Some(path) => path,
+            None => prompt_path("Server config path", Some("/etc/adapt/server.toml"))?,
+        },
+    };
+    let server_config = ServerConfig::load(&config_path)?;
+    println!(
+        "Authorized clients in {}:\n{}",
+        config_path.display(),
+        render_client_listing(&server_config.peers)
+    );
+    Ok(())
+}
+
 pub(super) fn revoke_client(config: Option<PathBuf>, name: Option<String>, yes: bool) -> CliResult {
     let config_path =
         match config {
@@ -248,6 +265,29 @@ fn auth_profile_label(auth_profile: AuthProfile) -> &'static str {
     }
 }
 
+fn render_client_listing(peers: &[AuthorizedPeerConfig]) -> String {
+    if peers.is_empty() {
+        return "  (no authorized clients)".to_string();
+    }
+
+    let mut ordered = peers.to_vec();
+    ordered.sort_by_key(|peer| (u32::from(peer.tunnel_ipv4), peer.name.clone()));
+
+    let mut output = String::new();
+    for peer in ordered {
+        output.push_str(&format!("- {}\n", peer.name));
+        output.push_str(&format!(
+            "  auth: {}\n",
+            auth_profile_label(peer.auth_profile)
+        ));
+        if let Some(user_id) = peer.user_id.as_deref() {
+            output.push_str(&format!("  user_id: {user_id}\n"));
+        }
+        output.push_str(&format!("  tunnel_ipv4: {}\n", peer.tunnel_ipv4));
+    }
+    output.trim_end().to_string()
+}
+
 #[derive(Clone, Debug)]
 struct ClientD2BundleFields {
     endpoint: String,
@@ -281,4 +321,42 @@ fn build_client_d2_bundle_fields(
         endpoint,
         certificate,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_client_listing_handles_empty_config() {
+        assert_eq!(render_client_listing(&[]), "  (no authorized clients)");
+    }
+
+    #[test]
+    fn render_client_listing_sorts_by_tunnel_ip_and_includes_auth_details() {
+        let rendered = render_client_listing(&[
+            AuthorizedPeerConfig {
+                name: "beta".to_string(),
+                auth_profile: AuthProfile::SharedDeployment,
+                user_id: None,
+                admission_key: None,
+                client_static_public_key: "file:/tmp/beta.key".to_string(),
+                tunnel_ipv4: Ipv4Addr::new(10, 77, 0, 3),
+            },
+            AuthorizedPeerConfig {
+                name: "alpha".to_string(),
+                auth_profile: AuthProfile::PerUser,
+                user_id: Some("alice".to_string()),
+                admission_key: Some("file:/tmp/alice.key".to_string()),
+                client_static_public_key: "file:/tmp/alpha.key".to_string(),
+                tunnel_ipv4: Ipv4Addr::new(10, 77, 0, 2),
+            },
+        ]);
+
+        assert!(rendered.starts_with("- alpha\n"));
+        assert!(rendered.contains("  auth: per-user\n"));
+        assert!(rendered.contains("  user_id: alice\n"));
+        assert!(rendered.contains("  tunnel_ipv4: 10.77.0.2\n"));
+        assert!(rendered.ends_with("tunnel_ipv4: 10.77.0.3"));
+    }
 }

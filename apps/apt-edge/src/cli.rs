@@ -136,6 +136,13 @@ pub(super) enum Command {
         #[arg(long, default_value_t = false)]
         yes: bool,
     },
+    /// List the clients currently authorized in the server config.
+    #[command(alias = "clients")]
+    ListClients {
+        /// Path to the server config created by `apt-edge init`.
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
     /// Revoke a client and remove it from the server config.
     #[command(alias = "remove-client", alias = "del-client")]
     RevokeClient {

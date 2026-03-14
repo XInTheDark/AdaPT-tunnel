@@ -164,6 +164,8 @@ sudo apt-client up
 #### `apt-edge init`
 Guided setup for a new server.
 
+This writes a fresh `server.toml` and key set for the target directory. If you point it at an existing deployment directory, it does not preserve the current authorized client list from the old config.
+
 Useful options:
 
 - `--out-dir` — where to write the server files
@@ -194,6 +196,13 @@ Useful options:
 - `--out-file` — where to write the single-file client bundle
 - `--client-ip` — manually choose the client tunnel IP
 - `--yes` — skip prompts for missing values
+
+#### `apt-edge list-clients`
+List the clients currently authorized in the server config.
+
+Useful options:
+
+- `--config` — server config path
 
 #### `apt-edge revoke-client`
 Remove an authorized client from the server config and delete its local credential files when they live under the config root.

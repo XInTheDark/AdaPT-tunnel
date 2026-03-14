@@ -26,7 +26,7 @@ mod start;
 mod support;
 
 use self::{
-    bundle::{add_client, revoke_client, write_server_keyset},
+    bundle::{add_client, list_clients, revoke_client, write_server_keyset},
     cli::{Cli, CliAuthProfile, CliRuntimeMode, Command, UtilsCommand},
     init::{enable_d2_for_server, init_server},
     start::start_server,
@@ -89,6 +89,7 @@ async fn run() -> CliResult {
             client_ip,
             yes,
         } => add_client(config, name, auth, out_file, client_ip, yes)?,
+        Command::ListClients { config } => list_clients(config)?,
         Command::RevokeClient { config, name, yes } => revoke_client(config, name, yes)?,
         Command::Start { config, mode } => start_server(config, mode).await?,
         Command::Utils { command } => match command {
