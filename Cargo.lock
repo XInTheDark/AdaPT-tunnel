@@ -124,6 +124,7 @@ dependencies = [
  "apt-runtime",
  "clap",
  "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -149,6 +150,7 @@ dependencies = [
  "clap",
  "ipnet",
  "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -225,6 +227,7 @@ dependencies = [
  "clap",
  "serde_json",
  "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]
