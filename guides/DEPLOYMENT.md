@@ -20,8 +20,7 @@ You have two supported options.
 The fastest way to get a suitable release onto a machine is:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/XInTheDark/AdaPT-tunnel/master/scripts/install.sh -o /tmp/adapt-install.sh
-sudo bash /tmp/adapt-install.sh install
+curl -fsSL https://raw.githubusercontent.com/XInTheDark/AdaPT-tunnel/master/scripts/install.sh | sudo bash -s -- install
 ```
 
 By default, that script:
@@ -54,7 +53,7 @@ sudo adapt-uninstall --purge-all
 If you need to install from a fork or alternate repository:
 
 ```bash
-sudo bash /tmp/adapt-install.sh install --repo your-org/AdaPT-tunnel
+curl -fsSL https://raw.githubusercontent.com/XInTheDark/AdaPT-tunnel/master/scripts/install.sh | sudo bash -s -- install --repo your-org/AdaPT-tunnel
 ```
 
 For GitHub Enterprise or another non-default GitHub base, the same script also accepts `--api-base` and `--web-base`.

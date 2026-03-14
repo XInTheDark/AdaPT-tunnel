@@ -88,8 +88,7 @@ If you prefer not to install the bundle into `/etc/adapt`, you can still run it 
 If you want a download-and-install flow instead of manually unpacking a tarball, use the installer script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/XInTheDark/AdaPT-tunnel/master/scripts/install.sh -o /tmp/adapt-install.sh
-sudo bash /tmp/adapt-install.sh install
+curl -fsSL https://raw.githubusercontent.com/XInTheDark/AdaPT-tunnel/master/scripts/install.sh | sudo bash -s -- install
 ```
 
 By default, the installer:
@@ -122,7 +121,7 @@ sudo adapt-uninstall --purge-all
 You can point the installer at another GitHub repo or base if needed:
 
 ```bash
-sudo bash /tmp/adapt-install.sh install --repo your-org/AdaPT-tunnel
+curl -fsSL https://raw.githubusercontent.com/XInTheDark/AdaPT-tunnel/master/scripts/install.sh | sudo bash -s -- install --repo your-org/AdaPT-tunnel
 ```
 
 For GitHub Enterprise or other custom endpoints, the same script also supports `--api-base` and `--web-base`.
