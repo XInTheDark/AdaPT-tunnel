@@ -147,11 +147,13 @@ struct ResolvedRoute {
 
 #[cfg(target_os = "linux")]
 fn linux_route_to(ip: IpAddr) -> Result<ResolvedRoute, RuntimeError> {
-    let mut args = Vec::new();
+    let mut args = Vec::<String>::new();
     if ip.is_ipv6() {
-        args.push("-6");
+        args.push("-6".to_string());
     }
-    args.extend(["route", "get", &ip.to_string()]);
+    args.push("route".to_string());
+    args.push("get".to_string());
+    args.push(ip.to_string());
     let output = Command::new("ip").args(&args).output()?;
     if !output.status.success() {
         return Err(RuntimeError::CommandFailed(format!(
