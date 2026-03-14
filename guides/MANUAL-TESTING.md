@@ -76,7 +76,33 @@ Expected:
 - on macOS, traffic to `1.1.1.1` should resolve to the `utun` interface when full-tunnel routing is active
 - the reported public IP is the **server’s** public IP, not the client’s original IP
 
-## 5. Validate route preservation to the VPN server
+## 5. Validate pushed DNS behavior
+
+If the server pushes DNS servers, verify that the client applied them while the tunnel is up.
+
+On Linux:
+
+```bash
+resolvectl status
+```
+
+Expected:
+
+- the tunnel interface shows the pushed DNS servers
+
+On macOS:
+
+```bash
+scutil --dns | grep 'nameserver\[[0-9]\]'
+```
+
+Expected:
+
+- the pushed DNS servers appear in the active resolver set while the tunnel is connected
+
+If the client logs a warning about DNS automation instead, the tunnel should still work, but DNS may need to be set manually on that machine.
+
+## 6. Validate route preservation to the VPN server
 
 The runtime installs a direct route to the server before redirecting default traffic.
 
@@ -84,7 +110,7 @@ From the client, verify that the VPN session stays up while full-tunnel routing 
 
 A simple check is to keep `ping 10.77.0.1` running while also browsing or curling through the tunnel.
 
-## 6. Inspect server forwarding/NAT state
+## 7. Inspect server forwarding/NAT state
 
 On the Linux server:
 
@@ -100,7 +126,7 @@ Expected:
 - a `MASQUERADE` rule for the tunnel subnet
 - `FORWARD` accept rules for the tunnel interface
 
-## 7. Packet inspection (optional)
+## 8. Packet inspection (optional)
 
 On the server:
 
@@ -114,7 +140,7 @@ Expected:
 - UDP traffic on the `D1` listening port and/or TCP traffic on the `S1` listening port
 - decrypted IP packets traversing the server TUN interface
 
-## 8. Stream fallback smoke test
+## 9. Stream fallback smoke test
 
 If your server config includes `stream_bind` / `stream_public_endpoint`, you can validate the `S1` runtime directly:
 
@@ -134,7 +160,7 @@ You can then return to the normal conservative preference order with:
 sudo ./target/release/apt-client up --carrier auto
 ```
 
-## 9. Resume-ticket smoke test
+## 10. Resume-ticket smoke test
 
 1. Connect once.
 2. Stop the client cleanly.
@@ -146,7 +172,7 @@ Expected:
 - the state file is preserved on disk
 - older state/config files are rewritten with newly added runtime fields as they are loaded
 
-## 10. Common failure checks
+## 11. Common failure checks
 
 If the client does not connect:
 
@@ -166,3 +192,4 @@ If the tunnel comes up but internet access fails:
 - verify NAT rules were applied
 - verify the server itself can reach the internet
 - verify the client received/pushed the expected default route
+- verify the pushed DNS servers were applied, or set DNS manually if local automation was unavailable

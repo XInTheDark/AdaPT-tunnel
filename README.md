@@ -20,8 +20,8 @@ Implemented today:
 - combined server daemon runtime over `D1` + `S1` (`apt-edge start`)
 - client runtime with conservative `D1 -> S1` fallback (`apt-client up`)
 - guided server initialization (`apt-edge init`)
-- ready-to-use client bundle generation (`apt-edge add-client`)
-- TUN interface wiring and basic route/NAT orchestration
+- shared/per-user client bundle provisioning and revocation (`apt-edge add-client`, `apt-edge revoke-client`)
+- TUN interface wiring, route/NAT orchestration, and best-effort pushed DNS automation
 - authenticated path revalidation and sparse standby probing
 
 ## The main way to use AdaPT going forward
@@ -52,15 +52,24 @@ This guided command creates:
 #### 2) Create a ready-to-use client bundle
 
 ```bash
-sudo apt-edge add-client --config /etc/adapt/server.toml --name laptop
+sudo apt-edge add-client --config /etc/adapt/server.toml --name laptop --auth per-user
 ```
 
 This command:
 
 - allocates a client tunnel IP
 - authorizes the client in `server.toml`
+- defaults to a dedicated per-user admission key in the guided flow
 - generates the client static identity
 - writes a client bundle directory you can copy to the device
+
+If you need the older shared-deployment admission model for a specific client, pass `--auth shared` instead.
+
+If you later need to revoke that client cleanly:
+
+```bash
+sudo apt-edge revoke-client --config /etc/adapt/server.toml --name laptop
+```
 
 #### 3) Start the server
 
@@ -78,7 +87,7 @@ sudo apt-client up
 
 On macOS, the client should normally let the OS auto-create a `utun` interface instead of hardcoding a custom TUN name.
 
-When the session comes up, the client now logs the assigned tunnel IP, interface, and routes. The server logs when a client session is established.
+When the session comes up, the client now logs the assigned tunnel IP, interface, and routes. If the server pushed DNS servers, the client also applies them automatically where the local platform supports it. The server logs when a client session is established.
 
 If you prefer not to install the bundle into `/etc/adapt`, you can still run it directly with `--config client.toml`.
 
@@ -131,7 +140,7 @@ For GitHub Enterprise or other custom endpoints, the same script also supports `
 
 ```bash
 sudo apt-edge init
-sudo apt-edge add-client --config /etc/adapt/server.toml --name laptop
+sudo apt-edge add-client --config /etc/adapt/server.toml --name laptop --auth per-user
 sudo apt-edge start
 ```
 
@@ -163,7 +172,7 @@ Useful options:
 - `--stream-public-endpoint` — client-reachable `S1` endpoint, usually `host:443`
 - `--stream-decoy-surface` — whether invalid unauthenticated stream input should get a decoy-like HTTP surface
 - `--push-route` — route(s) to push to clients
-- `--dns` — DNS server(s) to suggest to clients
+- `--dns` — DNS server(s) to push to clients
 - `--yes` — skip prompts and use defaults for omitted values
 
 #### `apt-edge add-client`
@@ -173,8 +182,18 @@ Useful options:
 
 - `--config` — server config path
 - `--name` — client name
+- `--auth shared|per-user` — choose the admission model; `per-user` is the recommended default
 - `--out-dir` — where to write the client bundle
 - `--client-ip` — manually choose the client tunnel IP
+- `--yes` — skip prompts for missing values
+
+#### `apt-edge revoke-client`
+Remove an authorized client from the server config and delete its local credential files when they live under the config root.
+
+Useful options:
+
+- `--config` — server config path
+- `--name` — client name to revoke
 - `--yes` — skip prompts for missing values
 
 #### `apt-edge start`
@@ -264,7 +283,7 @@ Current limitations include:
 
 - server runtime target is Linux
 - client runtime target is Linux/macOS
-- DNS automation is not yet applied automatically; route pushing is implemented first
+- DNS automation is best-effort rather than universal: Linux currently uses `resolvectl`, and macOS temporarily overrides the primary network service DNS while the tunnel is up
 - the live fallback set is now `D1` + `S1`; `D2` and `H1` are still future work
 - IPv6 tunnel/runtime handling is still incomplete
 - the stream fallback carrier is a practical generic TCP stream runtime in this repo; it is not yet a polished outer-TLS impersonation layer

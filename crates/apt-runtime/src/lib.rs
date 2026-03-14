@@ -1,13 +1,14 @@
 //! Production runtime support for the APT protocol core.
 //!
 //! This crate adds the missing deployment layer above the protocol engine:
-//! configuration loading, UDP transport runtime, TUN wiring, basic routing/NAT
+//! configuration loading, UDP transport runtime, TUN wiring, basic route/DNS/NAT
 //! orchestration, and thin operational helpers for the client and combined
 //! server daemon.
 #![allow(missing_docs)]
 
 mod adaptive;
 mod config;
+mod dns;
 mod error;
 mod keys;
 mod route;

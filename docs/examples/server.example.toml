@@ -27,5 +27,8 @@ udp_send_buffer_bytes = 4194304
 
 [[peers]]
 name = "laptop"
-client_static_public_key = "file:/etc/adapt/peers/laptop-client-static-public.key"
+auth_profile = "per-user"
+user_id = "laptop"
+admission_key = "file:/etc/adapt/users/laptop.admission.key"
+client_static_public_key = "file:/etc/adapt/clients/laptop.client-static-public.key"
 tunnel_ipv4 = "10.77.0.2"

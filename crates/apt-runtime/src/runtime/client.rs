@@ -1,4 +1,5 @@
 use super::*;
+use crate::dns::{configure_client_dns, DnsGuard};
 
 mod session;
 
@@ -37,6 +38,18 @@ pub(super) async fn run_client(
         transport.routes.clone()
     } else {
         config.routes.clone()
+    };
+    let _dns_guard = match configure_client_dns(&tun.interface_name, &transport.dns_servers) {
+        Ok(guard) => guard,
+        Err(error) => {
+            warn!(
+                error = %error,
+                interface = %tun.interface_name,
+                dns_servers = ?transport.dns_servers,
+                "failed to apply pushed DNS settings automatically"
+            );
+            DnsGuard::default()
+        }
     };
     let exempt_endpoints = client_route_exempt_endpoints(&config);
     let _route_guard = configure_client_network_for_endpoints(

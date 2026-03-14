@@ -4,10 +4,11 @@ server_addr = "203.0.113.10:51820"
 stream_server_addr = "203.0.113.10:443"
 runtime_mode = "stealth"
 preferred_carrier = "d1"
+auth_profile = "per-user"
 endpoint_id = "adapt-prod"
 
 # Secret material can be provided inline as 64 hex characters or via `file:/path/to/key`.
-admission_key = "file:/etc/adapt/shared-admission.key"
+admission_key = "file:/etc/adapt/user-admission.key"
 server_static_public_key = "file:/etc/adapt/server-static-public.key"
 client_static_private_key = "file:/etc/adapt/client-static-private.key"
 

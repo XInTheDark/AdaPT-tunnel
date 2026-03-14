@@ -9,7 +9,7 @@ It uses the user-friendly CLI flow instead of hand-editing every file first.
 - server: Linux
 - client: Linux or macOS
 - transport: `D1` over UDP, with optional `S1` TCP stream fallback
-- auth model: shared deployment admission key + one authorized stable client identity per client
+- auth model: shared-deployment or per-user admission keys; the guided flow now defaults to per-user
 
 ## 1. Get the binaries
 
@@ -144,24 +144,34 @@ You can also run it non-interactively, for example:
 On the server:
 
 ```bash
-./target/release/apt-edge add-client --config /etc/adapt/server.toml --name laptop
+./target/release/apt-edge add-client --config /etc/adapt/server.toml --name laptop --auth per-user
 ```
 
 This command automatically:
 
 - allocates a free client tunnel IP
+- creates a dedicated per-user admission key by default
 - generates the client's static keypair
 - updates the server's authorized peer list
 - writes a client bundle directory you can copy to the client device
 
-You can override the output directory and client IP if needed:
+If you need the older shared-deployment model for a particular client, pass `--auth shared`.
+
+You can also override the output directory and client IP if needed:
 
 ```bash
 ./target/release/apt-edge add-client \
   --config /etc/adapt/server.toml \
   --name laptop \
+  --auth per-user \
   --out-dir /tmp/laptop-bundle \
   --client-ip 10.77.0.2
+```
+
+If a device is retired or lost, revoke it cleanly on the server with:
+
+```bash
+./target/release/apt-edge revoke-client --config /etc/adapt/server.toml --name laptop
 ```
 
 ## 4. Start the server
@@ -195,7 +205,7 @@ The bundle contains:
 - `client.toml`
 - `client-static-private.key`
 - `client-static-public.key`
-- `shared-admission.key`
+- `user-admission.key` or `shared-admission.key` depending on the selected auth model
 - `server-static-public.key`
 - `START-HERE.txt`
 
@@ -222,7 +232,7 @@ Useful one-shot overrides:
 The generated bundle keeps `D1` as the normal first choice and uses `S1` conservatively when the stream endpoint is present and the datagram path is blocked or unstable.
 
 On macOS, leave `interface_name` unset in `client.toml` unless you intentionally want to target a specific `utunX` interface.
-When the session comes up, the client logs the assigned tunnel IP/interface and the server logs the accepted session.
+When the session comes up, the client logs the assigned tunnel IP/interface, applies pushed DNS servers automatically where the local platform supports it, and the server logs the accepted session.
 
 Alternative: if you want to run the bundle directly from another directory:
 
@@ -242,6 +252,7 @@ Use the manual verification checklist in:
 
 - The server runtime is Linux-only right now.
 - The client runtime is intended for Linux/macOS.
+- Pushed DNS automation is best-effort: Linux currently uses `resolvectl`, and macOS temporarily overrides the primary network service DNS while the client is up.
 - Existing config files are best-effort auto-upgraded on load so newly added runtime fields appear automatically, but that rewrite normalizes TOML formatting and may drop comments from older files.
 - Full tunnel is typically achieved by pushing `0.0.0.0/0`.
 - The more raw/manual config-file-oriented flow lives in:
