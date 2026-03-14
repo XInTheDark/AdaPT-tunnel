@@ -47,7 +47,7 @@ This guided command creates:
 
 - `/etc/adapt/server.toml` by default
 - the server key files
-- a `bundles/` directory for client packages
+- a `bundles/` directory for single-file client bundles
 
 #### 2) Create a ready-to-use client bundle
 
@@ -61,7 +61,7 @@ This command:
 - authorizes the client in `server.toml`
 - defaults to a dedicated per-user admission key in the guided flow
 - generates the client static identity
-- writes a client bundle directory you can copy to the device
+- writes a single `.aptbundle` file you can copy to the device
 
 If you need the older shared-deployment admission model for a specific client, pass `--auth shared` instead.
 
@@ -79,17 +79,19 @@ sudo apt-edge start
 
 ### Client flow
 
-Copy the generated client bundle contents into `/etc/adapt` on the client device, then run:
+Copy the generated client bundle file into `/etc/adapt/client.aptbundle` on the client device, then run:
 
 ```bash
 sudo apt-client up
 ```
 
+With that default install path, the client stores its persistent state in `/var/lib/adapt/client-state.toml`.
+
 On macOS, the client should normally let the OS auto-create a `utun` interface instead of hardcoding a custom TUN name.
 
 When the session comes up, the client now logs the assigned tunnel IP, interface, and routes. If the server pushed DNS servers, the client also applies them automatically where the local platform supports it. The server logs when a client session is established.
 
-If you prefer not to install the bundle into `/etc/adapt`, you can still run it directly with `--config client.toml`.
+If you prefer not to install the bundle into `/etc/adapt`, you can still run it directly with `--bundle /path/to/laptop.aptbundle`.
 
 ## Recommended quickstart
 
@@ -146,7 +148,7 @@ sudo apt-edge start
 
 ### On the client
 
-After copying the generated bundle contents into `/etc/adapt` on the client:
+After copying the generated bundle file into `/etc/adapt/client.aptbundle` on the client:
 
 ```bash
 sudo apt-client up
@@ -183,7 +185,7 @@ Useful options:
 - `--config` — server config path
 - `--name` — client name
 - `--auth shared|per-user` — choose the admission model; `per-user` is the recommended default
-- `--out-dir` — where to write the client bundle
+- `--out-file` — where to write the single-file client bundle
 - `--client-ip` — manually choose the client tunnel IP
 - `--yes` — skip prompts for missing values
 
@@ -211,7 +213,7 @@ Start the VPN using a generated client bundle.
 
 Useful option:
 
-- `--config` — path to `client.toml`
+- `--bundle` — path to the single-file client bundle
 - `--mode stealth|balanced|speed` — one-shot runtime mode override
 - `--carrier auto|d1|s1` — one-shot preferred-carrier override
 
@@ -255,7 +257,7 @@ That means most operators can download a release bundle directly instead of buil
 ### Manual / advanced setup
 - `guides/MANUAL-CONFIG-SETUP.md` — raw config-file-oriented setup and manual details
 - `guides/examples/server.toml` — example server config
-- `guides/examples/client.toml` — example client config
+- `guides/examples/client.toml` — reference for the logical client config embedded inside a bundle
 
 ## WireGuard relationship
 

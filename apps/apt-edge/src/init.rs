@@ -178,7 +178,10 @@ pub(super) fn init_server(
     println!("  • {}/server-static-public.key", out_dir.display());
     println!("  • {}/cookie.key", out_dir.display());
     println!("  • {}/ticket.key", out_dir.display());
-    println!("  • {}/bundles/", out_dir.display());
+    println!(
+        "  • {}/bundles/ (single-file client bundles)",
+        out_dir.display()
+    );
     println!("\nServer summary:");
     println!("  • Listen on: {bind}");
     println!(
@@ -195,7 +198,7 @@ pub(super) fn init_server(
     println!("\nNext steps:");
     println!("  1. Add a client bundle:");
     println!(
-        "     apt-edge add-client --config {} --name laptop",
+        "     apt-edge add-client --config {} --name laptop --auth per-user",
         config_path.display()
     );
     println!("  2. Start the server:");

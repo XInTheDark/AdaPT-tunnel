@@ -1,4 +1,4 @@
-# Client configuration for the current production-style APT runtime.
+# Logical client configuration embedded inside a single-file `.aptbundle`.
 
 server_addr = "203.0.113.10:51820"
 stream_server_addr = "203.0.113.10:443"

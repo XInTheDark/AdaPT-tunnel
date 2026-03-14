@@ -1,5 +1,6 @@
 //! User-friendly CLI for the APT VPN client.
 
+use apt_bundle::{client_bundle_state_path, load_client_bundle, DEFAULT_CLIENT_BUNDLE_FILE_NAME};
 use apt_runtime::{
     generate_client_identity, run_client, write_key_file, ClientConfig, RuntimeCarrierPreference,
     RuntimeMode,
@@ -7,7 +8,7 @@ use apt_runtime::{
 use clap::{Parser, Subcommand, ValueEnum};
 use std::{
     io::{self, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -49,7 +50,7 @@ impl From<CliCarrier> for RuntimeCarrierPreference {
 #[command(
     name = "apt-client",
     about = "APT VPN client",
-    long_about = "APT VPN client. The usual workflow is: install the client bundle into `/etc/adapt`, then run `apt-client up`."
+    long_about = "APT VPN client. The usual workflow is: install the single-file client bundle into `/etc/adapt/client.aptbundle`, then run `apt-client up`."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -61,9 +62,9 @@ enum Command {
     /// Start the VPN using a client config bundle.
     #[command(alias = "connect", alias = "start", alias = "run")]
     Up {
-        /// Path to client.toml. If omitted, common default locations are searched.
+        /// Path to the client bundle file. If omitted, common default locations are searched.
         #[arg(long)]
-        config: Option<PathBuf>,
+        bundle: Option<PathBuf>,
         /// Override the runtime mode for this launch only.
         #[arg(long, value_enum)]
         mode: Option<CliRuntimeMode>,
@@ -91,28 +92,27 @@ async fn main() {
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().command {
         Command::Up {
-            config,
+            bundle,
             mode,
             carrier,
-        } => start_client(config, mode, carrier).await?,
+        } => start_client(bundle, mode, carrier).await?,
         Command::GenIdentity { out_dir } => generate_identity(&out_dir)?,
     }
     Ok(())
 }
 
 async fn start_client(
-    config: Option<PathBuf>,
+    bundle: Option<PathBuf>,
     mode: Option<CliRuntimeMode>,
     carrier: Option<CliCarrier>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config_path = match config {
+    let bundle_path = match bundle {
         Some(path) => path,
-        None => find_client_config().unwrap_or(prompt_config_path()?),
+        None => find_client_bundle().unwrap_or(prompt_bundle_path()?),
     };
-    println!("Using client bundle: {}", config_path.display());
+    println!("Using client bundle: {}", bundle_path.display());
     println!("Connecting to the VPN... Press Ctrl-C to disconnect.\n");
-    let loaded = ClientConfig::load(&config_path)?;
-    let _ = loaded.store(&config_path);
+    let loaded = load_bundle_config(&bundle_path)?;
     let mut resolved = loaded.resolve()?;
     if let Some(mode) = mode {
         let mode: RuntimeMode = mode.into();
@@ -148,25 +148,34 @@ fn generate_identity(out_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-fn find_client_config() -> Option<PathBuf> {
+fn load_bundle_config(bundle_path: &Path) -> Result<ClientConfig, Box<dyn std::error::Error>> {
+    let mut bundle = load_client_bundle(bundle_path)?;
+    bundle.config.state_path = client_bundle_state_path(bundle_path);
+    Ok(bundle.config)
+}
+
+fn find_client_bundle() -> Option<PathBuf> {
     [
-        PathBuf::from("/etc/adapt/client.toml"),
-        PathBuf::from("./client.toml"),
-        PathBuf::from("./adapt-client/client.toml"),
+        PathBuf::from("/etc/adapt").join(DEFAULT_CLIENT_BUNDLE_FILE_NAME),
+        PathBuf::from(format!("./{DEFAULT_CLIENT_BUNDLE_FILE_NAME}")),
+        PathBuf::from("./adapt-client").join(DEFAULT_CLIENT_BUNDLE_FILE_NAME),
     ]
     .into_iter()
     .find(|path| path.exists())
 }
 
-fn prompt_config_path() -> io::Result<PathBuf> {
+fn prompt_bundle_path() -> io::Result<PathBuf> {
     let mut stdout = io::stdout();
-    write!(stdout, "Path to client.toml [/etc/adapt/client.toml]: ")?;
+    write!(
+        stdout,
+        "Path to client bundle [/etc/adapt/{DEFAULT_CLIENT_BUNDLE_FILE_NAME}]: "
+    )?;
     stdout.flush()?;
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
     let trimmed = input.trim();
     Ok(if trimmed.is_empty() {
-        PathBuf::from("/etc/adapt/client.toml")
+        PathBuf::from("/etc/adapt").join(DEFAULT_CLIENT_BUNDLE_FILE_NAME)
     } else {
         PathBuf::from(trimmed)
     })

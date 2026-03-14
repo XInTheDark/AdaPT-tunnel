@@ -1,9 +1,9 @@
 //! User-friendly CLI for the combined APT server daemon.
 
 use apt_runtime::{
-    generate_client_identity, generate_server_keyset, load_key32, run_server, write_key_file,
-    AuthorizedPeerConfig, ClientConfig, RuntimeCarrierPreference, RuntimeMode, ServerConfig,
-    SessionPolicy,
+    encode_key_hex, generate_client_identity, generate_server_keyset, load_key32, run_server,
+    write_key_file, AuthorizedPeerConfig, ClientConfig, RuntimeCarrierPreference, RuntimeMode,
+    ServerConfig, SessionPolicy,
 };
 use apt_types::AuthProfile;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -77,10 +77,10 @@ async fn run() -> CliResult {
             config,
             name,
             auth,
-            out_dir,
+            out_file,
             client_ip,
             yes,
-        } => add_client(config, name, auth, out_dir, client_ip, yes)?,
+        } => add_client(config, name, auth, out_file, client_ip, yes)?,
         Command::RevokeClient { config, name, yes } => revoke_client(config, name, yes)?,
         Command::Start { config, mode } => start_server(config, mode).await?,
         Command::GenKeys { out_dir } => write_server_keyset(&out_dir)?,

@@ -36,7 +36,7 @@ impl From<CliAuthProfile> for AuthProfile {
 #[command(
     name = "apt-edge",
     about = "APT VPN server",
-    long_about = "APT VPN server. Use `init` to create a server config, `add-client` to generate ready-to-use client bundles, and `start` to run the server."
+    long_about = "APT VPN server. Use `init` to create a server config, `add-client` to generate ready-to-use single-file client bundles, and `start` to run the server."
 )]
 pub(super) struct Cli {
     #[command(subcommand)]
@@ -98,9 +98,9 @@ pub(super) enum Command {
         /// Admission model for this client. `per-user` is recommended for new deployments.
         #[arg(long, value_enum)]
         auth: Option<CliAuthProfile>,
-        /// Directory where the client bundle should be written.
+        /// Path where the single-file client bundle should be written.
         #[arg(long)]
-        out_dir: Option<PathBuf>,
+        out_file: Option<PathBuf>,
         /// Specific client tunnel IP to assign. If omitted, the next free IP is chosen.
         #[arg(long)]
         client_ip: Option<Ipv4Addr>,

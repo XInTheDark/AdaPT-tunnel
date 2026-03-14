@@ -104,7 +104,7 @@ The command walks you through the main values, then creates:
 
 - `/etc/adapt/server.toml` by default
 - the server key files
-- a `bundles/` directory for client packages
+- a `bundles/` directory for single-file client bundles
 
 If you keep the stream fallback enabled, the resulting config also carries:
 
@@ -153,18 +153,18 @@ This command automatically:
 - creates a dedicated per-user admission key by default
 - generates the client's static keypair
 - updates the server's authorized peer list
-- writes a client bundle directory you can copy to the client device
+- writes a single `.aptbundle` file you can copy to the client device
 
 If you need the older shared-deployment model for a particular client, pass `--auth shared`.
 
-You can also override the output directory and client IP if needed:
+You can also override the output file and client IP if needed:
 
 ```bash
 ./target/release/apt-edge add-client \
   --config /etc/adapt/server.toml \
   --name laptop \
   --auth per-user \
-  --out-dir /tmp/laptop-bundle \
+  --out-file /tmp/laptop.aptbundle \
   --client-ip 10.77.0.2
 ```
 
@@ -198,24 +198,22 @@ The server must run with privileges sufficient to:
 
 ## 5. Copy the client bundle to the client device
 
-Copy the generated bundle directory from the server to the client.
+Copy the generated `.aptbundle` file from the server to the client.
 
-The bundle contains:
+The bundle is a single compressed custom-format file containing:
 
-- `client.toml`
-- `client-static-private.key`
-- `client-static-public.key`
-- `user-admission.key` or `shared-admission.key` depending on the selected auth model
-- `server-static-public.key`
-- `START-HERE.txt`
+- the logical client config
+- the client private key
+- the deployment or per-user admission key
+- the server static public key
 
 ## 6. Start the client
 
-Recommended: install the bundle into `/etc/adapt` on the client:
+Recommended: install the bundle into `/etc/adapt/client.aptbundle` on the client:
 
 ```bash
 sudo mkdir -p /etc/adapt
-sudo cp -R /path/to/laptop-bundle/* /etc/adapt/
+sudo cp /path/to/laptop.aptbundle /etc/adapt/client.aptbundle
 ```
 
 Then start the client using the default config location:
@@ -224,6 +222,8 @@ Then start the client using the default config location:
 sudo ./target/release/apt-client up
 ```
 
+When the bundle is installed at `/etc/adapt/client.aptbundle`, the client stores its persistent state in `/var/lib/adapt/client-state.toml`.
+
 Useful one-shot overrides:
 
 - `--mode stealth|balanced|speed` — temporary runtime-mode override
@@ -231,16 +231,14 @@ Useful one-shot overrides:
 
 The generated bundle keeps `D1` as the normal first choice and uses `S1` conservatively when the stream endpoint is present and the datagram path is blocked or unstable.
 
-On macOS, leave `interface_name` unset in `client.toml` unless you intentionally want to target a specific `utunX` interface.
+On macOS, the embedded client config leaves `interface_name` unset unless you intentionally rebuild a bundle that targets a specific `utunX` interface.
 When the session comes up, the client logs the assigned tunnel IP/interface, applies pushed DNS servers automatically where the local platform supports it, and the server logs the accepted session.
 
 Alternative: if you want to run the bundle directly from another directory:
 
 ```bash
-sudo ./target/release/apt-client up --config client.toml
+sudo ./target/release/apt-client up --bundle /path/to/laptop.aptbundle
 ```
-
-If `client.toml` is in the current directory, that direct mode still works.
 
 ## 7. Verify the VPN
 
@@ -253,7 +251,7 @@ Use the manual verification checklist in:
 - The server runtime is Linux-only right now.
 - The client runtime is intended for Linux/macOS.
 - Pushed DNS automation is best-effort: Linux currently uses `resolvectl`, and macOS temporarily overrides the primary network service DNS while the client is up.
-- Existing config files are best-effort auto-upgraded on load so newly added runtime fields appear automatically, but that rewrite normalizes TOML formatting and may drop comments from older files.
+- Server config files are best-effort auto-upgraded on load so newly added runtime fields appear automatically, but that rewrite normalizes TOML formatting and may drop comments from older files.
 - Full tunnel is typically achieved by pushing `0.0.0.0/0`.
 - The more raw/manual config-file-oriented flow lives in:
   - `guides/MANUAL-CONFIG-SETUP.md`

@@ -179,8 +179,8 @@ If the client does not connect:
 - confirm the server UDP port is reachable for `D1`
 - confirm the server TCP stream port is reachable for `S1` when fallback is enabled
 - confirm `endpoint_id` matches on both sides
-- confirm the client has the correct `shared-admission.key`
-- confirm the client has the correct `server-static-public.key`
+- confirm the client has the correct `.aptbundle` generated for that peer
+- confirm the bundle was copied intact and not mixed up with another client's bundle
 - confirm the server `[[peers]]` entry matches the client public key
 - confirm `stream_server_addr` / `stream_public_endpoint` are correct if you are forcing or expecting `S1`
 - confirm you did not pin the client to the wrong carrier with `--carrier`

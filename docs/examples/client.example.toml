@@ -1,3 +1,5 @@
+# Logical client config embedded inside a single-file `.aptbundle`.
+
 server_addr = "203.0.113.10:51820"
 stream_server_addr = "203.0.113.10:443"
 runtime_mode = "stealth"

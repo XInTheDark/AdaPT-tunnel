@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/apt-bundle",
   "crates/apt-types",
   "crates/apt-crypto",
   "crates/apt-admission",
@@ -23,6 +24,7 @@ rust-version = "1.84"
 authors = ["Jerry"]
 
 [workspace.dependencies]
+apt-bundle = { path = "crates/apt-bundle" }
 apt-types = { path = "crates/apt-types" }
 apt-crypto = { path = "crates/apt-crypto" }
 apt-admission = { path = "crates/apt-admission" }
@@ -56,6 +58,7 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tun = { version = "=0.7.13", features = ["async", "tokio"] }
+zstd = "0.13"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
