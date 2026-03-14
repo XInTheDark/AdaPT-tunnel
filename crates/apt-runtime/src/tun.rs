@@ -1,5 +1,7 @@
 use crate::error::RuntimeError;
 use futures_util::{SinkExt, StreamExt};
+#[cfg(target_os = "linux")]
+use std::{fs, path::Path};
 use std::{
     net::{Ipv4Addr, Ipv6Addr},
     process::Command,
@@ -128,17 +130,23 @@ fn configure_ipv6_interface(
 
     #[cfg(target_os = "linux")]
     {
+        ensure_linux_ipv6_enabled(interface_name)?;
         run_command(
             "ip",
             &[
                 "-6".into(),
                 "addr".into(),
-                "add".into(),
+                "replace".into(),
                 format!("{local_ipv6}/{prefix_len}"),
                 "dev".into(),
                 interface_name.into(),
             ],
         )
+        .map_err(|error| {
+            RuntimeError::CommandFailed(format!(
+                "{error}; if this host does not have Linux IPv6 enabled, either enable it (`sysctl -w net.ipv6.conf.all.disable_ipv6=0`) or remove the IPv6 tunnel fields from server.toml"
+            ))
+        })
     }
 
     #[cfg(target_os = "macos")]
@@ -178,4 +186,40 @@ fn run_command(program: &str, args: &[String]) -> Result<(), RuntimeError> {
         args.join(" "),
         String::from_utf8_lossy(&output.stderr)
     )))
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_linux_ipv6_enabled(interface_name: &str) -> Result<(), RuntimeError> {
+    let ipv6_root = Path::new("/proc/sys/net/ipv6");
+    if !ipv6_root.exists() {
+        return Err(RuntimeError::InvalidConfig(
+            "IPv6 tunneling is configured, but this Linux host does not expose /proc/sys/net/ipv6; enable IPv6 in the kernel or remove the IPv6 tunnel fields from server.toml"
+                .to_string(),
+        ));
+    }
+
+    for path in [
+        Path::new("/proc/sys/net/ipv6/conf/all/disable_ipv6").to_path_buf(),
+        Path::new("/proc/sys/net/ipv6/conf/default/disable_ipv6").to_path_buf(),
+        ipv6_root
+            .join("conf")
+            .join(interface_name)
+            .join("disable_ipv6"),
+    ] {
+        let Ok(current) = fs::read_to_string(&path) else {
+            continue;
+        };
+        if current.trim() != "1" {
+            continue;
+        }
+        fs::write(&path, "0").map_err(|error| {
+            RuntimeError::CommandFailed(format!(
+                "failed to enable IPv6 via {}: {}; either enable Linux IPv6 first or remove the IPv6 tunnel fields from server.toml",
+                path.display(),
+                error
+            ))
+        })?;
+    }
+
+    Ok(())
 }

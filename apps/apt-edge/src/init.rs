@@ -148,8 +148,8 @@ pub(super) fn init_server(
         .map_err(|error| format!("invalid tunnel subnet `{tunnel_subnet}`: {error}"))?;
     let tunnel_subnet6 = match tunnel_subnet6 {
         Some(value) => Some(value),
-        None if yes => Some("fd77:77::/64".to_string()),
-        None if prompt_bool("Enable IPv6 tunnel addressing", true)? => Some(prompt_string(
+        None if yes => None,
+        None if prompt_bool("Enable IPv6 tunnel addressing", false)? => Some(prompt_string(
             "IPv6 tunnel subnet (CIDR)",
             Some("fd77:77::/64"),
         )?),

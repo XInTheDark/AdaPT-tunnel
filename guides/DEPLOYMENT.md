@@ -173,7 +173,7 @@ This command automatically:
 
 If you need the older shared-deployment model for a particular client, pass `--auth shared`.
 
-You can also override the output file and client IP if needed:
+You can also override the output file and client IP if needed. The IPv6 assignment is optional and should only be set if the server config has tunnel IPv6 enabled:
 
 ```bash
 ./target/release/apt-edge add-client \
@@ -181,8 +181,7 @@ You can also override the output file and client IP if needed:
   --name laptop \
   --auth per-user \
   --out-file /tmp/laptop.aptbundle \
-  --client-ip 10.77.0.2 \
-  --client-ipv6 fd77:77::2
+  --client-ip 10.77.0.2
 ```
 
 If a device is retired or lost, revoke it cleanly on the server with:

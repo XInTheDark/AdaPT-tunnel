@@ -314,7 +314,7 @@ Current limitations include:
 - client runtime target is Linux/macOS
 - DNS automation is best-effort rather than universal: Linux currently uses `resolvectl`, and macOS temporarily overrides the primary network service DNS while the tunnel is up
 - the live carrier set is now `D1`, optional `D2`, and optional `S1`; `H1` remains future work
-- IPv6 tunnel addressing, routing, and Linux server forwarding/NAT are now supported; fresh `apt-edge init` runs generate both IPv4 and IPv6 tunnel ranges by default
+- IPv6 tunnel addressing, routing, and Linux server forwarding/NAT are supported when the host IPv6 stack is enabled; guided `apt-edge init` now leaves IPv6 off unless you opt in
 - the stream fallback carrier is a practical generic TCP stream runtime in this repo; it is not yet a polished outer-TLS impersonation layer
 - config auto-upgrade rewrites parsed TOML with new defaulted fields, so comments/formatting in older configs may be normalized on startup
 
