@@ -26,7 +26,7 @@ use apt_admission::{
     EstablishedSession, ServerConfirmationPacket, ServerResponse,
 };
 use apt_carriers::{CarrierError, CarrierProfile, D1Carrier, S1Carrier};
-use apt_crypto::{SealedEnvelope, StaticKeypair};
+use apt_crypto::{SealedEnvelope, SessionSecretsForRole, StaticKeypair};
 use apt_observability::{record_event, AptEvent, ObservabilityConfig, TelemetrySnapshot};
 use apt_tunnel::{Frame, RekeyStatus, TunnelSession};
 use apt_types::{
@@ -297,7 +297,18 @@ pub async fn run_client(config: ResolvedClientConfig) -> Result<ClientRuntimeRes
 pub async fn run_server(config: ResolvedServerConfig) -> Result<ServerRuntimeResult, RuntimeError> {
     let observability = ObservabilityConfig::default();
     let mut telemetry = TelemetrySnapshot::new("apt-edge");
-    let carriers = RuntimeCarriers::new(config.tunnel_mtu, config.stream_decoy_surface);
+    let bootstrap_carriers = RuntimeCarriers::new(config.tunnel_mtu, config.stream_decoy_surface);
+    let effective_tunnel_mtu =
+        effective_runtime_tunnel_mtu(config.tunnel_mtu, &config.endpoint_id, &bootstrap_carriers);
+    if effective_tunnel_mtu < config.tunnel_mtu {
+        warn!(
+            configured_mtu = config.tunnel_mtu,
+            effective_mtu = effective_tunnel_mtu,
+            carrier = CarrierBinding::D1DatagramUdp.as_str(),
+            "configured tunnel MTU exceeds the safe D1 payload budget; capping runtime MTU"
+        );
+    }
+    let carriers = RuntimeCarriers::new(effective_tunnel_mtu, config.stream_decoy_surface);
 
     let udp_socket = Arc::new(build_udp_socket(
         config.bind,
@@ -316,7 +327,7 @@ pub async fn run_server(config: ResolvedServerConfig) -> Result<ServerRuntimeRes
         local_ipv4: config.tunnel_local_ipv4,
         peer_ipv4: config.tunnel_local_ipv4,
         netmask: config.tunnel_netmask,
-        mtu: config.tunnel_mtu,
+        mtu: effective_tunnel_mtu,
     })
     .await?;
     let _server_net_guard = configure_server_network(&tun.interface_name, &config)?;
@@ -324,7 +335,7 @@ pub async fn run_server(config: ResolvedServerConfig) -> Result<ServerRuntimeRes
     let mut credentials = CredentialStore::default();
     credentials.set_shared_deployment_key(config.admission_key);
     let mut admission = AdmissionServer::new(
-        admission_config(&config, &carriers),
+        admission_config(&config, &carriers, effective_tunnel_mtu),
         credentials,
         AdmissionServerSecrets {
             static_keypair: StaticKeypair {
@@ -386,6 +397,7 @@ pub async fn run_server(config: ResolvedServerConfig) -> Result<ServerRuntimeRes
                                 &mut admission,
                                 &config,
                                 &carriers,
+                                effective_tunnel_mtu,
                                 peer_addr,
                                 bytes.len(),
                                 packet,
@@ -459,6 +471,7 @@ pub async fn run_server(config: ResolvedServerConfig) -> Result<ServerRuntimeRes
                                 &mut admission,
                                 &config,
                                 &carriers,
+                                effective_tunnel_mtu,
                                 conn_id,
                                 packet,
                                 &mut sessions,
@@ -1389,6 +1402,7 @@ async fn handle_server_admission_datagram(
     admission: &mut AdmissionServer,
     config: &ResolvedServerConfig,
     carriers: &RuntimeCarriers,
+    effective_tunnel_mtu: u16,
     peer_addr: SocketAddr,
     received_len: usize,
     packet: AdmissionPacket,
@@ -1428,7 +1442,9 @@ async fn handle_server_admission_datagram(
                 .map_err(|_| AdmissionError::Validation("unauthorized peer"))?;
             Ok(vec![bincode::serialize(
                 &ServerSessionExtension::TunnelParameters(assign_transport_parameters(
-                    config, peer,
+                    config,
+                    peer,
+                    effective_tunnel_mtu,
                 )),
             )?])
         },
@@ -1467,6 +1483,7 @@ async fn handle_server_admission_stream(
     admission: &mut AdmissionServer,
     config: &ResolvedServerConfig,
     carriers: &RuntimeCarriers,
+    effective_tunnel_mtu: u16,
     conn_id: u64,
     packet: AdmissionPacket,
     sessions: &mut HashMap<SessionId, ServerSessionState>,
@@ -1507,7 +1524,9 @@ async fn handle_server_admission_stream(
                 .map_err(|_| AdmissionError::Validation("unauthorized peer"))?;
             Ok(vec![bincode::serialize(
                 &ServerSessionExtension::TunnelParameters(assign_transport_parameters(
-                    config, authorized,
+                    config,
+                    authorized,
+                    effective_tunnel_mtu,
                 )),
             )?])
         },
@@ -2464,7 +2483,7 @@ fn plan_outbound_tunnel_batches(
         let frame = remaining.remove(0);
         match frame {
             Frame::IpData(packet) => {
-                warn!(
+                debug!(
                     carrier = binding.as_str(),
                     packet_len = packet.len(),
                     "dropping outbound IP packet that exceeds the current carrier budget; consider lowering the tunnel MTU"
@@ -2674,7 +2693,11 @@ fn decode_server_stream_admission_packet(
         })
 }
 
-fn admission_config(config: &ResolvedServerConfig, carriers: &RuntimeCarriers) -> AdmissionConfig {
+fn admission_config(
+    config: &ResolvedServerConfig,
+    carriers: &RuntimeCarriers,
+    effective_tunnel_mtu: u16,
+) -> AdmissionConfig {
     let mut admission = AdmissionConfig::conservative(config.endpoint_id.clone());
     admission.allowed_carriers = vec![
         CarrierBinding::D1DatagramUdp,
@@ -2682,7 +2705,7 @@ fn admission_config(config: &ResolvedServerConfig, carriers: &RuntimeCarriers) -
     ];
     admission.default_policy = config.session_policy.initial_mode;
     admission.max_record_size = carriers.d1().max_record_size();
-    admission.tunnel_mtu = config.tunnel_mtu;
+    admission.tunnel_mtu = effective_tunnel_mtu;
     admission.allowed_suites = vec![CipherSuite::NoiseXxPsk2X25519ChaChaPolyBlake2s];
     admission
 }
@@ -2690,12 +2713,13 @@ fn admission_config(config: &ResolvedServerConfig, carriers: &RuntimeCarriers) -
 fn assign_transport_parameters(
     config: &ResolvedServerConfig,
     peer: ResolvedAuthorizedPeer,
+    effective_tunnel_mtu: u16,
 ) -> SessionTransportParameters {
     SessionTransportParameters {
         client_ipv4: peer.tunnel_ipv4,
         server_ipv4: config.tunnel_local_ipv4,
         netmask: config.tunnel_netmask,
-        mtu: config.tunnel_mtu,
+        mtu: effective_tunnel_mtu,
         routes: config.push_routes.clone(),
         dns_servers: config.push_dns.clone(),
     }
@@ -2769,6 +2793,65 @@ impl RuntimeCarriers {
     fn s1(&self) -> &S1Carrier {
         &self.s1
     }
+}
+
+fn effective_runtime_tunnel_mtu(
+    configured_tunnel_mtu: u16,
+    endpoint_id: &apt_types::EndpointId,
+    carriers: &RuntimeCarriers,
+) -> u16 {
+    configured_tunnel_mtu.min(effective_d1_tunnel_mtu(endpoint_id, carriers.d1()))
+}
+
+fn effective_d1_tunnel_mtu(endpoint_id: &apt_types::EndpointId, carrier: &D1Carrier) -> u16 {
+    let outer_keys = RuntimeOuterKeys {
+        d1: D1OuterKeys {
+            send: [0x11; 32],
+            recv: [0x22; 32],
+        },
+        s1: S1OuterKeys {
+            send: [0x33; 32],
+            recv: [0x44; 32],
+        },
+    };
+    let template_session = TunnelSession::new(
+        SessionId([0xAB; 16]),
+        SessionRole::Initiator,
+        SessionSecretsForRole {
+            send_data: [0x01; 32],
+            recv_data: [0x02; 32],
+            send_ctrl: [0x03; 32],
+            recv_ctrl: [0x04; 32],
+            rekey: [0x05; 32],
+            persona_seed: [0x06; 32],
+            resume_secret: [0x07; 32],
+        },
+        apt_types::RekeyLimits::default(),
+        MINIMUM_REPLAY_WINDOW as u64,
+        0,
+    );
+
+    for mtu in (1..=carrier.tunnel_mtu()).rev() {
+        let mut tunnel = template_session.clone();
+        let frames = [Frame::IpData(vec![0_u8; usize::from(mtu)])];
+        let outer = encode_server_tunnel_packet_batch(
+            &RuntimeCarriers {
+                d1: *carrier,
+                s1: runtime_s1_carrier(carrier.tunnel_mtu(), false),
+            },
+            endpoint_id,
+            &outer_keys,
+            CarrierBinding::D1DatagramUdp,
+            &mut tunnel,
+            &frames,
+            0,
+        );
+        if outer.is_ok() {
+            return mtu;
+        }
+    }
+
+    carrier.tunnel_mtu().min(1_200)
 }
 
 fn build_udp_socket(
@@ -3000,6 +3083,18 @@ mod tests {
     fn standby_probe_schedule_is_jittered() {
         let first = jittered_interval_secs(20);
         assert!((16..=24).contains(&first));
+    }
+
+    #[test]
+    fn effective_d1_tunnel_mtu_is_capped_below_old_default() {
+        let carriers = RuntimeCarriers::new(1_380, false);
+        let effective = effective_runtime_tunnel_mtu(
+            1_380,
+            &EndpointId::new("adapt-test".to_string()),
+            &carriers,
+        );
+        assert!(effective < 1_380);
+        assert!(effective >= 1_200);
     }
 
     #[test]
