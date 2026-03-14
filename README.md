@@ -75,6 +75,8 @@ Copy the generated client bundle contents into `/etc/adapt` on the client device
 sudo apt-client up
 ```
 
+On macOS, the client should normally let the OS auto-create a `utun` interface instead of hardcoding a custom TUN name.
+
 If you prefer not to install the bundle into `/etc/adapt`, you can still run it directly with `--config client.toml`.
 
 ## Recommended quickstart

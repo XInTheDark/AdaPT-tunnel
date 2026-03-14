@@ -5,7 +5,9 @@ server_static_public_key = "file:/etc/adapt/server-static-public.key"
 client_static_private_key = "file:/etc/adapt/client-static-private.key"
 client_identity = "laptop"
 bind = "0.0.0.0:0"
-interface_name = "apt0"
+# Leave this unset for portable bundles. Linux can use an auto-created tun name,
+# and macOS will auto-allocate a `utun` interface.
+# interface_name = "utun6"
 routes = ["0.0.0.0/0"]
 use_server_pushed_routes = true
 keepalive_secs = 25

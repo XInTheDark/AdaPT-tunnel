@@ -198,6 +198,8 @@ Then start the client using the default config location:
 sudo ./target/release/apt-client up
 ```
 
+On macOS, leave `interface_name` unset in `client.toml` unless you intentionally want to target a specific `utunX` interface.
+
 Alternative: if you want to run the bundle directly from another directory:
 
 ```bash

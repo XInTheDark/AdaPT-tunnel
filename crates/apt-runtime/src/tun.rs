@@ -30,6 +30,19 @@ pub async fn spawn_tun_worker(config: TunInterfaceConfig) -> Result<TunHandle, R
         .mtu(config.mtu)
         .up();
     if let Some(name) = &config.name {
+        #[cfg(target_os = "macos")]
+        {
+            if name.starts_with("utun") {
+                tun_config.tun_name(name);
+            } else {
+                warn!(
+                    requested_name = %name,
+                    "ignoring invalid macOS TUN interface name; allowing the OS to allocate a utun interface automatically"
+                );
+            }
+        }
+
+        #[cfg(not(target_os = "macos"))]
         tun_config.tun_name(name);
     }
 

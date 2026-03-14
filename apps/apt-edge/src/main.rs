@@ -347,7 +347,7 @@ fn add_client(
         client_static_private_key: "file:./client-static-private.key".to_string(),
         client_identity: Some(name.clone()),
         bind: "0.0.0.0:0".parse()?,
-        interface_name: Some("apt0".to_string()),
+        interface_name: None,
         routes: Vec::new(),
         use_server_pushed_routes: true,
         keepalive_secs: 25,
