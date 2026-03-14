@@ -2326,15 +2326,27 @@ async fn send_frames_on_client_path(
     frames: &[Frame],
     now: u64,
 ) -> Result<(), RuntimeError> {
-    let encoded = tunnel.encode_packet(frames, now)?;
-    let outer = encode_client_tunnel_packet(
+    for batch in plan_outbound_tunnel_batches(
         carriers,
         endpoint_id,
         outer_keys,
         path.binding,
-        &encoded.bytes,
-    )?;
-    queue_path_payload(&path.sender, outer)
+        tunnel,
+        frames,
+        now,
+    )? {
+        let outer = encode_client_tunnel_packet_batch(
+            carriers,
+            endpoint_id,
+            outer_keys,
+            path.binding,
+            tunnel,
+            &batch,
+            now,
+        )?;
+        queue_path_payload(&path.sender, outer)?;
+    }
+    Ok(())
 }
 
 async fn send_frames_to_server_path(
@@ -2376,20 +2388,36 @@ async fn send_frames_to_path_handle(
     frames: &[Frame],
     now: u64,
 ) -> Result<(), RuntimeError> {
-    let encoded = tunnel.encode_packet(frames, now)?;
-    let outer =
-        encode_server_tunnel_packet(carriers, endpoint_id, outer_keys, binding, &encoded.bytes)?;
-    match path {
-        PathHandle::Datagram(peer_addr) => {
-            udp_socket.send_to(&outer, peer_addr).await?;
-        }
-        PathHandle::Stream(conn_id) => {
-            let Some(peer) = stream_peers.get(conn_id) else {
-                return Err(RuntimeError::InvalidConfig(
-                    "missing stream peer sender".to_string(),
-                ));
-            };
-            queue_path_payload(&PathSender::Stream(peer.sender.clone()), outer)?;
+    for batch in plan_outbound_tunnel_batches(
+        carriers,
+        endpoint_id,
+        outer_keys,
+        binding,
+        tunnel,
+        frames,
+        now,
+    )? {
+        let outer = encode_server_tunnel_packet_batch(
+            carriers,
+            endpoint_id,
+            outer_keys,
+            binding,
+            tunnel,
+            &batch,
+            now,
+        )?;
+        match path {
+            PathHandle::Datagram(peer_addr) => {
+                udp_socket.send_to(&outer, peer_addr).await?;
+            }
+            PathHandle::Stream(conn_id) => {
+                let Some(peer) = stream_peers.get(conn_id) else {
+                    return Err(RuntimeError::InvalidConfig(
+                        "missing stream peer sender".to_string(),
+                    ));
+                };
+                queue_path_payload(&PathSender::Stream(peer.sender.clone()), outer)?;
+            }
         }
     }
     Ok(())
@@ -2406,14 +2434,114 @@ fn queue_path_payload(sender: &PathSender, payload: Vec<u8>) -> Result<(), Runti
     }
 }
 
-fn encode_client_tunnel_packet(
+fn plan_outbound_tunnel_batches(
     carriers: &RuntimeCarriers,
     endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
     binding: CarrierBinding,
-    packet_bytes: &[u8],
+    tunnel: &TunnelSession,
+    frames: &[Frame],
+    now: u64,
+) -> Result<Vec<Vec<Frame>>, RuntimeError> {
+    let mut remaining = frames.to_vec();
+    let mut trial_tunnel = tunnel.clone();
+    let mut batches = Vec::new();
+    while !remaining.is_empty() {
+        if let Some((count, next_tunnel)) = largest_fitting_frame_prefix(
+            carriers,
+            endpoint_id,
+            outer_keys,
+            binding,
+            &trial_tunnel,
+            &remaining,
+            now,
+        )? {
+            batches.push(remaining.drain(..count).collect());
+            trial_tunnel = next_tunnel;
+            continue;
+        }
+
+        let frame = remaining.remove(0);
+        match frame {
+            Frame::IpData(packet) => {
+                warn!(
+                    carrier = binding.as_str(),
+                    packet_len = packet.len(),
+                    "dropping outbound IP packet that exceeds the current carrier budget; consider lowering the tunnel MTU"
+                );
+            }
+            Frame::Padding(bytes) => {
+                debug!(
+                    carrier = binding.as_str(),
+                    padding_len = bytes.len(),
+                    "dropping oversized outbound padding frame"
+                );
+            }
+            _ => return Err(RuntimeError::Carrier(CarrierError::Oversize)),
+        }
+    }
+    Ok(batches)
+}
+
+fn largest_fitting_frame_prefix(
+    carriers: &RuntimeCarriers,
+    endpoint_id: &apt_types::EndpointId,
+    outer_keys: &RuntimeOuterKeys,
+    binding: CarrierBinding,
+    tunnel: &TunnelSession,
+    frames: &[Frame],
+    now: u64,
+) -> Result<Option<(usize, TunnelSession)>, RuntimeError> {
+    for count in (1..=frames.len()).rev() {
+        let mut candidate_tunnel = tunnel.clone();
+        match encode_server_tunnel_packet_batch(
+            carriers,
+            endpoint_id,
+            outer_keys,
+            binding,
+            &mut candidate_tunnel,
+            &frames[..count],
+            now,
+        ) {
+            Ok(_) => return Ok(Some((count, candidate_tunnel))),
+            Err(RuntimeError::Carrier(CarrierError::Oversize)) => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(None)
+}
+
+fn encode_client_tunnel_packet_batch(
+    carriers: &RuntimeCarriers,
+    endpoint_id: &apt_types::EndpointId,
+    outer_keys: &RuntimeOuterKeys,
+    binding: CarrierBinding,
+    tunnel: &mut TunnelSession,
+    frames: &[Frame],
+    now: u64,
 ) -> Result<Vec<u8>, RuntimeError> {
-    encode_server_tunnel_packet(carriers, endpoint_id, outer_keys, binding, packet_bytes)
+    encode_server_tunnel_packet_batch(
+        carriers,
+        endpoint_id,
+        outer_keys,
+        binding,
+        tunnel,
+        frames,
+        now,
+    )
+}
+
+fn encode_server_tunnel_packet_batch(
+    carriers: &RuntimeCarriers,
+    endpoint_id: &apt_types::EndpointId,
+    outer_keys: &RuntimeOuterKeys,
+    binding: CarrierBinding,
+    tunnel: &mut TunnelSession,
+    frames: &[Frame],
+    now: u64,
+) -> Result<Vec<u8>, RuntimeError> {
+    let encoded = tunnel.encode_packet(frames, now)?;
+    encode_server_tunnel_packet(carriers, endpoint_id, outer_keys, binding, &encoded.bytes)
 }
 
 fn encode_server_tunnel_packet(
@@ -2811,6 +2939,43 @@ fn redact_credential(identity: &CredentialIdentity) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use apt_types::{EndpointId, RekeyLimits};
+
+    fn test_runtime_carriers() -> RuntimeCarriers {
+        RuntimeCarriers::new(1_380, false)
+    }
+
+    fn test_runtime_outer_keys() -> RuntimeOuterKeys {
+        RuntimeOuterKeys {
+            d1: D1OuterKeys {
+                send: [0x11; 32],
+                recv: [0x22; 32],
+            },
+            s1: S1OuterKeys {
+                send: [0x33; 32],
+                recv: [0x44; 32],
+            },
+        }
+    }
+
+    fn test_tunnel_session() -> TunnelSession {
+        TunnelSession::new(
+            SessionId([0x55; 16]),
+            SessionRole::Initiator,
+            apt_crypto::SessionSecretsForRole {
+                send_data: [0x01; 32],
+                recv_data: [0x02; 32],
+                send_ctrl: [0x03; 32],
+                recv_ctrl: [0x04; 32],
+                rekey: [0x05; 32],
+                persona_seed: [0x06; 32],
+                resume_secret: [0x07; 32],
+            },
+            RekeyLimits::default(),
+            u64::try_from(MINIMUM_REPLAY_WINDOW).unwrap(),
+            0,
+        )
+    }
 
     #[test]
     fn ipv4_destination_parsing_works() {
@@ -2835,5 +3000,45 @@ mod tests {
     fn standby_probe_schedule_is_jittered() {
         let first = jittered_interval_secs(20);
         assert!((16..=24).contains(&first));
+    }
+
+    #[test]
+    fn oversized_d1_burst_is_split_into_multiple_packets() {
+        let carriers = test_runtime_carriers();
+        let outer_keys = test_runtime_outer_keys();
+        let tunnel = test_tunnel_session();
+        let batches = plan_outbound_tunnel_batches(
+            &carriers,
+            &EndpointId::new("adapt-test".to_string()),
+            &outer_keys,
+            CarrierBinding::D1DatagramUdp,
+            &tunnel,
+            &[
+                Frame::IpData(vec![0_u8; 900]),
+                Frame::IpData(vec![1_u8; 900]),
+            ],
+            0,
+        )
+        .unwrap();
+        assert_eq!(batches.len(), 2);
+        assert!(batches.iter().all(|batch| batch.len() == 1));
+    }
+
+    #[test]
+    fn single_oversized_ip_frame_is_dropped_instead_of_failing() {
+        let carriers = test_runtime_carriers();
+        let outer_keys = test_runtime_outer_keys();
+        let tunnel = test_tunnel_session();
+        let batches = plan_outbound_tunnel_batches(
+            &carriers,
+            &EndpointId::new("adapt-test".to_string()),
+            &outer_keys,
+            CarrierBinding::D1DatagramUdp,
+            &tunnel,
+            &[Frame::IpData(vec![0_u8; 3_000])],
+            0,
+        )
+        .unwrap();
+        assert!(batches.is_empty());
     }
 }

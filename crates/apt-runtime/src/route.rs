@@ -17,7 +17,7 @@ impl RouteGuard {
     pub fn cleanup(&mut self) {
         for command in self.cleanup_commands.iter().rev() {
             if let Some((program, args)) = command.split_first() {
-                let _ = Command::new(program).args(args).status();
+                let _ = Command::new(program).args(args).output();
             }
         }
         self.cleanup_commands.clear();
