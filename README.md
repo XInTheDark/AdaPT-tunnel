@@ -144,11 +144,13 @@ GitHub Actions now builds downloadable release bundles automatically when a GitH
 Each release attaches tarballs for:
 
 - `x86_64-unknown-linux-gnu`
+- `x86_64-unknown-linux-musl`
 - `x86_64-apple-darwin`
 - `aarch64-apple-darwin`
 
 Linux compatibility note:
 
+- the `x86_64-unknown-linux-musl` bundle is a static Linux build and is the safest default choice when you are deploying onto an unknown or older Linux distribution
 - the `x86_64-unknown-linux-gnu` bundle is built on an `ubuntu-22.04` baseline instead of `ubuntu-latest`
 - this keeps the shipped GNU/Linux binary from unnecessarily depending on the newest glibc available on GitHub-hosted runners
 

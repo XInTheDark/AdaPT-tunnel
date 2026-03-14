@@ -19,7 +19,10 @@ You have two supported options.
 
 When a GitHub Release is published, CI attaches ready-to-run tarballs for supported targets.
 
-For `x86_64` Linux servers and clients, the GNU/Linux release bundle is built on an `ubuntu-22.04` baseline so it does not pick up the newest glibc requirement from `ubuntu-latest`.
+For `x86_64` Linux servers and clients:
+
+- prefer the `x86_64-unknown-linux-musl` bundle when you want the most portable static Linux binary
+- the `x86_64-unknown-linux-gnu` bundle is also published, but it is still a glibc-linked build; it is only kept on an `ubuntu-22.04` baseline so it does not pick up the newest glibc requirement from `ubuntu-latest`
 
 Each release bundle contains:
 
