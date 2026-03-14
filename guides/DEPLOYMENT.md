@@ -15,7 +15,38 @@ It uses the user-friendly CLI flow instead of hand-editing every file first.
 
 You have two supported options.
 
-### Option A: download a GitHub Release bundle
+### Option A: use the installer script
+
+The fastest way to get a suitable release onto a machine is:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/XInTheDark/AdaPT-tunnel/master/scripts/install.sh -o /tmp/adapt-install.sh
+sudo bash /tmp/adapt-install.sh install
+```
+
+By default, that script:
+
+- auto-detects the host platform
+- prefers the static `x86_64-unknown-linux-musl` asset on `x86_64` Linux
+- installs `apt-edge`, `apt-client`, and `apt-tunneld` into `/usr/local/bin`
+- installs docs and update metadata into `/usr/local/share/adapt`
+- installs an updater command named `adapt-install`
+
+To update later:
+
+```bash
+sudo adapt-install update
+```
+
+If you need to install from a fork or alternate repository:
+
+```bash
+sudo bash /tmp/adapt-install.sh install --repo your-org/AdaPT-tunnel
+```
+
+For GitHub Enterprise or another non-default GitHub base, the same script also accepts `--api-base` and `--web-base`.
+
+### Option B: download a GitHub Release bundle
 
 When a GitHub Release is published, CI attaches ready-to-run tarballs for supported targets.
 
@@ -29,12 +60,13 @@ Each release bundle contains:
 - `apt-edge`
 - `apt-client`
 - `apt-tunneld`
+- `install.sh`
 - the guides in this directory
 - example config files
 
 After extracting the tarball, the binaries live under `bin/`.
 
-### Option B: build from source
+### Option C: build from source
 
 From the repo root:
 

@@ -72,6 +72,37 @@ If you prefer not to install the bundle into `/etc/adapt`, you can still run it 
 
 ## Recommended quickstart
 
+### Install from the latest GitHub Release
+
+If you want a download-and-install flow instead of manually unpacking a tarball, use the installer script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/XInTheDark/AdaPT-tunnel/master/scripts/install.sh -o /tmp/adapt-install.sh
+sudo bash /tmp/adapt-install.sh install
+```
+
+By default, the installer:
+
+- auto-detects the current platform
+- prefers the static `x86_64-unknown-linux-musl` asset on `x86_64` Linux
+- installs binaries into `/usr/local/bin`
+- installs docs/update metadata into `/usr/local/share/adapt`
+- installs an updater command named `adapt-install`
+
+To update an existing installation later:
+
+```bash
+sudo adapt-install update
+```
+
+You can point the installer at another GitHub repo or base if needed:
+
+```bash
+sudo bash /tmp/adapt-install.sh install --repo your-org/AdaPT-tunnel
+```
+
+For GitHub Enterprise or other custom endpoints, the same script also supports `--api-base` and `--web-base`.
+
 ### On the server
 
 ```bash
@@ -159,6 +190,7 @@ Each bundle includes:
 - `apt-edge`
 - `apt-client`
 - `apt-tunneld`
+- `install.sh`
 - the deployment/testing guides
 - example config files
 
