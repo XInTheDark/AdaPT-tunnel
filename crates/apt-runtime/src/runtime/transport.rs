@@ -422,7 +422,10 @@ async fn send_outer_to_path(
     Ok(())
 }
 
-pub(super) fn queue_path_payload(sender: &PathSender, payload: Vec<u8>) -> Result<(), RuntimeError> {
+pub(super) fn queue_path_payload(
+    sender: &PathSender,
+    payload: Vec<u8>,
+) -> Result<(), RuntimeError> {
     match sender {
         PathSender::Datagram(tx) => tx
             .send(payload)

@@ -5,8 +5,10 @@ edition.workspace = true
 
 [dependencies]
 apt-runtime.workspace = true
+apt-types.workspace = true
 clap.workspace = true
 ipnet.workspace = true
+rand.workspace = true
 tokio.workspace = true
 tracing-subscriber.workspace = true
 

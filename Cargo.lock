@@ -147,8 +147,10 @@ name = "apt-edge"
 version = "0.1.0"
 dependencies = [
  "apt-runtime",
+ "apt-types",
  "clap",
  "ipnet",
+ "rand",
  "tokio",
  "tracing-subscriber",
 ]

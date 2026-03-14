@@ -45,6 +45,24 @@ pub(super) fn prompt_path(label: &str, default: Option<&str>) -> CliResult<PathB
     Ok(PathBuf::from(prompt_string(label, default)?))
 }
 
+pub(super) fn prompt_auth_profile(default: CliAuthProfile) -> CliResult<AuthProfile> {
+    let default_label = match default {
+        CliAuthProfile::Shared => "shared",
+        CliAuthProfile::PerUser => "per-user",
+    };
+    loop {
+        let value = prompt_string(
+            "Admission profile for this client (`shared` or `per-user`)",
+            Some(default_label),
+        )?;
+        match value.trim().to_ascii_lowercase().as_str() {
+            "shared" | "shared-deployment" => return Ok(AuthProfile::SharedDeployment),
+            "per-user" | "peruser" | "user" => return Ok(AuthProfile::PerUser),
+            _ => eprintln!("Invalid value: use `shared` or `per-user`"),
+        }
+    }
+}
+
 pub(super) fn validate_client_reachable_endpoint(endpoint: &str) -> CliResult {
     let trimmed = endpoint.trim();
     if trimmed.is_empty() {
@@ -120,6 +138,20 @@ pub(super) fn ipv4_netmask(prefix_len: u8) -> Ipv4Addr {
         u32::MAX << (32 - u32::from(prefix_len))
     };
     Ipv4Addr::from(mask)
+}
+
+pub(super) fn file_spec_path(spec: &str) -> Option<PathBuf> {
+    spec.strip_prefix("file:").map(PathBuf::from)
+}
+
+pub(super) fn is_path_within(base: &Path, candidate: &Path) -> bool {
+    let Ok(base) = base.canonicalize() else {
+        return false;
+    };
+    let Ok(candidate) = candidate.canonicalize() else {
+        return false;
+    };
+    candidate.starts_with(base)
 }
 
 #[cfg(test)]

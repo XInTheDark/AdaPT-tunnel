@@ -22,30 +22,29 @@ pub(super) fn init_server(
         None if yes => "0.0.0.0:51820".parse()?,
         None => prompt_parse("UDP listen address", Some("0.0.0.0:51820"))?,
     };
-    let public_endpoint = match public_endpoint {
-        Some(value) => {
-            validate_client_reachable_endpoint(&value)?;
-            value
-        }
-        None if yes && !bind.ip().is_unspecified() => {
-            let value = bind.to_string();
-            validate_client_reachable_endpoint(&value)?;
-            value
-        }
-        None if yes => {
-            return Err(
+    let public_endpoint =
+        match public_endpoint {
+            Some(value) => {
+                validate_client_reachable_endpoint(&value)?;
+                value
+            }
+            None if yes && !bind.ip().is_unspecified() => {
+                let value = bind.to_string();
+                validate_client_reachable_endpoint(&value)?;
+                value
+            }
+            None if yes => return Err(
                 "--public-endpoint is required when using --yes with an unspecified bind address"
                     .into(),
-            )
-        }
-        None => loop {
-            let value = prompt_string("Client-reachable public IP/DNS and port", None)?;
-            match validate_client_reachable_endpoint(&value) {
-                Ok(()) => break value,
-                Err(error) => eprintln!("Invalid value: {error}"),
-            }
-        },
-    };
+            ),
+            None => loop {
+                let value = prompt_string("Client-reachable public IP/DNS and port", None)?;
+                match validate_client_reachable_endpoint(&value) {
+                    Ok(()) => break value,
+                    Err(error) => eprintln!("Invalid value: {error}"),
+                }
+            },
+        };
     let stream_bind = match stream_bind {
         Some(bind) => Some(bind),
         None if yes => Some("0.0.0.0:443".parse()?),

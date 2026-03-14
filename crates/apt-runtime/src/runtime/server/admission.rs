@@ -9,7 +9,7 @@ pub(super) async fn handle_server_admission_datagram(
     effective_tunnel_mtu: u16,
     peer_addr: SocketAddr,
     received_len: usize,
-    packet: AdmissionPacket,
+    decoded: DecodedServerAdmissionPacket,
     sessions: &mut HashMap<SessionId, ServerSessionState>,
     path_to_session: &mut HashMap<PathHandle, SessionId>,
     sessions_by_client_ip: &mut HashMap<Ipv4Addr, SessionId>,
@@ -19,17 +19,17 @@ pub(super) async fn handle_server_admission_datagram(
     match admission.handle_c0(
         &peer_addr.to_string(),
         carriers.d1(),
-        &packet,
+        &decoded.packet,
         received_len,
         now_secs(),
     ) {
         ServerResponse::Reply(reply) => {
-            let outer_key = derive_d1_admission_outer_key(
-                &config.admission_key,
-                now_secs() / DEFAULT_ADMISSION_EPOCH_SLOT_SECS,
+            let bytes = encode_admission_datagram(
+                carriers.d1(),
+                &config.endpoint_id,
+                &decoded.outer_key,
+                &reply,
             )?;
-            let bytes =
-                encode_admission_datagram(carriers.d1(), &config.endpoint_id, &outer_key, &reply)?;
             socket.send_to(&bytes, peer_addr).await?;
             return Ok(true);
         }
@@ -39,7 +39,7 @@ pub(super) async fn handle_server_admission_datagram(
     let server_reply = match admission.handle_c2_with_extension_builder(
         &peer_addr.to_string(),
         carriers.d1(),
-        &packet,
+        &decoded.packet,
         now_secs(),
         |session| {
             let peer = authorize_established_session(config, session)
@@ -90,7 +90,7 @@ pub(super) async fn handle_server_admission_stream(
     carriers: &RuntimeCarriers,
     effective_tunnel_mtu: u16,
     conn_id: u64,
-    packet: AdmissionPacket,
+    decoded: DecodedServerAdmissionPacket,
     sessions: &mut HashMap<SessionId, ServerSessionState>,
     path_to_session: &mut HashMap<PathHandle, SessionId>,
     sessions_by_client_ip: &mut HashMap<Ipv4Addr, SessionId>,
@@ -103,16 +103,13 @@ pub(super) async fn handle_server_admission_stream(
     match admission.handle_c0(
         &peer.peer_addr.to_string(),
         carriers.s1(),
-        &packet,
+        &decoded.packet,
         0,
         now_secs(),
     ) {
         ServerResponse::Reply(reply) => {
-            let outer_key = derive_s1_admission_outer_key(
-                &config.admission_key,
-                now_secs() / DEFAULT_ADMISSION_EPOCH_SLOT_SECS,
-            )?;
-            let payload = encode_admission_stream_payload(&config.endpoint_id, &outer_key, &reply)?;
+            let payload =
+                encode_admission_stream_payload(&config.endpoint_id, &decoded.outer_key, &reply)?;
             queue_path_payload(&PathSender::Stream(peer.sender.clone()), payload)?;
             return Ok(true);
         }
@@ -122,7 +119,7 @@ pub(super) async fn handle_server_admission_stream(
     let server_reply = match admission.handle_c2_with_extension_builder(
         &peer.peer_addr.to_string(),
         carriers.s1(),
-        &packet,
+        &decoded.packet,
         now_secs(),
         |session| {
             let authorized = authorize_established_session(config, session)

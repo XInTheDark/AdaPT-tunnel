@@ -281,13 +281,24 @@ pub(super) fn decode_server_admission_packet(
     carrier: &D1Carrier,
     datagram: &[u8],
     now_secs: u64,
-) -> Option<AdmissionPacket> {
-    candidate_epoch_slots(now_secs)
+) -> Option<DecodedServerAdmissionPacket> {
+    server_admission_keys(config)
         .into_iter()
-        .find_map(|epoch_slot| {
-            let outer_key =
-                derive_d1_admission_outer_key(&config.admission_key, epoch_slot).ok()?;
-            decode_admission_datagram(carrier, &config.endpoint_id, &outer_key, datagram).ok()
+        .find_map(|admission_key| {
+            candidate_epoch_slots(now_secs)
+                .into_iter()
+                .find_map(|epoch_slot| {
+                    let outer_key =
+                        derive_d1_admission_outer_key(&admission_key, epoch_slot).ok()?;
+                    let packet = decode_admission_datagram(
+                        carrier,
+                        &config.endpoint_id,
+                        &outer_key,
+                        datagram,
+                    )
+                    .ok()?;
+                    Some(DecodedServerAdmissionPacket { packet, outer_key })
+                })
         })
 }
 
@@ -295,14 +306,39 @@ pub(super) fn decode_server_stream_admission_packet(
     config: &ResolvedServerConfig,
     payload: &[u8],
     now_secs: u64,
-) -> Option<AdmissionPacket> {
-    candidate_epoch_slots(now_secs)
+) -> Option<DecodedServerAdmissionPacket> {
+    server_admission_keys(config)
         .into_iter()
-        .find_map(|epoch_slot| {
-            let outer_key =
-                derive_s1_admission_outer_key(&config.admission_key, epoch_slot).ok()?;
-            decode_admission_stream_payload(&config.endpoint_id, &outer_key, payload).ok()
+        .find_map(|admission_key| {
+            candidate_epoch_slots(now_secs)
+                .into_iter()
+                .find_map(|epoch_slot| {
+                    let outer_key =
+                        derive_s1_admission_outer_key(&admission_key, epoch_slot).ok()?;
+                    let packet =
+                        decode_admission_stream_payload(&config.endpoint_id, &outer_key, payload)
+                            .ok()?;
+                    Some(DecodedServerAdmissionPacket { packet, outer_key })
+                })
         })
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct DecodedServerAdmissionPacket {
+    pub(super) packet: AdmissionPacket,
+    pub(super) outer_key: [u8; 32],
+}
+
+fn server_admission_keys(config: &ResolvedServerConfig) -> Vec<[u8; 32]> {
+    let mut keys = vec![config.admission_key];
+    for peer in &config.peers {
+        if let Some(admission_key) = peer.admission_key {
+            if !keys.contains(&admission_key) {
+                keys.push(admission_key);
+            }
+        }
+    }
+    keys
 }
 
 pub(super) fn admission_config(

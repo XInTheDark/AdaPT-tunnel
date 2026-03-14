@@ -23,7 +23,7 @@ use crate::{
 use apt_admission::{
     initiate_c0, AdmissionConfig, AdmissionError, AdmissionPacket, AdmissionServer,
     AdmissionServerSecrets, ClientCredential, ClientSessionRequest, CredentialStore,
-    EstablishedSession, ServerConfirmationPacket, ServerResponse,
+    EstablishedSession, PerUserCredential, ServerConfirmationPacket, ServerResponse,
 };
 use apt_carriers::{CarrierError, CarrierProfile, D1Carrier, S1Carrier};
 use apt_crypto::{SealedEnvelope, SessionSecretsForRole, StaticKeypair};

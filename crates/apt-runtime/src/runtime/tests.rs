@@ -1,7 +1,15 @@
 use super::*;
-use crate::config::{ResolvedClientConfig, RuntimeCarrierPreference, RuntimeMode};
-use apt_types::{EndpointId, RekeyLimits};
-use std::{net::SocketAddr, path::PathBuf};
+use crate::config::{
+    ResolvedAuthorizedPeer, ResolvedClientConfig, ResolvedServerConfig, RuntimeCarrierPreference,
+    RuntimeMode,
+};
+use apt_admission::{initiate_c0, ClientCredential, ClientSessionRequest};
+use apt_carriers::D1Carrier;
+use apt_types::{AuthProfile, EndpointId, RekeyLimits};
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    path::PathBuf,
+};
 
 fn test_runtime_carriers() -> RuntimeCarriers {
     RuntimeCarriers::new(1_380, false)
@@ -45,6 +53,7 @@ fn test_client_config() -> ResolvedClientConfig {
         runtime_mode: RuntimeMode::Stealth,
         preferred_carrier: RuntimeCarrierPreference::D1,
         strict_preferred_carrier: false,
+        auth_profile: apt_types::AuthProfile::SharedDeployment,
         endpoint_id: EndpointId::new("adapt-test".to_string()),
         admission_key: [0x11; 32],
         server_static_public_key: [0x22; 32],
@@ -66,6 +75,46 @@ fn test_client_config() -> ResolvedClientConfig {
         udp_recv_buffer_bytes: 1024,
         udp_send_buffer_bytes: 1024,
         state_path: PathBuf::from("/tmp/adapt-test-state.toml"),
+    }
+}
+
+fn test_server_config() -> ResolvedServerConfig {
+    ResolvedServerConfig {
+        bind: "0.0.0.0:51820".parse::<SocketAddr>().unwrap(),
+        public_endpoint: "198.51.100.10:51820".to_string(),
+        runtime_mode: RuntimeMode::Stealth,
+        stream_bind: Some("0.0.0.0:443".parse::<SocketAddr>().unwrap()),
+        stream_public_endpoint: Some("198.51.100.10:443".to_string()),
+        stream_decoy_surface: false,
+        endpoint_id: EndpointId::new("adapt-test".to_string()),
+        admission_key: [0x11; 32],
+        server_static_private_key: [0x44; 32],
+        server_static_public_key: apt_crypto::generate_static_keypair().unwrap().public,
+        cookie_key: [0x55; 32],
+        ticket_key: [0x66; 32],
+        interface_name: Some("aptsrv0".to_string()),
+        tunnel_local_ipv4: Ipv4Addr::new(10, 77, 0, 1),
+        tunnel_netmask: Ipv4Addr::new(255, 255, 255, 0),
+        tunnel_mtu: 1380,
+        egress_interface: Some("eth0".to_string()),
+        enable_ipv4_forwarding: true,
+        nat_ipv4: true,
+        push_routes: Vec::new(),
+        push_dns: Vec::new(),
+        session_policy: apt_types::SessionPolicy::default(),
+        allow_session_migration: true,
+        keepalive_secs: 25,
+        session_idle_timeout_secs: 180,
+        udp_recv_buffer_bytes: 1024,
+        udp_send_buffer_bytes: 1024,
+        peers: vec![ResolvedAuthorizedPeer {
+            name: "laptop".to_string(),
+            auth_profile: AuthProfile::PerUser,
+            user_id: "laptop".to_string(),
+            admission_key: Some([0x77; 32]),
+            client_static_public_key: [0x88; 32],
+            tunnel_ipv4: Ipv4Addr::new(10, 77, 0, 2),
+        }],
     }
 }
 
@@ -97,11 +146,8 @@ fn standby_probe_schedule_is_jittered() {
 #[test]
 fn effective_d1_tunnel_mtu_stays_within_runtime_bounds() {
     let carriers = RuntimeCarriers::new(1_380, false);
-    let effective = effective_runtime_tunnel_mtu(
-        1_380,
-        &EndpointId::new("adapt-test".to_string()),
-        &carriers,
-    );
+    let effective =
+        effective_runtime_tunnel_mtu(1_380, &EndpointId::new("adapt-test".to_string()), &carriers);
     assert!(effective <= 1_380);
     assert!(effective >= 1_200);
 }
@@ -129,6 +175,49 @@ fn strict_s1_override_without_stream_endpoint_errors() {
 }
 
 #[test]
+fn per_user_client_credentials_enable_lookup_hints() {
+    let mut config = test_client_config();
+    config.auth_profile = AuthProfile::PerUser;
+    config.client_identity = Some("laptop".to_string());
+    let credential = client_credential(&config);
+    assert!(matches!(credential.auth_profile, AuthProfile::PerUser));
+    assert_eq!(credential.user_id.as_deref(), Some("laptop"));
+    assert!(credential.enable_lookup_hint);
+}
+
+#[test]
+fn server_outer_admission_decode_accepts_per_user_keys() {
+    let config = test_server_config();
+    let carrier = D1Carrier::conservative();
+    let server_static_public = apt_crypto::generate_static_keypair().unwrap().public;
+    let now_secs = DEFAULT_ADMISSION_EPOCH_SLOT_SECS;
+    let prepared = initiate_c0(
+        ClientCredential {
+            auth_profile: AuthProfile::PerUser,
+            user_id: Some("laptop".to_string()),
+            client_static_private: None,
+            admission_key: [0x77; 32],
+            server_static_public,
+            enable_lookup_hint: true,
+        },
+        ClientSessionRequest::conservative(config.endpoint_id.clone(), now_secs),
+        &carrier,
+    )
+    .unwrap();
+    let outer_key =
+        derive_d1_admission_outer_key(&[0x77; 32], now_secs / DEFAULT_ADMISSION_EPOCH_SLOT_SECS)
+            .unwrap();
+    let datagram =
+        encode_admission_datagram(&carrier, &config.endpoint_id, &outer_key, &prepared.packet)
+            .unwrap();
+
+    let decoded = decode_server_admission_packet(&config, &carrier, &datagram, now_secs)
+        .expect("per-user admission packet should decrypt with a configured user key");
+    assert_eq!(decoded.outer_key, outer_key);
+    assert_eq!(decoded.packet.lookup_hint, prepared.packet.lookup_hint);
+}
+
+#[test]
 fn oversized_d1_burst_is_split_into_multiple_packets() {
     let carriers = test_runtime_carriers();
     let outer_keys = test_runtime_outer_keys();
@@ -140,7 +229,10 @@ fn oversized_d1_burst_is_split_into_multiple_packets() {
         TunnelEncapsulation::Wrapped,
         CarrierBinding::D1DatagramUdp,
         &tunnel,
-        &[Frame::IpData(vec![0_u8; 900]), Frame::IpData(vec![1_u8; 900])],
+        &[
+            Frame::IpData(vec![0_u8; 900]),
+            Frame::IpData(vec![1_u8; 900]),
+        ],
         0,
     )
     .unwrap();

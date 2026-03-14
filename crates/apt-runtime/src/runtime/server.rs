@@ -53,6 +53,19 @@ pub(super) async fn run_server(
 
     let mut credentials = CredentialStore::default();
     credentials.set_shared_deployment_key(config.admission_key);
+    for peer in &config.peers {
+        if matches!(peer.auth_profile, AuthProfile::PerUser) {
+            credentials.add_user(PerUserCredential {
+                user_id: peer.user_id.clone(),
+                admission_key: peer.admission_key.ok_or_else(|| {
+                    RuntimeError::InvalidConfig(format!(
+                        "peer `{}` is missing its per-user admission key",
+                        peer.name
+                    ))
+                })?,
+            });
+        }
+    }
     let mut admission = AdmissionServer::new(
         admission_config(&config, &carriers, effective_tunnel_mtu),
         credentials,
@@ -105,7 +118,7 @@ pub(super) async fn run_server(
                             continue;
                         }
 
-                        if let Some(packet) = decode_server_admission_packet(
+                        if let Some(decoded) = decode_server_admission_packet(
                             &config,
                             carriers.d1(),
                             &bytes,
@@ -119,7 +132,7 @@ pub(super) async fn run_server(
                                 effective_tunnel_mtu,
                                 peer_addr,
                                 bytes.len(),
-                                packet,
+                                decoded,
                                 &mut sessions,
                                 &mut path_to_session,
                                 &mut sessions_by_client_ip,
@@ -180,7 +193,7 @@ pub(super) async fn run_server(
                             continue;
                         }
 
-                        if let Some(packet) = decode_server_stream_admission_packet(
+                        if let Some(decoded) = decode_server_stream_admission_packet(
                             &config,
                             &bytes,
                             now_secs(),
@@ -192,7 +205,7 @@ pub(super) async fn run_server(
                                 &carriers,
                                 effective_tunnel_mtu,
                                 conn_id,
-                                packet,
+                                decoded,
                                 &mut sessions,
                                 &mut path_to_session,
                                 &mut sessions_by_client_ip,

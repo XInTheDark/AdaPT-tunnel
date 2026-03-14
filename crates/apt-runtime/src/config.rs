@@ -2,8 +2,8 @@ use crate::{error::RuntimeError, status::RuntimeStatus};
 use apt_persona::RememberedProfile;
 use apt_policy::LocalNormalityProfile;
 use apt_types::{
-    CarrierBinding, EndpointId, GatewayFingerprint, LinkType, LocalNetworkContext, PolicyMode,
-    PublicRouteHint, SessionPolicy,
+    AuthProfile, CarrierBinding, EndpointId, GatewayFingerprint, LinkType, LocalNetworkContext,
+    PolicyMode, PublicRouteHint, SessionPolicy,
 };
 use base64::Engine as _;
 use ipnet::IpNet;
@@ -93,6 +93,10 @@ fn default_standby_health_check_secs() -> u64 {
 
 fn default_preferred_carrier() -> RuntimeCarrierPreference {
     RuntimeCarrierPreference::D1
+}
+
+fn default_auth_profile() -> AuthProfile {
+    AuthProfile::SharedDeployment
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]

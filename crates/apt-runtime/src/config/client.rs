@@ -7,6 +7,8 @@ pub struct ClientConfig {
     pub runtime_mode: RuntimeMode,
     #[serde(default = "default_preferred_carrier")]
     pub preferred_carrier: RuntimeCarrierPreference,
+    #[serde(default = "default_auth_profile")]
+    pub auth_profile: AuthProfile,
     pub endpoint_id: String,
     pub admission_key: String,
     pub server_static_public_key: String,
@@ -71,6 +73,21 @@ impl ClientConfig {
     }
 
     pub fn resolve(&self) -> Result<ResolvedClientConfig, RuntimeError> {
+        if self.session_policy.allow_hybrid_pq {
+            return Err(RuntimeError::InvalidConfig(
+                "allow_hybrid_pq is not supported yet in the live runtime".to_string(),
+            ));
+        }
+        if matches!(self.auth_profile, AuthProfile::PerUser)
+            && self
+                .client_identity
+                .as_deref()
+                .is_none_or(|identity| identity.trim().is_empty())
+        {
+            return Err(RuntimeError::InvalidConfig(
+                "per-user client configs require client_identity to be set".to_string(),
+            ));
+        }
         let mut session_policy = self.session_policy.clone();
         self.runtime_mode.apply_to(&mut session_policy);
         Ok(ResolvedClientConfig {
@@ -78,6 +95,7 @@ impl ClientConfig {
             runtime_mode: self.runtime_mode,
             preferred_carrier: self.preferred_carrier,
             strict_preferred_carrier: false,
+            auth_profile: self.auth_profile,
             endpoint_id: EndpointId::new(self.endpoint_id.clone()),
             admission_key: load_key32(&self.admission_key)?,
             server_static_public_key: load_key32(&self.server_static_public_key)?,
@@ -113,6 +131,7 @@ pub struct ResolvedClientConfig {
     pub runtime_mode: RuntimeMode,
     pub preferred_carrier: RuntimeCarrierPreference,
     pub strict_preferred_carrier: bool,
+    pub auth_profile: AuthProfile,
     pub endpoint_id: EndpointId,
     pub admission_key: [u8; 32],
     pub server_static_public_key: [u8; 32],

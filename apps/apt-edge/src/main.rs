@@ -5,6 +5,7 @@ use apt_runtime::{
     AuthorizedPeerConfig, ClientConfig, RuntimeCarrierPreference, RuntimeMode, ServerConfig,
     SessionPolicy,
 };
+use apt_types::AuthProfile;
 use clap::{Parser, Subcommand, ValueEnum};
 use ipnet::{IpNet, Ipv4Net};
 use std::{
@@ -23,8 +24,8 @@ mod start;
 mod support;
 
 use self::{
-    bundle::{add_client, write_server_keyset},
-    cli::{Cli, CliRuntimeMode, Command},
+    bundle::{add_client, revoke_client, write_server_keyset},
+    cli::{Cli, CliAuthProfile, CliRuntimeMode, Command},
     init::init_server,
     start::start_server,
     support::*,
@@ -75,10 +76,12 @@ async fn run() -> CliResult {
         Command::AddClient {
             config,
             name,
+            auth,
             out_dir,
             client_ip,
             yes,
-        } => add_client(config, name, out_dir, client_ip, yes)?,
+        } => add_client(config, name, auth, out_dir, client_ip, yes)?,
+        Command::RevokeClient { config, name, yes } => revoke_client(config, name, yes)?,
         Command::Start { config, mode } => start_server(config, mode).await?,
         Command::GenKeys { out_dir } => write_server_keyset(&out_dir)?,
     }

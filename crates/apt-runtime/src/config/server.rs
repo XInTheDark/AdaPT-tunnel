@@ -3,6 +3,12 @@ use super::*;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthorizedPeerConfig {
     pub name: String,
+    #[serde(default = "default_auth_profile")]
+    pub auth_profile: AuthProfile,
+    #[serde(default)]
+    pub user_id: Option<String>,
+    #[serde(default)]
+    pub admission_key: Option<String>,
     pub client_static_public_key: String,
     pub tunnel_ipv4: Ipv4Addr,
 }
@@ -73,6 +79,9 @@ impl ServerConfig {
         resolve_file_spec_relative_to_base(&mut config.cookie_key, base);
         resolve_file_spec_relative_to_base(&mut config.ticket_key, base);
         for peer in &mut config.peers {
+            if let Some(admission_key) = &mut peer.admission_key {
+                resolve_file_spec_relative_to_base(admission_key, base);
+            }
             resolve_file_spec_relative_to_base(&mut peer.client_static_public_key, base);
         }
         Ok(config)
@@ -83,6 +92,11 @@ impl ServerConfig {
     }
 
     pub fn resolve(&self) -> Result<ResolvedServerConfig, RuntimeError> {
+        if self.session_policy.allow_hybrid_pq {
+            return Err(RuntimeError::InvalidConfig(
+                "allow_hybrid_pq is not supported yet in the live runtime".to_string(),
+            ));
+        }
         let mut session_policy = self.session_policy.clone();
         self.runtime_mode.apply_to(&mut session_policy);
         Ok(ResolvedServerConfig {
@@ -128,14 +142,33 @@ impl ServerConfig {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedAuthorizedPeer {
     pub name: String,
+    pub auth_profile: AuthProfile,
+    pub user_id: String,
+    pub admission_key: Option<[u8; 32]>,
     pub client_static_public_key: [u8; 32],
     pub tunnel_ipv4: Ipv4Addr,
 }
 
 impl ResolvedAuthorizedPeer {
     fn from_config(config: &AuthorizedPeerConfig) -> Result<Self, RuntimeError> {
+        if matches!(config.auth_profile, AuthProfile::PerUser) && config.admission_key.is_none() {
+            return Err(RuntimeError::InvalidConfig(format!(
+                "peer `{}` uses per-user admission but has no admission_key configured",
+                config.name
+            )));
+        }
         Ok(Self {
             name: config.name.clone(),
+            auth_profile: config.auth_profile,
+            user_id: config
+                .user_id
+                .clone()
+                .unwrap_or_else(|| config.name.clone()),
+            admission_key: config
+                .admission_key
+                .as_deref()
+                .map(load_key32)
+                .transpose()?,
             client_static_public_key: load_key32(&config.client_static_public_key)?,
             tunnel_ipv4: config.tunnel_ipv4,
         })

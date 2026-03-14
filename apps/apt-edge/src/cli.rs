@@ -17,6 +17,21 @@ impl From<CliRuntimeMode> for RuntimeMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(super) enum CliAuthProfile {
+    Shared,
+    PerUser,
+}
+
+impl From<CliAuthProfile> for AuthProfile {
+    fn from(value: CliAuthProfile) -> Self {
+        match value {
+            CliAuthProfile::Shared => Self::SharedDeployment,
+            CliAuthProfile::PerUser => Self::PerUser,
+        }
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "apt-edge",
@@ -80,12 +95,28 @@ pub(super) enum Command {
         /// Friendly client name, for example laptop.
         #[arg(long)]
         name: Option<String>,
+        /// Admission model for this client. `per-user` is recommended for new deployments.
+        #[arg(long, value_enum)]
+        auth: Option<CliAuthProfile>,
         /// Directory where the client bundle should be written.
         #[arg(long)]
         out_dir: Option<PathBuf>,
         /// Specific client tunnel IP to assign. If omitted, the next free IP is chosen.
         #[arg(long)]
         client_ip: Option<Ipv4Addr>,
+        /// Use defaults for any missing values instead of prompting.
+        #[arg(long, default_value_t = false)]
+        yes: bool,
+    },
+    /// Revoke a client and remove it from the server config.
+    #[command(alias = "remove-client", alias = "del-client")]
+    RevokeClient {
+        /// Path to the server config created by `apt-edge init`.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Friendly client name to revoke.
+        #[arg(long)]
+        name: Option<String>,
         /// Use defaults for any missing values instead of prompting.
         #[arg(long, default_value_t = false)]
         yes: bool,

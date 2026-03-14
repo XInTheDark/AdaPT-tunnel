@@ -31,7 +31,7 @@ pub use self::{
         initiate_c0, ClientCredential, ClientPendingS1, ClientPendingS3, ClientSessionRequest,
         PreparedC0, PreparedC2,
     },
-    packet::{AdmissionPacket, C0, C2, PolicyFlags, S1, S3, ServerConfirmationPacket},
+    packet::{AdmissionPacket, PolicyFlags, ServerConfirmationPacket, C0, C2, S1, S3},
     server::{
         AdmissionConfig, AdmissionServer, AdmissionServerSecrets, CredentialStore,
         EstablishedServerReply, EstablishedSession, PerUserCredential, ServerResponse,

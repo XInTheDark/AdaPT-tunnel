@@ -4,8 +4,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuthProfile {
     /// One deployment-wide admission key.
+    #[serde(rename = "shared-deployment", alias = "SharedDeployment")]
     SharedDeployment,
     /// Per-user admission keys.
+    #[serde(rename = "per-user", alias = "PerUser")]
     PerUser,
 }
 

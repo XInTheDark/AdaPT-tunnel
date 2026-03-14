@@ -19,6 +19,7 @@ impl AdmissionServer {
             if c0.version != VERSION {
                 return Err(AdmissionError::Validation("unsupported version"));
             }
+            validate_auth_profile(c0.auth_profile, &resolved.identity)?;
             self.validate_epoch_slot(
                 c0.epoch_slot,
                 epoch_slot(now_secs, self.config.defaults.epoch_slot_secs),
@@ -215,6 +216,7 @@ impl AdmissionServer {
             let client_payload_bytes = noise.read_message(&c2.noise_msg3)?;
             let client_payload: NoiseInitiatorPayload =
                 bincode::deserialize(&client_payload_bytes)?;
+            validate_client_identity(&resolved.identity, client_payload.user_identity.as_deref())?;
             let client_static_public = noise.remote_static_public();
             let handshake_hash = noise.handshake_hash();
             let raw_split = noise.raw_split()?;
@@ -297,5 +299,40 @@ impl AdmissionServer {
             }
             Err(_) => ServerResponse::Drop(carrier.invalid_input_behavior()),
         }
+    }
+}
+
+fn validate_auth_profile(
+    auth_profile: AuthProfile,
+    identity: &CredentialIdentity,
+) -> Result<(), AdmissionError> {
+    match (auth_profile, identity) {
+        (AuthProfile::SharedDeployment, CredentialIdentity::SharedDeployment)
+        | (AuthProfile::PerUser, CredentialIdentity::User(_)) => Ok(()),
+        (AuthProfile::SharedDeployment, CredentialIdentity::User(_)) => Err(
+            AdmissionError::Validation("shared auth profile used with user credential"),
+        ),
+        (AuthProfile::PerUser, CredentialIdentity::SharedDeployment) => Err(
+            AdmissionError::Validation("per-user auth profile used with shared credential"),
+        ),
+    }
+}
+
+fn validate_client_identity(
+    identity: &CredentialIdentity,
+    claimed_user_identity: Option<&str>,
+) -> Result<(), AdmissionError> {
+    match (identity, claimed_user_identity) {
+        (CredentialIdentity::SharedDeployment, None) => Ok(()),
+        (CredentialIdentity::SharedDeployment, Some(_)) => Err(AdmissionError::Validation(
+            "shared credential unexpectedly claimed a user identity",
+        )),
+        (CredentialIdentity::User(expected), Some(claimed)) if expected == claimed => Ok(()),
+        (CredentialIdentity::User(_), None) => Err(AdmissionError::Validation(
+            "per-user credential omitted the encrypted user identity",
+        )),
+        (CredentialIdentity::User(_), Some(_)) => Err(AdmissionError::Validation(
+            "per-user credential claimed the wrong user identity",
+        )),
     }
 }

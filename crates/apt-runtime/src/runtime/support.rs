@@ -26,12 +26,12 @@ pub(super) fn client_session_request(
 
 pub(super) fn client_credential(config: &ResolvedClientConfig) -> ClientCredential {
     ClientCredential {
-        auth_profile: AuthProfile::SharedDeployment,
+        auth_profile: config.auth_profile,
         user_id: config.client_identity.clone(),
         client_static_private: Some(config.client_static_private_key),
         admission_key: config.admission_key,
         server_static_public: config.server_static_public_key,
-        enable_lookup_hint: false,
+        enable_lookup_hint: matches!(config.auth_profile, AuthProfile::PerUser),
     }
 }
 

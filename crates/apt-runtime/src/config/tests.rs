@@ -47,7 +47,9 @@ client_static_private_key = "file:./client-static-private.key"
     )
     .unwrap();
     let config = ClientConfig::load(dir.join("client.toml")).unwrap();
-    assert!(config.admission_key.contains(dir.to_string_lossy().as_ref()));
+    assert!(config
+        .admission_key
+        .contains(dir.to_string_lossy().as_ref()));
     assert!(config
         .server_static_public_key
         .contains(dir.to_string_lossy().as_ref()));
@@ -97,10 +99,66 @@ tunnel_ipv4 = "10.77.0.2"
     )
     .unwrap();
     let config = ServerConfig::load(dir.join("server.toml")).unwrap();
-    assert!(config.admission_key.contains(dir.to_string_lossy().as_ref()));
+    assert!(config
+        .admission_key
+        .contains(dir.to_string_lossy().as_ref()));
     assert!(config.peers[0]
         .client_static_public_key
         .contains(dir.to_string_lossy().as_ref()));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn server_resolve_supports_per_user_authorized_peers() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("adapt-server-per-user-{unique}"));
+    fs::create_dir_all(dir.join("clients")).unwrap();
+    fs::create_dir_all(dir.join("users")).unwrap();
+    for file in [
+        "shared-admission.key",
+        "server-static-private.key",
+        "server-static-public.key",
+        "cookie.key",
+        "ticket.key",
+        "clients/laptop.client-static-public.key",
+        "users/laptop.admission.key",
+    ] {
+        fs::write(dir.join(file), "55".repeat(32)).unwrap();
+    }
+    fs::write(
+        dir.join("server.toml"),
+        r#"
+bind = "0.0.0.0:51820"
+public_endpoint = "198.51.100.10:51820"
+endpoint_id = "adapt-demo"
+admission_key = "file:./shared-admission.key"
+server_static_private_key = "file:./server-static-private.key"
+server_static_public_key = "file:./server-static-public.key"
+cookie_key = "file:./cookie.key"
+ticket_key = "file:./ticket.key"
+tunnel_local_ipv4 = "10.77.0.1"
+tunnel_netmask = "255.255.255.0"
+
+[[peers]]
+name = "laptop"
+auth_profile = "PerUser"
+user_id = "laptop-user"
+admission_key = "file:./users/laptop.admission.key"
+client_static_public_key = "file:./clients/laptop.client-static-public.key"
+tunnel_ipv4 = "10.77.0.2"
+"#,
+    )
+    .unwrap();
+    let resolved = ServerConfig::load(dir.join("server.toml"))
+        .unwrap()
+        .resolve()
+        .unwrap();
+    assert_eq!(resolved.peers[0].auth_profile, AuthProfile::PerUser);
+    assert_eq!(resolved.peers[0].user_id, "laptop-user");
+    assert_eq!(resolved.peers[0].admission_key, Some([0x55; 32]));
     let _ = fs::remove_dir_all(dir);
 }
 
@@ -185,6 +243,43 @@ client_static_private_key = "file:./client-static-private.key"
 }
 
 #[test]
+fn client_resolve_rejects_unimplemented_hybrid_pq() {
+    let config = ClientConfig {
+        server_addr: "198.51.100.10:51820".to_string(),
+        runtime_mode: RuntimeMode::Stealth,
+        preferred_carrier: RuntimeCarrierPreference::D1,
+        auth_profile: AuthProfile::SharedDeployment,
+        endpoint_id: "adapt-demo".to_string(),
+        admission_key: "11".repeat(32),
+        server_static_public_key: "22".repeat(32),
+        client_static_private_key: "33".repeat(32),
+        client_identity: None,
+        bind: "0.0.0.0:0".parse().unwrap(),
+        interface_name: None,
+        routes: Vec::new(),
+        use_server_pushed_routes: true,
+        session_policy: SessionPolicy {
+            initial_mode: PolicyMode::StealthFirst,
+            allow_speed_first: false,
+            allow_hybrid_pq: true,
+        },
+        enable_s1_fallback: true,
+        stream_server_addr: None,
+        allow_session_migration: true,
+        standby_health_check_secs: 0,
+        keepalive_secs: 25,
+        session_idle_timeout_secs: 180,
+        handshake_timeout_secs: 5,
+        handshake_retries: 5,
+        udp_recv_buffer_bytes: 4 * 1024 * 1024,
+        udp_send_buffer_bytes: 4 * 1024 * 1024,
+        state_path: PathBuf::from("client-state.toml"),
+    };
+    let error = config.resolve().unwrap_err();
+    assert!(error.to_string().contains("allow_hybrid_pq"));
+}
+
+#[test]
 fn server_load_upgrades_missing_phase_two_fields() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -230,4 +325,44 @@ tunnel_ipv4 = "10.77.0.2"
     assert!(upgraded.contains("stream_decoy_surface = false"));
     assert!(upgraded.contains("allow_session_migration = true"));
     let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn server_resolve_rejects_unimplemented_hybrid_pq() {
+    let config = ServerConfig {
+        bind: "0.0.0.0:51820".parse().unwrap(),
+        public_endpoint: "203.0.113.10:51820".to_string(),
+        runtime_mode: RuntimeMode::Stealth,
+        stream_bind: None,
+        stream_public_endpoint: None,
+        stream_decoy_surface: false,
+        endpoint_id: "adapt-demo".to_string(),
+        admission_key: "11".repeat(32),
+        server_static_private_key: "22".repeat(32),
+        server_static_public_key: "33".repeat(32),
+        cookie_key: "44".repeat(32),
+        ticket_key: "55".repeat(32),
+        interface_name: Some("aptsrv0".to_string()),
+        tunnel_local_ipv4: Ipv4Addr::new(10, 77, 0, 1),
+        tunnel_netmask: Ipv4Addr::new(255, 255, 255, 0),
+        tunnel_mtu: 1380,
+        egress_interface: Some("eth0".to_string()),
+        enable_ipv4_forwarding: true,
+        nat_ipv4: true,
+        push_routes: Vec::new(),
+        push_dns: Vec::new(),
+        session_policy: SessionPolicy {
+            initial_mode: PolicyMode::StealthFirst,
+            allow_speed_first: false,
+            allow_hybrid_pq: true,
+        },
+        allow_session_migration: true,
+        keepalive_secs: 25,
+        session_idle_timeout_secs: 180,
+        udp_recv_buffer_bytes: 4 * 1024 * 1024,
+        udp_send_buffer_bytes: 4 * 1024 * 1024,
+        peers: Vec::new(),
+    };
+    let error = config.resolve().unwrap_err();
+    assert!(error.to_string().contains("allow_hybrid_pq"));
 }
