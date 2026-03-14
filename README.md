@@ -86,12 +86,14 @@ sudo apt-client up
 ```
 
 With that default install path, the client stores its persistent state in `/var/lib/adapt/client-state.toml`.
+On first run, the client also creates a blank optional override file at `/etc/adapt/client.override.toml` for local non-secret tweaks.
 
 On macOS, the client should normally let the OS auto-create a `utun` interface instead of hardcoding a custom TUN name.
 
 When the session comes up, the client now logs the assigned tunnel IP, interface, and routes. If the server pushed DNS servers, the client also applies them automatically where the local platform supports it. The server logs when a client session is established.
 
 If you prefer not to install the bundle into `/etc/adapt`, you can still run it directly with `--bundle /path/to/laptop.aptbundle`.
+In that direct-launch case, the client creates a sidecar override file next to the bundle, for example `laptop.override.toml`.
 
 ## Recommended quickstart
 
@@ -217,7 +219,7 @@ Useful option:
 - `--mode stealth|balanced|speed` — one-shot runtime mode override
 - `--carrier auto|d1|s1` — one-shot preferred-carrier override
 
-If omitted, the client tries common default locations first.
+If omitted, the client tries common default locations first. It also auto-creates a blank optional override TOML next to the installed bundle so local client-only settings can be edited without changing the bundle itself.
 
 ## GitHub release assets
 

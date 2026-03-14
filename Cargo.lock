@@ -136,8 +136,13 @@ version = "0.1.0"
 dependencies = [
  "apt-bundle",
  "apt-runtime",
+ "apt-types",
  "clap",
+ "ipnet",
+ "serde",
  "tokio",
+ "toml",
+ "tracing",
  "tracing-subscriber",
 ]
 

@@ -111,6 +111,17 @@ pub fn default_client_bundle_path(dir: impl AsRef<Path>) -> PathBuf {
     dir.as_ref().join(DEFAULT_CLIENT_BUNDLE_FILE_NAME)
 }
 
+pub fn client_bundle_override_path(bundle_path: impl AsRef<Path>) -> PathBuf {
+    let bundle_path = bundle_path.as_ref();
+    let parent = bundle_path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = bundle_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("client");
+    parent.join(format!("{stem}.override.toml"))
+}
+
 pub fn client_bundle_state_path(bundle_path: impl AsRef<Path>) -> PathBuf {
     let bundle_path = bundle_path.as_ref();
     if bundle_path == Path::new("/etc/adapt").join(DEFAULT_CLIENT_BUNDLE_FILE_NAME) {
@@ -203,6 +214,14 @@ mod tests {
         assert_eq!(
             client_bundle_state_path("/etc/adapt/client.aptbundle"),
             PathBuf::from("/var/lib/adapt/client-state.toml")
+        );
+    }
+
+    #[test]
+    fn override_path_uses_bundle_stem() {
+        assert_eq!(
+            client_bundle_override_path("/etc/adapt/laptop.aptbundle"),
+            PathBuf::from("/etc/adapt/laptop.override.toml")
         );
     }
 }

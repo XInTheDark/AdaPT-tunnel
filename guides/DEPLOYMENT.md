@@ -223,6 +223,7 @@ sudo ./target/release/apt-client up
 ```
 
 When the bundle is installed at `/etc/adapt/client.aptbundle`, the client stores its persistent state in `/var/lib/adapt/client-state.toml`.
+On first run, it also creates a blank optional override file at `/etc/adapt/client.override.toml`.
 
 Useful one-shot overrides:
 
@@ -233,12 +234,15 @@ The generated bundle keeps `D1` as the normal first choice and uses `S1` conserv
 
 On macOS, the embedded client config leaves `interface_name` unset unless you intentionally rebuild a bundle that targets a specific `utunX` interface.
 When the session comes up, the client logs the assigned tunnel IP/interface, applies pushed DNS servers automatically where the local platform supports it, and the server logs the accepted session.
+Use the optional override file for local-only edits such as `interface_name`, route preferences, carrier preference, or a custom `state_path` without modifying the bundle itself.
 
 Alternative: if you want to run the bundle directly from another directory:
 
 ```bash
 sudo ./target/release/apt-client up --bundle /path/to/laptop.aptbundle
 ```
+
+In that direct-launch mode, the client creates a blank sidecar override file next to the bundle, for example `/path/to/laptop.override.toml`.
 
 ## 7. Verify the VPN
 

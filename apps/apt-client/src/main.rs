@@ -12,6 +12,10 @@ use std::{
 };
 use tracing_subscriber::{fmt, EnvFilter};
 
+mod override_config;
+
+use self::override_config::apply_optional_client_override;
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum CliRuntimeMode {
     Stealth,
@@ -151,6 +155,8 @@ fn generate_identity(out_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>
 fn load_bundle_config(bundle_path: &Path) -> Result<ClientConfig, Box<dyn std::error::Error>> {
     let mut bundle = load_client_bundle(bundle_path)?;
     bundle.config.state_path = client_bundle_state_path(bundle_path);
+    let override_path = apply_optional_client_override(&mut bundle.config, bundle_path)?;
+    println!("Local override file: {}", override_path.display());
     Ok(bundle.config)
 }
 

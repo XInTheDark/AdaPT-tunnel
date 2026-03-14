@@ -104,6 +104,7 @@ sudo ./target/release/apt-edge add-client --config /etc/adapt/server.toml --name
 ```
 
 That produces a single-file bundle you can install as `/etc/adapt/client.aptbundle` on the client.
+On first client run, `apt-client up` also creates a blank optional override file at `/etc/adapt/client.override.toml`.
 
 ## 6. Start the client
 
@@ -112,6 +113,7 @@ sudo ./target/release/apt-client up
 ```
 
 If the bundle is installed at the default location `/etc/adapt/client.aptbundle`, the client stores persistent state at `/var/lib/adapt/client-state.toml`.
+Use `/etc/adapt/client.override.toml` for client-local changes that should not require rebuilding the bundle.
 
 Optional one-shot overrides:
 
@@ -123,6 +125,30 @@ To run a bundle from a non-default location:
 ```bash
 sudo ./target/release/apt-client up --bundle /path/to/laptop.aptbundle
 ```
+
+That direct-launch path creates a sidecar override file such as `/path/to/laptop.override.toml`.
+
+Useful override fields include:
+
+- `server_addr`
+- `stream_server_addr`
+- `runtime_mode`
+- `preferred_carrier`
+- `bind`
+- `interface_name`
+- `routes`
+- `use_server_pushed_routes`
+- `session_policy`
+- `enable_s1_fallback`
+- `allow_session_migration`
+- `standby_health_check_secs`
+- `keepalive_secs`
+- `session_idle_timeout_secs`
+- `handshake_timeout_secs`
+- `handshake_retries`
+- `udp_recv_buffer_bytes`
+- `udp_send_buffer_bytes`
+- `state_path`
 
 ## 7. Validate manually
 

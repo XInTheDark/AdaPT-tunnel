@@ -143,6 +143,7 @@ pub(super) fn add_client(
         DEFAULT_CLIENT_BUNDLE_FILE_NAME
     );
     println!("     sudo apt-client up");
+    println!("     # first run auto-creates /etc/adapt/client.override.toml (blank)");
     println!("     # or run it directly with:");
     println!("     sudo apt-client up --bundle /path/to/{name}.aptbundle");
     println!("  3. If the server is not already running, start it with:");
