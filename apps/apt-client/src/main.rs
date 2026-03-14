@@ -121,6 +121,7 @@ async fn start_client(
     }
     if let Some(carrier) = carrier {
         resolved.preferred_carrier = carrier.into();
+        resolved.strict_preferred_carrier = !matches!(carrier, CliCarrier::Auto);
     }
     let result = run_client(resolved).await?;
     println!("\nVPN session ended.");

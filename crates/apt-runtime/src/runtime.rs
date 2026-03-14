@@ -253,8 +253,17 @@ pub async fn run_client(config: ResolvedClientConfig) -> Result<ClientRuntimeRes
         interface = %tun.interface_name,
         routes = ?effective_routes,
         carrier = %handshake.binding.as_str(),
+        requested_mode = ?config.session_policy.initial_mode,
+        negotiated_mode = ?handshake.established.policy_mode,
         "client session established"
     );
+    if handshake.established.policy_mode != config.session_policy.initial_mode {
+        info!(
+            requested_mode = ?config.session_policy.initial_mode,
+            negotiated_mode = ?handshake.established.policy_mode,
+            "server negotiated a different policy mode than the client requested"
+        );
+    }
 
     let credential_label = redact_credential(&handshake.established.credential_identity);
     record_event(
@@ -272,7 +281,7 @@ pub async fn run_client(config: ResolvedClientConfig) -> Result<ClientRuntimeRes
         &AptEvent::TunnelEstablished {
             session_id: handshake.established.session_id,
             carrier: handshake.established.chosen_carrier,
-            mode: handshake.established.policy_mode,
+            mode: config.session_policy.initial_mode,
         },
         None,
         &observability,
@@ -1156,7 +1165,7 @@ async fn perform_client_handshake(
         .as_ref()
         .map(|bytes| bincode::deserialize::<SealedEnvelope>(bytes))
         .transpose()?;
-    let order = client_carrier_attempt_order(config, persistent_state);
+    let order = client_carrier_attempt_order(config, persistent_state)?;
     let mut last_error = None;
 
     for (index, binding) in order.iter().copied().enumerate() {
@@ -1980,6 +1989,35 @@ fn client_credential(config: &ResolvedClientConfig) -> ClientCredential {
 }
 
 fn client_carrier_attempt_order(
+    config: &ResolvedClientConfig,
+    persistent_state: &ClientPersistentState,
+) -> Result<Vec<CarrierBinding>, RuntimeError> {
+    if config.strict_preferred_carrier {
+        return match config.preferred_carrier {
+            crate::config::RuntimeCarrierPreference::Auto => Ok(
+                carrier_attempt_order_without_strict_override(config, persistent_state),
+            ),
+            crate::config::RuntimeCarrierPreference::D1 => Ok(vec![CarrierBinding::D1DatagramUdp]),
+            crate::config::RuntimeCarrierPreference::S1 => {
+                if config.stream_server_addr.is_some() {
+                    Ok(vec![CarrierBinding::S1EncryptedStream])
+                } else {
+                    Err(RuntimeError::InvalidConfig(
+                        "S1 was requested explicitly, but stream_server_addr is not configured"
+                            .to_string(),
+                    ))
+                }
+            }
+        };
+    }
+
+    Ok(carrier_attempt_order_without_strict_override(
+        config,
+        persistent_state,
+    ))
+}
+
+fn carrier_attempt_order_without_strict_override(
     config: &ResolvedClientConfig,
     persistent_state: &ClientPersistentState,
 ) -> Vec<CarrierBinding> {
@@ -3016,7 +3054,9 @@ fn redact_credential(identity: &CredentialIdentity) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{ResolvedClientConfig, RuntimeCarrierPreference, RuntimeMode};
     use apt_types::{EndpointId, RekeyLimits};
+    use std::{net::SocketAddr, path::PathBuf};
 
     fn test_runtime_carriers() -> RuntimeCarriers {
         RuntimeCarriers::new(1_380, false)
@@ -3054,6 +3094,36 @@ mod tests {
         )
     }
 
+    fn test_client_config() -> ResolvedClientConfig {
+        ResolvedClientConfig {
+            server_addr: "198.51.100.10:51820".parse::<SocketAddr>().unwrap(),
+            runtime_mode: RuntimeMode::Stealth,
+            preferred_carrier: RuntimeCarrierPreference::D1,
+            strict_preferred_carrier: false,
+            endpoint_id: EndpointId::new("adapt-test".to_string()),
+            admission_key: [0x11; 32],
+            server_static_public_key: [0x22; 32],
+            client_static_private_key: [0x33; 32],
+            client_identity: None,
+            bind: "0.0.0.0:0".parse::<SocketAddr>().unwrap(),
+            interface_name: None,
+            routes: Vec::new(),
+            use_server_pushed_routes: true,
+            session_policy: apt_types::SessionPolicy::default(),
+            enable_s1_fallback: true,
+            stream_server_addr: Some("198.51.100.10:443".parse::<SocketAddr>().unwrap()),
+            allow_session_migration: true,
+            standby_health_check_secs: 0,
+            keepalive_secs: 25,
+            session_idle_timeout_secs: 180,
+            handshake_timeout_secs: 5,
+            handshake_retries: 5,
+            udp_recv_buffer_bytes: 1024,
+            udp_send_buffer_bytes: 1024,
+            state_path: PathBuf::from("/tmp/adapt-test-state.toml"),
+        }
+    }
+
     #[test]
     fn ipv4_destination_parsing_works() {
         let packet = [
@@ -3089,6 +3159,29 @@ mod tests {
         );
         assert!(effective < 1_380);
         assert!(effective >= 1_200);
+    }
+
+    #[test]
+    fn strict_s1_override_uses_only_s1() {
+        let mut config = test_client_config();
+        config.preferred_carrier = RuntimeCarrierPreference::S1;
+        config.strict_preferred_carrier = true;
+        let order =
+            client_carrier_attempt_order(&config, &ClientPersistentState::default()).unwrap();
+        assert_eq!(order, vec![CarrierBinding::S1EncryptedStream]);
+    }
+
+    #[test]
+    fn strict_s1_override_without_stream_endpoint_errors() {
+        let mut config = test_client_config();
+        config.preferred_carrier = RuntimeCarrierPreference::S1;
+        config.strict_preferred_carrier = true;
+        config.stream_server_addr = None;
+        let error =
+            client_carrier_attempt_order(&config, &ClientPersistentState::default()).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("stream_server_addr is not configured"));
     }
 
     #[test]
