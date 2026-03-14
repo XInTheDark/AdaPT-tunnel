@@ -4,7 +4,7 @@
 //! associated-data bindings, invalid-input behaviour, and simple record framing
 //! for the milestone-1 datagram and stream carriers.
 
-use apt_types::{CarrierBinding, EndpointId};
+use apt_types::{CarrierBinding, EndpointId, OpaqueMessage};
 use thiserror::Error;
 
 /// Errors produced by carrier helpers.
@@ -74,7 +74,7 @@ impl D1Carrier {
     /// Conservative milestone-1 defaults.
     #[must_use]
     pub const fn conservative() -> Self {
-        Self::new(1_200, 1_160)
+        Self::new(1_472, 1_380)
     }
 
     /// Emits a single opaque datagram record.
@@ -91,6 +91,29 @@ impl D1Carrier {
             return Err(CarrierError::MalformedRecord);
         }
         Ok(datagram.to_vec())
+    }
+
+    /// Emits one opaque datagram record using the carrier's raw wire format.
+    pub fn encode_opaque_record(&self, message: &OpaqueMessage) -> Result<Vec<u8>, CarrierError> {
+        let mut datagram = Vec::with_capacity(message.nonce.len() + message.ciphertext.len());
+        datagram.extend_from_slice(&message.nonce);
+        datagram.extend_from_slice(&message.ciphertext);
+        self.encode_record(&datagram)
+    }
+
+    /// Decodes one opaque datagram record back into its nonce/ciphertext parts.
+    pub fn decode_opaque_record(&self, datagram: &[u8]) -> Result<OpaqueMessage, CarrierError> {
+        let bytes = self.decode_record(datagram)?;
+        if bytes.len() <= 24 {
+            return Err(CarrierError::MalformedRecord);
+        }
+        let (nonce, ciphertext) = bytes.split_at(24);
+        Ok(OpaqueMessage {
+            nonce: nonce
+                .try_into()
+                .map_err(|_| CarrierError::MalformedRecord)?,
+            ciphertext: ciphertext.to_vec(),
+        })
     }
 }
 
@@ -221,7 +244,7 @@ mod tests {
     fn datagram_budget_is_bounded() {
         let carrier = D1Carrier::conservative();
         assert_eq!(carrier.anti_amplification_budget(100), 300);
-        assert_eq!(carrier.anti_amplification_budget(10_000), 1_200);
+        assert_eq!(carrier.anti_amplification_budget(10_000), 1_472);
     }
 
     #[test]
@@ -234,12 +257,29 @@ mod tests {
     }
 
     #[test]
+    fn opaque_datagram_round_trip() {
+        let carrier = D1Carrier::conservative();
+        let encoded = carrier
+            .encode_opaque_record(&OpaqueMessage {
+                nonce: [7_u8; 24],
+                ciphertext: b"ciphertext".to_vec(),
+            })
+            .unwrap();
+        let decoded = carrier.decode_opaque_record(&encoded).unwrap();
+        assert_eq!(decoded.nonce, [7_u8; 24]);
+        assert_eq!(decoded.ciphertext, b"ciphertext");
+    }
+
+    #[test]
     fn stream_record_round_trip() {
         let carrier = S1Carrier::new(8, 900, true);
         let encoded = carrier.encode_records(b"abcdefghijkl").unwrap();
         let wire: Vec<u8> = encoded.concat();
         let decoded = carrier.decode_records(&wire).unwrap();
         assert_eq!(decoded.concat(), b"abcdefghijkl");
-        assert_eq!(carrier.invalid_input_behavior(), InvalidInputBehavior::DecoySurface);
+        assert_eq!(
+            carrier.invalid_input_behavior(),
+            InvalidInputBehavior::DecoySurface
+        );
     }
 }

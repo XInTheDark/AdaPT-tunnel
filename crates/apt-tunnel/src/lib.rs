@@ -5,8 +5,8 @@
 //! the session helper until acknowledged or expired.
 
 use apt_crypto::{
-    derive_rekey_phase, open_tunnel_payload, seal_tunnel_payload,
-    SessionSecretsForRole,
+    derive_rekey_phase, open_tunnel_payload, open_tunnel_payload_with_nonce, seal_tunnel_payload,
+    seal_tunnel_payload_with_nonce, CryptoError, SessionSecretsForRole,
 };
 use apt_types::{CloseCode, RekeyLimits, SessionId, SessionRole};
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,7 @@ use std::collections::{BTreeSet, HashMap};
 use thiserror::Error;
 
 const FLAG_HAS_CONTROL: u8 = 0x01;
-const HEADER_LEN: usize = 10;
+const PACKET_NONCE_LEN: usize = 12;
 const DEFAULT_RETRANSMIT_INTERVAL_SECS: u64 = 1;
 const DEFAULT_CONTROL_LIFETIME_SECS: u64 = 10;
 
@@ -86,14 +86,21 @@ impl Frame {
             Self::IpData(_) | Self::Padding(_) => None,
         }
     }
-
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum ControlFrame {
-    CtrlAck { acked_control_id: u64 },
-    PathChallenge { control_id: u64, challenge: [u8; 8] },
-    PathResponse { control_id: u64, challenge: [u8; 8] },
+    CtrlAck {
+        acked_control_id: u64,
+    },
+    PathChallenge {
+        control_id: u64,
+        challenge: [u8; 8],
+    },
+    PathResponse {
+        control_id: u64,
+        challenge: [u8; 8],
+    },
     SessionUpdate {
         control_id: u64,
         next_phase: u8,
@@ -215,7 +222,7 @@ enum WireFrame {
 }
 
 /// Fixed tunnel packet header authenticated as AEAD associated data.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TunnelPacketHeader {
     /// Packet flags.
     pub flags: u8,
@@ -225,25 +232,10 @@ pub struct TunnelPacketHeader {
     pub packet_number: u64,
 }
 
-impl TunnelPacketHeader {
-    fn encode(self) -> [u8; HEADER_LEN] {
-        let mut out = [0_u8; HEADER_LEN];
-        out[0] = self.flags;
-        out[1] = self.key_phase;
-        out[2..].copy_from_slice(&self.packet_number.to_be_bytes());
-        out
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self, TunnelError> {
-        if bytes.len() < HEADER_LEN {
-            return Err(TunnelError::MalformedPacket);
-        }
-        Ok(Self {
-            flags: bytes[0],
-            key_phase: bytes[1],
-            packet_number: u64::from_be_bytes(bytes[2..HEADER_LEN].try_into().unwrap()),
-        })
-    }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct WirePacketBody {
+    header: TunnelPacketHeader,
+    frames: Vec<WireFrame>,
 }
 
 /// Decoded tunnel packet plus any ack frames the caller may want to send.
@@ -440,7 +432,9 @@ impl TunnelSession {
             }
             let should_send = match pending.last_sent_at_secs {
                 None => true,
-                Some(last_sent) => now_secs.saturating_sub(last_sent) >= DEFAULT_RETRANSMIT_INTERVAL_SECS,
+                Some(last_sent) => {
+                    now_secs.saturating_sub(last_sent) >= DEFAULT_RETRANSMIT_INTERVAL_SECS
+                }
             };
             if should_send {
                 pending.last_sent_at_secs = Some(now_secs);
@@ -516,7 +510,11 @@ impl TunnelSession {
     }
 
     /// Encodes frames into one encrypted tunnel packet.
-    pub fn encode_packet(&mut self, frames: &[Frame], now_secs: u64) -> Result<EncodedPacket, TunnelError> {
+    pub fn encode_packet(
+        &mut self,
+        frames: &[Frame],
+        now_secs: u64,
+    ) -> Result<EncodedPacket, TunnelError> {
         let mut has_control = false;
         let mut wire_frames = Vec::with_capacity(frames.len());
         for frame in frames {
@@ -552,23 +550,29 @@ impl TunnelSession {
             key_phase: self.send_key_phase,
             packet_number: self.send_packet_number,
         };
-        let header_bytes = header.encode();
-        let plaintext = bincode::serialize(&wire_frames)?;
-        let ciphertext = seal_tunnel_payload(
+        let plaintext = bincode::serialize(&WirePacketBody {
+            header,
+            frames: wire_frames,
+        })?;
+        let nonce: [u8; PACKET_NONCE_LEN] = rand::random();
+        let ciphertext = seal_tunnel_payload_with_nonce(
             &self.send_data_key,
-            header.packet_number,
-            &header_bytes,
+            &nonce,
+            &self.session_id.0,
             &plaintext,
         )?;
-        let mut packet = Vec::with_capacity(header_bytes.len() + ciphertext.len());
-        packet.extend_from_slice(&header_bytes);
+        let mut packet = Vec::with_capacity(nonce.len() + ciphertext.len());
+        packet.extend_from_slice(&nonce);
         packet.extend_from_slice(&ciphertext);
         self.send_packet_number = self.send_packet_number.saturating_add(1);
         self.bytes_sent_under_phase = self
             .bytes_sent_under_phase
             .saturating_add(u64::try_from(packet.len()).unwrap_or(u64::MAX));
         let _ = now_secs;
-        Ok(EncodedPacket { header, bytes: packet })
+        Ok(EncodedPacket {
+            header,
+            bytes: packet,
+        })
     }
 
     fn apply_ack(&mut self, acked_control_id: u64, now_secs: u64) {
@@ -626,28 +630,51 @@ impl TunnelSession {
     }
 
     /// Decrypts and validates one tunnel packet.
-    pub fn decode_packet(&mut self, bytes: &[u8], now_secs: u64) -> Result<DecodedPacket, TunnelError> {
-        if bytes.len() < HEADER_LEN {
+    pub fn decode_packet(
+        &mut self,
+        bytes: &[u8],
+        now_secs: u64,
+    ) -> Result<DecodedPacket, TunnelError> {
+        if bytes.len() <= PACKET_NONCE_LEN {
             return Err(TunnelError::MalformedPacket);
         }
-        let header = TunnelPacketHeader::decode(bytes)?;
-        self.replay_window.check_and_insert(header.packet_number)?;
+        let nonce: [u8; PACKET_NONCE_LEN] = bytes[..PACKET_NONCE_LEN]
+            .try_into()
+            .map_err(|_| TunnelError::MalformedPacket)?;
+        let ciphertext = &bytes[PACKET_NONCE_LEN..];
+        let session_aad = &self.session_id.0;
 
-        let header_bytes = &bytes[..HEADER_LEN];
-        let ciphertext = &bytes[HEADER_LEN..];
-        let data_key = if header.key_phase == self.recv_key_phase {
-            self.recv_data_key
-        } else if self
-            .staged_recv_rekey
-            .as_ref()
-            .is_some_and(|staged| staged.next_phase == header.key_phase)
-        {
-            self.staged_recv_rekey.unwrap().next_recv_data
-        } else {
-            return Err(TunnelError::InvalidState("unknown receive key phase"));
+        let try_decrypt = |key: &[u8; 32]| -> Result<Option<WirePacketBody>, TunnelError> {
+            match open_tunnel_payload_with_nonce(key, &nonce, session_aad, ciphertext) {
+                Ok(plaintext) => {
+                    let body = bincode::deserialize(&plaintext)?;
+                    Ok(Some(body))
+                }
+                Err(CryptoError::Aead) => Ok(None),
+                Err(error) => Err(TunnelError::Crypto(error)),
+            }
         };
-        let plaintext = open_tunnel_payload(&data_key, header.packet_number, header_bytes, ciphertext)?;
-        let wire_frames: Vec<WireFrame> = bincode::deserialize(&plaintext)?;
+
+        let (header, wire_frames) = if let Some(body) = try_decrypt(&self.recv_data_key)? {
+            if body.header.key_phase != self.recv_key_phase {
+                return Err(TunnelError::InvalidState("unexpected receive key phase"));
+            }
+            (body.header, body.frames)
+        } else if let Some(staged) = self.staged_recv_rekey {
+            if let Some(body) = try_decrypt(&staged.next_recv_data)? {
+                if body.header.key_phase != staged.next_phase {
+                    return Err(TunnelError::InvalidState(
+                        "unexpected staged receive key phase",
+                    ));
+                }
+                (body.header, body.frames)
+            } else {
+                return Err(TunnelError::Crypto(CryptoError::Aead));
+            }
+        } else {
+            return Err(TunnelError::Crypto(CryptoError::Aead));
+        };
+        self.replay_window.check_and_insert(header.packet_number)?;
 
         let ctrl_key = if header.key_phase == self.recv_key_phase {
             self.recv_ctrl_key
@@ -658,7 +685,9 @@ impl TunnelSession {
         {
             self.staged_recv_rekey.unwrap().next_recv_ctrl
         } else {
-            return Err(TunnelError::InvalidState("unknown receive control key phase"));
+            return Err(TunnelError::InvalidState(
+                "unknown receive control key phase",
+            ));
         };
 
         let mut frames = Vec::new();
@@ -794,7 +823,9 @@ mod tests {
             control_id,
             challenge: *b"abcdefgh",
         };
-        initiator.queue_reliable_control(frame.clone(), 0, Some(3)).unwrap();
+        initiator
+            .queue_reliable_control(frame.clone(), 0, Some(3))
+            .unwrap();
         assert_eq!(initiator.collect_due_control_frames(0), vec![frame.clone()]);
         assert!(initiator.collect_due_control_frames(0).is_empty());
         assert_eq!(initiator.collect_due_control_frames(1), vec![frame]);
@@ -811,7 +842,9 @@ mod tests {
             .frames
             .iter()
             .any(|frame| matches!(frame, Frame::SessionUpdate { .. })));
-        let ack_packet = responder.encode_packet(&decoded.ack_suggestions, 1).unwrap();
+        let ack_packet = responder
+            .encode_packet(&decoded.ack_suggestions, 1)
+            .unwrap();
         let _ = initiator.decode_packet(&ack_packet.bytes, 1).unwrap();
         assert_eq!(initiator.send_key_phase(), 1);
     }
@@ -825,6 +858,9 @@ mod tests {
 
     #[test]
     fn tunnel_nonce_depends_on_sequence() {
-        assert_ne!(tunnel_nonce_from_packet_number(1), tunnel_nonce_from_packet_number(2));
+        assert_ne!(
+            tunnel_nonce_from_packet_number(1),
+            tunnel_nonce_from_packet_number(2)
+        );
     }
 }

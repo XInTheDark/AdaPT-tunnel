@@ -40,11 +40,21 @@ pub enum AptEvent {
         credential_identity: String,
     },
     /// Admission was rejected quietly.
-    AdmissionRejected { carrier: CarrierBinding, reason: &'static str },
+    AdmissionRejected {
+        carrier: CarrierBinding,
+        reason: &'static str,
+    },
     /// Tunnel session established.
-    TunnelEstablished { session_id: SessionId, carrier: CarrierBinding, mode: PolicyMode },
+    TunnelEstablished {
+        session_id: SessionId,
+        carrier: CarrierBinding,
+        mode: PolicyMode,
+    },
     /// Policy mode changed.
-    PolicyModeChanged { session_id: SessionId, mode: PolicyMode },
+    PolicyModeChanged {
+        session_id: SessionId,
+        mode: PolicyMode,
+    },
 }
 
 /// Minimal telemetry snapshot for UIs and CLIs.
@@ -103,13 +113,21 @@ pub fn record_event(
     snapshot.apply(event);
     let _span = info_span!("apt_event", service = %config.service_name).entered();
     match event {
-        AptEvent::AdmissionAccepted { session_id, carrier, credential_identity } => {
+        AptEvent::AdmissionAccepted {
+            session_id,
+            carrier,
+            credential_identity,
+        } => {
             info!(session = %session_id, carrier = %carrier.as_str(), credential = %credential_identity, "admission accepted");
         }
         AptEvent::AdmissionRejected { carrier, reason } => {
             info!(carrier = %carrier.as_str(), reason = *reason, "admission rejected");
         }
-        AptEvent::TunnelEstablished { session_id, carrier, mode } => {
+        AptEvent::TunnelEstablished {
+            session_id,
+            carrier,
+            mode,
+        } => {
             if config.include_path_profile {
                 info!(session = %session_id, carrier = %carrier.as_str(), mode = ?mode, path = ?path_profile, "tunnel established");
             } else {
@@ -127,7 +145,9 @@ pub fn record_event(
 pub fn redact_credential(identity: &CredentialIdentity) -> String {
     match identity {
         CredentialIdentity::SharedDeployment => "shared-deployment".to_string(),
-        CredentialIdentity::User(user) => format!("user:{}", &user.chars().take(6).collect::<String>()),
+        CredentialIdentity::User(user) => {
+            format!("user:{}", &user.chars().take(6).collect::<String>())
+        }
     }
 }
 
@@ -154,7 +174,13 @@ mod tests {
 
     #[test]
     fn credential_redaction_is_coarse() {
-        assert_eq!(redact_credential(&CredentialIdentity::SharedDeployment), "shared-deployment");
-        assert_eq!(redact_credential(&CredentialIdentity::User("abcdefgh".to_string())), "user:abcdef");
+        assert_eq!(
+            redact_credential(&CredentialIdentity::SharedDeployment),
+            "shared-deployment"
+        );
+        assert_eq!(
+            redact_credential(&CredentialIdentity::User("abcdefgh".to_string())),
+            "user:abcdef"
+        );
     }
 }

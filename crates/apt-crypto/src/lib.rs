@@ -7,7 +7,7 @@
 //! - Noise `XXpsk2` handshake wrappers
 //! - HKDF-based session and rekey derivation helpers
 
-use apt_types::{CarrierBinding, EndpointId, PathProfile, SessionRole};
+use apt_types::{CarrierBinding, EndpointId, OpaqueMessage, PathProfile, SessionRole};
 use bincode::Options;
 use chacha20poly1305::{
     aead::{Aead, KeyInit, Payload},
@@ -45,6 +45,11 @@ fn expand_hkdf(secret: &[u8], info: &[u8]) -> Result<[u8; 32], CryptoError> {
     hk.expand(info, &mut out)
         .map_err(|_| CryptoError::InvalidInput("hkdf expand failed"))?;
     Ok(out)
+}
+
+/// Derives a fresh runtime-scoped key from existing 32-byte key material.
+pub fn derive_runtime_key(secret: &[u8; 32], label: &[u8]) -> Result<[u8; 32], CryptoError> {
+    expand_hkdf(secret, &[b"apt runtime", label].concat())
 }
 
 fn expand_hkdf_salted(salt: &[u8], secret: &[u8], info: &[u8]) -> Result<[u8; 32], CryptoError> {
@@ -182,6 +187,46 @@ pub fn admission_associated_data(endpoint_id: &EndpointId, carrier: CarrierBindi
     out
 }
 
+/// Encrypts raw bytes into an opaque XChaCha20-Poly1305 message.
+pub fn seal_opaque_payload(
+    key: &[u8; AEAD_KEY_LEN],
+    associated_data: &[u8],
+    plaintext: &[u8],
+) -> Result<OpaqueMessage, CryptoError> {
+    let cipher = XChaCha20Poly1305::new_from_slice(key)
+        .map_err(|_| CryptoError::InvalidInput("invalid XChaCha key"))?;
+    let nonce = random_bytes();
+    let ciphertext = cipher
+        .encrypt(
+            (&nonce).into(),
+            Payload {
+                msg: plaintext,
+                aad: associated_data,
+            },
+        )
+        .map_err(|_| CryptoError::Aead)?;
+    Ok(OpaqueMessage { nonce, ciphertext })
+}
+
+/// Decrypts raw bytes from an opaque XChaCha20-Poly1305 message.
+pub fn open_opaque_payload(
+    key: &[u8; AEAD_KEY_LEN],
+    associated_data: &[u8],
+    message: &OpaqueMessage,
+) -> Result<Vec<u8>, CryptoError> {
+    let cipher = XChaCha20Poly1305::new_from_slice(key)
+        .map_err(|_| CryptoError::InvalidInput("invalid XChaCha key"))?;
+    cipher
+        .decrypt(
+            (&message.nonce).into(),
+            Payload {
+                msg: &message.ciphertext,
+                aad: associated_data,
+            },
+        )
+        .map_err(|_| CryptoError::Aead)
+}
+
 /// Derives the per-epoch admission AEAD key from a provisioned admission secret.
 #[must_use]
 pub fn derive_admission_key(admission_key: &[u8; 32], epoch_slot: u64) -> [u8; 32] {
@@ -210,8 +255,11 @@ pub fn derive_stateless_private_key(seed: &[u8; 32], context: &[u8]) -> [u8; 32]
 /// Produces a deterministic server contribution used in Noise payloads.
 #[must_use]
 pub fn derive_server_contribution(seed: &[u8; 32], context: &[u8]) -> [u8; 32] {
-    expand_hkdf(seed, &[b"apt stateless server contribution", context].concat())
-        .expect("fixed-size hkdf expansion cannot fail")
+    expand_hkdf(
+        seed,
+        &[b"apt stateless server contribution", context].concat(),
+    )
+    .expect("fixed-size hkdf expansion cannot fail")
 }
 
 /// Raw split keys returned after the Noise handshake completes.
@@ -404,11 +452,26 @@ pub fn seal_tunnel_payload(
     associated_data: &[u8],
     plaintext: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
+    seal_tunnel_payload_with_nonce(
+        key,
+        &tunnel_nonce_from_packet_number(packet_number),
+        associated_data,
+        plaintext,
+    )
+}
+
+/// Encrypts tunnel payload bytes with an explicit 96-bit nonce.
+pub fn seal_tunnel_payload_with_nonce(
+    key: &[u8; 32],
+    nonce: &[u8; TUNNEL_NONCE_LEN],
+    associated_data: &[u8],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
     let cipher = ChaCha20Poly1305::new_from_slice(key)
         .map_err(|_| CryptoError::InvalidInput("invalid ChaCha20-Poly1305 key"))?;
     cipher
         .encrypt(
-            (&tunnel_nonce_from_packet_number(packet_number)).into(),
+            nonce.into(),
             Payload {
                 msg: plaintext,
                 aad: associated_data,
@@ -424,11 +487,26 @@ pub fn open_tunnel_payload(
     associated_data: &[u8],
     ciphertext: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
+    open_tunnel_payload_with_nonce(
+        key,
+        &tunnel_nonce_from_packet_number(packet_number),
+        associated_data,
+        ciphertext,
+    )
+}
+
+/// Decrypts tunnel payload bytes with an explicit 96-bit nonce.
+pub fn open_tunnel_payload_with_nonce(
+    key: &[u8; 32],
+    nonce: &[u8; TUNNEL_NONCE_LEN],
+    associated_data: &[u8],
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
     let cipher = ChaCha20Poly1305::new_from_slice(key)
         .map_err(|_| CryptoError::InvalidInput("invalid ChaCha20-Poly1305 key"))?;
     cipher
         .decrypt(
-            (&tunnel_nonce_from_packet_number(packet_number)).into(),
+            nonce.into(),
             Payload {
                 msg: ciphertext,
                 aad: associated_data,
@@ -436,7 +514,6 @@ pub fn open_tunnel_payload(
         )
         .map_err(|_| CryptoError::Aead)
 }
-
 
 /// X25519 keypair used by the server static identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -452,8 +529,14 @@ pub fn generate_static_keypair() -> Result<StaticKeypair, CryptoError> {
     let builder = Builder::new(parse_noise_params()?);
     let keypair = builder.generate_keypair()?;
     Ok(StaticKeypair {
-        private: keypair.private.try_into().map_err(|_| CryptoError::InvalidInput("unexpected private key length"))?,
-        public: keypair.public.try_into().map_err(|_| CryptoError::InvalidInput("unexpected public key length"))?,
+        private: keypair
+            .private
+            .try_into()
+            .map_err(|_| CryptoError::InvalidInput("unexpected private key length"))?,
+        public: keypair
+            .public
+            .try_into()
+            .map_err(|_| CryptoError::InvalidInput("unexpected public key length"))?,
     })
 }
 
@@ -481,7 +564,9 @@ pub struct NoiseHandshake {
 
 impl fmt::Debug for NoiseHandshake {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("NoiseHandshake").field("finished", &self.is_finished()).finish()
+        f.debug_struct("NoiseHandshake")
+            .field("finished", &self.is_finished())
+            .finish()
     }
 }
 
@@ -489,7 +574,9 @@ impl NoiseHandshake {
     /// Builds a new `XXpsk2` handshake state.
     pub fn new(config: NoiseHandshakeConfig) -> Result<Self, CryptoError> {
         let params = parse_noise_params()?;
-        let generated_local_static = if config.local_static_private.is_none() && matches!(config.role, SessionRole::Initiator) {
+        let generated_local_static = if config.local_static_private.is_none()
+            && matches!(config.role, SessionRole::Initiator)
+        {
             Some(generate_static_keypair()?)
         } else {
             None
@@ -548,7 +635,9 @@ impl NoiseHandshake {
     /// Returns the remote static public key when the handshake has revealed it.
     #[must_use]
     pub fn remote_static_public(&self) -> Option<[u8; 32]> {
-        self.state.get_remote_static().and_then(|value| value.try_into().ok())
+        self.state
+            .get_remote_static()
+            .and_then(|value| value.try_into().ok())
     }
 
     /// Returns the raw split keys after the handshake has completed.
@@ -612,6 +701,17 @@ mod tests {
     }
 
     #[test]
+    fn opaque_payload_round_trip_and_integrity_failure() {
+        let key = derive_runtime_key(&[4_u8; 32], b"d1 outer").unwrap();
+        let sealed = seal_opaque_payload(&key, b"aad", b"hello opaque").unwrap();
+        let opened = open_opaque_payload(&key, b"aad", &sealed).unwrap();
+        assert_eq!(opened, b"hello opaque");
+
+        let err = open_opaque_payload(&key, b"wrong", &sealed).unwrap_err();
+        assert!(matches!(err, CryptoError::Aead));
+    }
+
+    #[test]
     fn noise_session_derivation_round_trip() {
         let psk = [3_u8; 32];
         let responder_static = generate_static_keypair().unwrap();
@@ -659,14 +759,28 @@ mod tests {
         let resp_hash = responder.handshake_hash();
         assert_eq!(init_hash, resp_hash);
 
-        let init_secrets =
-            derive_session_secrets(initiator_split, &client_contrib, &server_contrib, &init_hash)
-                .unwrap();
-        let resp_secrets =
-            derive_session_secrets(responder_split, &client_contrib, &server_contrib, &resp_hash)
-                .unwrap();
-        assert_eq!(init_secrets.initiator_to_responder_data, resp_secrets.initiator_to_responder_data);
-        assert_eq!(init_secrets.responder_to_initiator_ctrl, resp_secrets.responder_to_initiator_ctrl);
+        let init_secrets = derive_session_secrets(
+            initiator_split,
+            &client_contrib,
+            &server_contrib,
+            &init_hash,
+        )
+        .unwrap();
+        let resp_secrets = derive_session_secrets(
+            responder_split,
+            &client_contrib,
+            &server_contrib,
+            &resp_hash,
+        )
+        .unwrap();
+        assert_eq!(
+            init_secrets.initiator_to_responder_data,
+            resp_secrets.initiator_to_responder_data
+        );
+        assert_eq!(
+            init_secrets.responder_to_initiator_ctrl,
+            resp_secrets.responder_to_initiator_ctrl
+        );
     }
 
     #[test]

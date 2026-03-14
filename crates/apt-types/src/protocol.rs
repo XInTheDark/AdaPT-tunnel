@@ -13,8 +13,13 @@ pub enum AuthProfile {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CipherSuite {
     /// Mandatory baseline suite from the spec.
+    #[serde(
+        rename = "x25519-chachapoly-blake2s",
+        alias = "NoiseXxPsk2X25519ChaChaPolyBlake2s"
+    )]
     NoiseXxPsk2X25519ChaChaPolyBlake2s,
     /// Optional hybrid post-quantum profile.
+    #[serde(rename = "hybrid-mlkem768-x25519", alias = "HybridMlKem768X25519")]
     HybridMlKem768X25519,
 }
 
@@ -52,12 +57,16 @@ impl CipherSuite {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CarrierBinding {
     /// Opaque UDP datagram carrier.
+    #[serde(rename = "D1", alias = "d1", alias = "D1DatagramUdp")]
     D1DatagramUdp,
     /// Encrypted datagram-capable general transport.
+    #[serde(rename = "D2", alias = "d2", alias = "D2EncryptedDatagram")]
     D2EncryptedDatagram,
     /// Generic encrypted stream carrier.
+    #[serde(rename = "S1", alias = "s1", alias = "S1EncryptedStream")]
     S1EncryptedStream,
     /// Request-response fallback carrier.
+    #[serde(rename = "H1", alias = "h1", alias = "H1RequestResponse")]
     H1RequestResponse,
 }
 
@@ -99,7 +108,12 @@ impl CarrierBinding {
     /// Conservative fallback order.
     #[must_use]
     pub const fn conservative_fallback_order() -> [Self; 4] {
-        [Self::D1DatagramUdp, Self::D2EncryptedDatagram, Self::S1EncryptedStream, Self::H1RequestResponse]
+        [
+            Self::D1DatagramUdp,
+            Self::D2EncryptedDatagram,
+            Self::S1EncryptedStream,
+            Self::H1RequestResponse,
+        ]
     }
 
     /// Alias matching the spec shorthand used across the rest of the workspace.
@@ -116,10 +130,13 @@ impl CarrierBinding {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PolicyMode {
     /// Maximum camouflage within safe bounds.
+    #[serde(rename = "stealth-first", alias = "StealthFirst")]
     StealthFirst,
     /// Balanced latency and camouflage.
+    #[serde(rename = "balanced", alias = "Balanced")]
     Balanced,
     /// Performance-favouring mode when policy allows.
+    #[serde(rename = "speed-first", alias = "SpeedFirst")]
     SpeedFirst,
 }
 

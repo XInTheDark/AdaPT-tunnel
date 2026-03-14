@@ -1,168 +1,237 @@
-# Production Implementation Plan
+# Adaptive Persona Tunnel Implementation Plan
 
-This plan follows `SPEC_v1.md` and the confirmed deployment assumptions for the first usable release:
+This plan now tracks the repository against the **intended `SPEC_v1.md` end state**, not just the first usable VPN cut.
 
-- **server:** Linux
-- **client:** Linux and macOS
-- **topology:** combined edge+tunnel server daemon for v1
-- **authentication:** shared deployment key first, while keeping the code ready to grow into per-user credentials later
-- **primary production carrier:** `D1` over UDP
+Assumptions for the current codebase and roadmap:
 
-## 1. Product target for v1
+- **server target:** Linux
+- **client targets:** Linux and macOS
+- **topology:** combined edge+tunnel daemon first
+- **primary live carrier today:** `D1` over UDP
+- **security core today:** implemented
+- **remaining gap:** finishing the stealth / adaptive / fallback layers so the runtime better matches the spec's stated goals
 
-Deliver a **fully usable point-to-site VPN** built on the existing APT protocol core.
+## 1. Product target
 
-The first production release must support:
+Deliver an AdaPT implementation that is not only a working VPN, but also substantially aligned with the spec's three biggest promises:
 
-- a long-running server daemon reachable over UDP
-- a long-running client that connects to the server and keeps the tunnel alive
-- a real TUN-based datapath
-- encrypted transport of full IP packets between client and server
-- server-side forwarding/NAT so client traffic can reach the broader network
-- configuration files, key material management, and operational docs
-- conservative hardening and automated test coverage
+1. **no globally stable wire signature**
+2. **bounded adaptive persona-driven behavior**
+3. **survivability on restrictive or changing networks**
 
-## Progress snapshot
+That target is best approached in three phases.
 
-Completed since the initial protocol prototype:
+## 2. Priority model
 
-- added `crates/apt-runtime` for production config, UDP runtime, TUN wiring, and route/NAT orchestration
-- added production-oriented CLI runtime commands (`apt-edge start`, `apt-client up`)
-- added guided setup commands (`apt-edge init`, `apt-edge add-client`)
-- added deployment and manual testing guides under `guides/`
-- added GitHub release automation, static Linux release assets, and installer/update/uninstall scripts
+The roadmap is ordered by **practical effectiveness from the current repository state**, not by raw implementation effort.
 
-## 2. Current starting point
+| Phase | Focus | Estimated effectiveness |
+|---|---|---:|
+| Phase 1 | Wire-image hardening + adaptive runtime behavior | **90–95%** |
+| Phase 2 | Hostile-network survivability and fallback carriers | **72–85%** |
+| Phase 3 | Capability depth, operator hardening, and completeness work | **18–65%** |
 
-Already implemented in the repo:
+These percentages are directional impact estimates relative to the current repo baseline. They are not benchmark measurements.
 
-- shared protocol/domain types
+## 3. Progress snapshot
+
+Already present before this phase split:
+
+- protocol/domain types
 - cryptographic suite integration and key schedule
 - admission handshake (`C0 -> S1 -> C2 -> S3`)
-- encrypted inner tunnel core with replay protection and rekey support
-- carrier helpers for `D1` and `S1`
+- encrypted tunnel core with replay protection and rekey support
+- first production-oriented UDP runtime
+- TUN integration and basic route/NAT orchestration
+- CLI-driven setup flow
 - first-cut persona, policy, and observability crates
-- guided CLI setup flow for server/client usage
 
-Missing before the product is deployable:
+Completed in **Phase 1** in this turn:
 
-- production config model
-- runtime orchestration around sockets, timers, and sessions
-- TUN integration and OS routing
-- combined server daemon mode
-- client connect mode
-- NAT/forwarding setup
-- persistence for resumable client state
-- integration/hardening test coverage
+- added an **opaque D1 runtime wire envelope** for admission and tunnel datagrams, removing raw tunnel packet structure from the live UDP wire path
+- derived **runtime-scoped outer keys** from admission/session key material instead of reusing inner keys directly
+- integrated **persona-driven runtime behavior** into the live client/server datapath:
+  - bounded burst coalescing
+  - bounded padding toward persona-selected size bins
+  - jittered pacing delays
+  - adaptive keepalive scheduling
+  - sparse idle cover padding when the persona selects it
+- integrated **policy/local-normality feedback** into the live client runtime:
+  - persistent per-route network profile state
+  - stable-delivery and quiet-impairment policy observations
+  - policy-mode transition telemetry
+  - remembered carrier/permissiveness hints for later sessions
+- added tests for:
+  - opaque admission/tunnel wire wrappers
+  - adaptive runtime logic
+  - config persistence still parsing correctly
 
-## 3. Delivery phases
+## 4. Three-phase roadmap
 
-### Phase A — Production runtime foundation
+### Phase 1 — Stealth foundation and adaptive runtime
 
-Objective: add the missing app/runtime layer above the existing protocol engine.
+**Priority:** highest  
+**Estimated effectiveness:** **90–95%**  
+**Status:** **completed**
 
-Tasks:
-1. Add a shared runtime crate for:
-   - config loading
-   - key material parsing/loading
-   - runtime error types
-   - UDP transport helpers
-   - session/runtime status structures
-2. Define production config models for:
-   - combined server daemon
-   - client runtime
-   - TUN/network settings
-   - routing/NAT settings
-   - observability
-   - persistence
-3. Add client identity support suitable for shared-key deployments that may later evolve into richer auth.
-4. Add server-to-client tunnel assignment/config delivery during session establishment.
+#### Objective
 
-Exit criteria:
-- the workspace has a clean production configuration model
-- the runtime crate can instantiate the existing admission/tunnel core with real deployment settings
+Close the biggest gap between "working VPN" and "AdaPT-like behavior" by making the live runtime:
 
-### Phase B — Real UDP server/client runtime
+- less trivially fingerprintable
+- more adaptive in pacing/size/keepalive behavior
+- aware of coarse delivery history rather than fully static
 
-Objective: turn the protocol engine into a long-running encrypted tunnel runtime.
+#### Deliverables
 
-Tasks:
-1. Implement a UDP server loop for `D1`:
-   - admission handling
-   - session creation
-   - per-session tunnel state
-   - periodic retransmit/rekey ticks
-2. Implement a UDP client loop for `D1`:
-   - handshake retries
-   - session establishment
-   - keepalive/rekey tick path
-   - reconnect-friendly ticket persistence
-3. Add session tables and peer/address tracking.
-4. Add operational logging and status reporting.
+1. **Wire-image hardening for the live UDP path**
+   - wrap live `D1` admission records in an opaque carrier envelope
+   - wrap live `D1` tunnel datagrams in an opaque carrier envelope
+   - derive separate outer-carrier keys from admission/session secrets
+   - stop sending the clear logical tunnel packet structure directly on the UDP wire
 
-Exit criteria:
-- client and server can establish a session across real UDP sockets
-- encrypted tunnel packets flow in both directions without demo-only shortcuts
+2. **Persona/scheduler integration in the runtime datapath**
+   - generate a persona from the session's `persona_seed`
+   - coalesce multiple TUN packets into bounded bursts
+   - add bounded padding toward persona packet-size bins
+   - apply small pacing delays within safe latency limits
+   - replace fixed periodic keepalives with persona-driven keepalive sampling
+   - support sparse idle cover behavior when selected by the persona
 
-### Phase C — TUN integration and VPN datapath
+3. **Local-normality and policy-controller integration**
+   - persist a local network profile on the client
+   - record coarse tunnel metadata into the profile
+   - infer a coarse path profile from stored observations
+   - start from conservative policy defaults and transition when delivery stabilizes
+   - surface policy-mode changes into telemetry/logging
+   - remember a prior carrier/permissiveness hint for later sessions
 
-Objective: make the runtime usable as an actual VPN.
+4. **Validation**
+   - keep the workspace building and tested with `cargo check --workspace` and `cargo test --workspace`
+   - add focused unit coverage for new wire and adaptive-runtime helpers
 
-Tasks:
-1. Add async TUN integration for Linux/macOS clients and Linux servers.
-2. Configure interface addressing/MTU from runtime parameters.
-3. Install routes for client traffic.
-4. Preserve the route to the remote server when client default routes are redirected through the tunnel.
-5. Inject packets from TUN into the tunnel and write decrypted packets back to TUN.
-6. On the server, map tunnel-destination addresses to active sessions.
+#### Acceptance criteria
 
-Exit criteria:
-- packets can traverse the TUN interface on client and server
-- user traffic can pass through the encrypted tunnel end-to-end
+Phase 1 is complete when all of the following are true:
 
-### Phase D — Forwarding, NAT, and operational setup
+- the live UDP runtime no longer places the logical tunnel packet header directly on the wire
+- the client/server runtime uses persona output to affect packet timing/size behavior
+- the client persists a local-normality profile and uses it on later runs
+- policy-mode changes can occur during a session and are logged as coarse events
+- all tests pass
 
-Objective: make the server function as a practical VPN gateway.
+#### Implementation notes
 
-Tasks:
-1. Enable Linux IPv4 forwarding when configured.
-2. Install NAT/masquerade rules when configured.
-3. Add configuration for tunnel subnets, pushed routes, and DNS hints.
-4. Add operational commands for key generation / config bootstrap.
-5. Document required privileges and service startup expectations.
+This phase intentionally stops short of adding a new carrier family. It strengthens the existing `D1` runtime first so later fallback work has a better base to build on.
 
-Exit criteria:
-- a Linux server can forward tunneled client traffic to external networks
-- a first-time operator can configure and start the system from docs
+---
 
-### Phase E — Hardening, testing, and performance work
+### Phase 2 — Hostile-network survivability and fallback
 
-Objective: reduce operational risk and tune the first release.
+**Priority:** high  
+**Estimated effectiveness:** **72–85%**  
+**Status:** pending
 
-Tasks:
-1. Add integration tests for:
-   - client/server UDP handshake
-   - session establishment
-   - tunnel packet exchange
-   - reconnect/resumption paths where practical
-2. Add negative tests for malformed/invalid traffic.
-3. Add benchmarks or stress-oriented checks for session runtime hot paths.
-4. Review allocations, batching opportunities, and socket buffer tuning.
-5. Update docs/README continuously to match the real state of the code.
-6. Commit incrementally as significant milestones land.
+#### Objective
 
-Exit criteria:
-- the release has clear setup docs
-- the runtime is validated beyond unit tests
-- the hot path is no longer “demo shaped”
+Make AdaPT survive networks where the primary UDP path is blocked, degraded, reset, or unstable.
 
-## 4. Definition of done for the first production release
+#### Deliverables
 
-The project will count as “production-usable v1” when all of the following are true:
+1. **Real `S1` encrypted-stream runtime path**
+   - promote the existing stream framing helper into a real runtime transport
+   - implement client/server session establishment over the stream carrier
+   - integrate it with the same admission/tunnel logic used by `D1`
 
-1. `apt-edge serve --config ...` starts a combined production server daemon.
-2. `apt-client connect --config ...` establishes a persistent encrypted session to the server.
-3. A TUN device is created/configured and routes are installed.
-4. Client traffic can traverse the server to external networks in NAT mode.
-5. The README documents real setup and usage instead of prototype-only behavior.
-6. The workspace test suite covers both core protocol logic and runtime integration paths.
+2. **Decoy-capable stream behavior**
+   - define how invalid unauthenticated stream input is surfaced
+   - add a concrete decoy or generic-failure surface for stream mode
+   - ensure near-miss traffic does not reveal protocol state
+
+3. **Fallback orchestration**
+   - let the policy controller move between carriers in conservative order
+   - feed handshake blackholes / immediate resets / repeated fallback failures into policy
+   - keep one active carrier and at most one standby path
+
+4. **Path and carrier migration**
+   - wire `PATH_CHALLENGE` / `PATH_RESPONSE` into the runtime
+   - support authenticated address migration on path changes
+   - support policy-driven carrier migration after repeated impairment
+
+5. **Standby health checks**
+   - run sparse health checks on a standby path/carrier
+   - do not let health checks create a noisy or periodic fingerprint
+
+#### Acceptance criteria
+
+Phase 2 is complete when all of the following are true:
+
+- `S1` works as a real transport, not just a framing helper
+- the runtime can fall back away from blocked or repeatedly blackholed `D1`
+- path ownership is revalidated before trusting a migrated path
+- stream invalid-input behavior does not reveal APT-specific state
+
+#### Dependencies
+
+- Phase 1 wire/runtime integration must already exist so new carriers can reuse the adaptive path
+
+---
+
+### Phase 3 — Capability depth, operator hardening, and full-spec breadth
+
+**Priority:** medium  
+**Estimated effectiveness:** **18–65%** depending on feature  
+**Status:** pending
+
+#### Objective
+
+Finish the broader platform and operator story after the biggest stealth/survivability work is already in place.
+
+#### Deliverables
+
+1. **Additional carrier families**
+   - evaluate and implement `D2` where an encrypted datagram-capable outer transport is practical
+   - implement `H1` only if highly restrictive request/response fallback is still needed after `S1`
+
+2. **Per-user provisioning end-to-end**
+   - expose per-user admission flow in CLI/operator tooling
+   - issue/revoke per-user credentials cleanly
+   - preserve rotating lookup-hint behavior
+
+3. **IPv6 and richer network handling**
+   - support IPv6 tunnel traffic end-to-end
+   - improve path classification inputs where safely available
+   - broaden platform/runtime coverage where justified
+
+4. **DNS automation and operator polish**
+   - apply pushed DNS settings automatically where supported
+   - improve deployment ergonomics and service management guidance
+   - extend validation / manual test guides to cover new adaptive/fallback behavior
+
+5. **Optional hybrid PQ and advanced hardening**
+   - only after the practical stealth/fallback gaps are already closed
+   - ensure the negotiation/runtime path is complete before advertising it as supported
+
+6. **Performance and stress hardening**
+   - benchmark hot paths
+   - review buffering/allocation strategy
+   - validate under reconnect churn, many sessions, and prolonged uptime
+
+#### Acceptance criteria
+
+Phase 3 is complete when all of the following are true:
+
+- the operator flow covers shared-deployment and per-user models cleanly
+- the runtime has credible IPv4/IPv6 and DNS behavior
+- optional advanced features are end-to-end real, not type-level placeholders
+- docs and validation guidance match the shipped behavior
+
+## 5. Immediate next target
+
+With Phase 1 complete, the next highest-value work is:
+
+1. **real `S1` stream runtime path**
+2. **decoy-capable stream invalid-input behavior**
+3. **policy-driven fallback and migration orchestration**
+
+That is the fastest route to turning the current AdaPT runtime from "adaptive UDP-first tunnel" into something that is materially harder to suppress across hostile networks.

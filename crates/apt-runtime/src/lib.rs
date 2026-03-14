@@ -6,6 +6,7 @@
 //! server daemon.
 #![allow(missing_docs)]
 
+mod adaptive;
 mod config;
 mod error;
 mod keys;
@@ -13,7 +14,9 @@ mod route;
 mod runtime;
 mod status;
 mod tun;
+mod wire;
 
+pub use apt_types::SessionPolicy;
 pub use config::{
     encode_key_hex, load_key32, AuthorizedPeerConfig, ClientConfig, ClientPersistentState,
     ResolvedClientConfig, ResolvedServerConfig, ServerConfig, ServerSessionExtension,

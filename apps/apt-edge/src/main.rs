@@ -1,8 +1,8 @@
 //! User-friendly CLI for the combined APT server daemon.
 
 use apt_runtime::{
-    load_key32, write_key_file, AuthorizedPeerConfig, ClientConfig, ServerConfig,
-    generate_client_identity, generate_server_keyset, run_server,
+    generate_client_identity, generate_server_keyset, load_key32, run_server, write_key_file,
+    AuthorizedPeerConfig, ClientConfig, ServerConfig, SessionPolicy,
 };
 use clap::{Parser, Subcommand};
 use ipnet::{IpNet, Ipv4Net};
@@ -159,30 +159,29 @@ fn init_server(
         None if yes => "0.0.0.0:51820".parse()?,
         None => prompt_parse("UDP listen address", Some("0.0.0.0:51820"))?,
     };
-    let public_endpoint = match public_endpoint {
-        Some(value) => {
-            validate_client_reachable_endpoint(&value)?;
-            value
-        }
-        None if yes && !bind.ip().is_unspecified() => {
-            let value = bind.to_string();
-            validate_client_reachable_endpoint(&value)?;
-            value
-        }
-        None if yes => {
-            return Err("--public-endpoint is required when using --yes with an unspecified bind address".into())
-        }
-        None => loop {
-            let value = prompt_string(
-                "Client-reachable public IP/DNS and port",
-                None,
-            )?;
-            match validate_client_reachable_endpoint(&value) {
-                Ok(()) => break value,
-                Err(error) => eprintln!("Invalid value: {error}"),
+    let public_endpoint =
+        match public_endpoint {
+            Some(value) => {
+                validate_client_reachable_endpoint(&value)?;
+                value
             }
-        },
-    };
+            None if yes && !bind.ip().is_unspecified() => {
+                let value = bind.to_string();
+                validate_client_reachable_endpoint(&value)?;
+                value
+            }
+            None if yes => return Err(
+                "--public-endpoint is required when using --yes with an unspecified bind address"
+                    .into(),
+            ),
+            None => loop {
+                let value = prompt_string("Client-reachable public IP/DNS and port", None)?;
+                match validate_client_reachable_endpoint(&value) {
+                    Ok(()) => break value,
+                    Err(error) => eprintln!("Invalid value: {error}"),
+                }
+            },
+        };
     let endpoint_id = match endpoint_id {
         Some(value) => value,
         None if yes => "adapt-prod".to_string(),
@@ -216,7 +215,10 @@ fn init_server(
         .map(|route| route.parse::<IpNet>())
         .collect::<Result<Vec<_>, _>>()?;
     let push_dns = if dns_servers.is_empty() {
-        vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), IpAddr::V4(Ipv4Addr::new(1, 0, 0, 1))]
+        vec![
+            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(1, 0, 0, 1)),
+        ]
     } else {
         dns_servers
     };
@@ -224,8 +226,14 @@ fn init_server(
     fs::create_dir_all(&out_dir)?;
     let keyset = generate_server_keyset()?;
     write_key_file(&out_dir.join("shared-admission.key"), &keyset.admission_key)?;
-    write_key_file(&out_dir.join("server-static-private.key"), &keyset.server_static_private_key)?;
-    write_key_file(&out_dir.join("server-static-public.key"), &keyset.server_static_public_key)?;
+    write_key_file(
+        &out_dir.join("server-static-private.key"),
+        &keyset.server_static_private_key,
+    )?;
+    write_key_file(
+        &out_dir.join("server-static-public.key"),
+        &keyset.server_static_public_key,
+    )?;
     write_key_file(&out_dir.join("cookie.key"), &keyset.cookie_key)?;
     write_key_file(&out_dir.join("ticket.key"), &keyset.ticket_key)?;
     fs::create_dir_all(out_dir.join("bundles"))?;
@@ -249,6 +257,7 @@ fn init_server(
         nat_ipv4: true,
         push_routes,
         push_dns,
+        session_policy: SessionPolicy::default(),
         keepalive_secs: 25,
         session_idle_timeout_secs: 180,
         udp_recv_buffer_bytes: 4 * 1024 * 1024,
@@ -269,15 +278,24 @@ fn init_server(
     println!("  • {}/bundles/", out_dir.display());
     println!("\nServer summary:");
     println!("  • Listen on: {bind}");
-    println!("  • Public endpoint for clients: {}", config.public_endpoint);
+    println!(
+        "  • Public endpoint for clients: {}",
+        config.public_endpoint
+    );
     println!("  • Tunnel subnet: {}", subnet);
     println!("  • Server tunnel IP: {}", config.tunnel_local_ipv4);
     println!("  • Egress interface: {egress_interface}");
     println!("\nNext steps:");
     println!("  1. Add a client bundle:");
-    println!("     apt-edge add-client --config {} --name laptop", config_path.display());
+    println!(
+        "     apt-edge add-client --config {} --name laptop",
+        config_path.display()
+    );
     println!("  2. Start the server:");
-    println!("     sudo apt-edge start --config {}", config_path.display());
+    println!(
+        "     sudo apt-edge start --config {}",
+        config_path.display()
+    );
     Ok(())
 }
 
@@ -288,13 +306,15 @@ fn add_client(
     client_ip: Option<Ipv4Addr>,
     yes: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config_path = match config {
+    let config_path =
+        match config {
             Some(path) => path,
             None => match find_server_config() {
                 Some(path) => path,
-                None if yes => {
-                    return Err("could not find a server config; pass --config or run `apt-edge init` first".into())
-                }
+                None if yes => return Err(
+                    "could not find a server config; pass --config or run `apt-edge init` first"
+                        .into(),
+                ),
                 None => prompt_path("Server config path", Some("/etc/adapt/server.toml"))?,
             },
         };
@@ -305,7 +325,11 @@ fn add_client(
         None => prompt_string("Client name", Some("laptop"))?,
     };
     if server_config.peers.iter().any(|peer| peer.name == name) {
-        return Err(format!("a client named `{name}` already exists in {}", config_path.display()).into());
+        return Err(format!(
+            "a client named `{name}` already exists in {}",
+            config_path.display()
+        )
+        .into());
     }
     let bundle_dir = out_dir.unwrap_or_else(|| {
         config_path
@@ -336,10 +360,22 @@ fn add_client(
 
     let shared_admission_key = load_key32(&server_config.admission_key)?;
     let server_static_public_key = load_key32(&server_config.server_static_public_key)?;
-    write_key_file(&bundle_dir.join("shared-admission.key"), &shared_admission_key)?;
-    write_key_file(&bundle_dir.join("server-static-public.key"), &server_static_public_key)?;
-    write_key_file(&bundle_dir.join("client-static-private.key"), &identity.client_static_private_key)?;
-    write_key_file(&bundle_dir.join("client-static-public.key"), &identity.client_static_public_key)?;
+    write_key_file(
+        &bundle_dir.join("shared-admission.key"),
+        &shared_admission_key,
+    )?;
+    write_key_file(
+        &bundle_dir.join("server-static-public.key"),
+        &server_static_public_key,
+    )?;
+    write_key_file(
+        &bundle_dir.join("client-static-private.key"),
+        &identity.client_static_private_key,
+    )?;
+    write_key_file(
+        &bundle_dir.join("client-static-public.key"),
+        &identity.client_static_public_key,
+    )?;
 
     let client_config = ClientConfig {
         server_addr: server_config.public_endpoint.clone(),
@@ -352,6 +388,7 @@ fn add_client(
         interface_name: None,
         routes: Vec::new(),
         use_server_pushed_routes: true,
+        session_policy: SessionPolicy::default(),
         keepalive_secs: 25,
         session_idle_timeout_secs: 180,
         handshake_timeout_secs: 5,
@@ -378,7 +415,10 @@ fn add_client(
     println!("     sudo cp -R {}/* /etc/adapt/", bundle_dir.display());
     println!("     sudo apt-client up");
     println!("  3. If the server is not already running, start it with:");
-    println!("     sudo apt-edge start --config {}", config_path.display());
+    println!(
+        "     sudo apt-edge start --config {}",
+        config_path.display()
+    );
     Ok(())
 }
 
@@ -394,15 +434,24 @@ async fn start_server(config: Option<PathBuf>) -> Result<(), Box<dyn std::error:
     println!("Press Ctrl-C to stop.\n");
     let result = run_server(ServerConfig::load(&config_path)?.resolve()?).await?;
     println!("\nServer stopped.");
-    println!("Active sessions at shutdown: {}", result.status.active_sessions);
+    println!(
+        "Active sessions at shutdown: {}",
+        result.status.active_sessions
+    );
     Ok(())
 }
 
 fn write_server_keyset(out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let keyset = generate_server_keyset()?;
     write_key_file(&out_dir.join("shared-admission.key"), &keyset.admission_key)?;
-    write_key_file(&out_dir.join("server-static-private.key"), &keyset.server_static_private_key)?;
-    write_key_file(&out_dir.join("server-static-public.key"), &keyset.server_static_public_key)?;
+    write_key_file(
+        &out_dir.join("server-static-private.key"),
+        &keyset.server_static_private_key,
+    )?;
+    write_key_file(
+        &out_dir.join("server-static-public.key"),
+        &keyset.server_static_public_key,
+    )?;
     write_key_file(&out_dir.join("cookie.key"), &keyset.cookie_key)?;
     write_key_file(&out_dir.join("ticket.key"), &keyset.ticket_key)?;
     println!("Raw key files written to {}", out_dir.display());
@@ -466,7 +515,9 @@ fn prompt_path(label: &str, default: Option<&str>) -> Result<PathBuf, Box<dyn st
 fn validate_client_reachable_endpoint(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
     let trimmed = endpoint.trim();
     if trimmed.is_empty() {
-        return Err("endpoint cannot be empty; use a client-reachable IP:port or DNS name:port".into());
+        return Err(
+            "endpoint cannot be empty; use a client-reachable IP:port or DNS name:port".into(),
+        );
     }
     if trimmed.contains("example.com") {
         return Err("endpoint still uses the example placeholder; replace it with the server's real public IP:port or DNS name:port".into());
@@ -488,7 +539,9 @@ fn first_usable_ipv4(subnet: Ipv4Net) -> Result<Ipv4Addr, Box<dyn std::error::Er
     Ok(Ipv4Addr::from(network + 1))
 }
 
-fn next_available_client_ipv4(config: &ServerConfig) -> Result<Ipv4Addr, Box<dyn std::error::Error>> {
+fn next_available_client_ipv4(
+    config: &ServerConfig,
+) -> Result<Ipv4Addr, Box<dyn std::error::Error>> {
     let subnet = subnet_from(config.tunnel_local_ipv4, config.tunnel_netmask)?;
     let mut used = HashSet::new();
     used.insert(config.tunnel_local_ipv4);
@@ -532,8 +585,8 @@ mod tests {
 }
 
 fn init_logging() {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,apt_runtime=info"));
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,apt_runtime=info"));
     let _ = fmt()
         .with_env_filter(env_filter)
         .with_target(false)

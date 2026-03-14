@@ -5,7 +5,7 @@
 //! to synthesize arbitrary noise.
 
 use apt_types::{
-    CarrierBinding, IdleResumeBehavior, KeepaliveMode, PathProfile, PacingFamily, PolicyMode,
+    CarrierBinding, IdleResumeBehavior, KeepaliveMode, PacingFamily, PathProfile, PolicyMode,
     SchedulerProfile,
 };
 use rand::{Rng, SeedableRng};
@@ -123,7 +123,10 @@ impl PersonaEngine {
         };
         let fallback_order = if let Some(profile) = &inputs.remembered_profile {
             let mut order = CarrierBinding::conservative_fallback_order().to_vec();
-            if let Some(index) = order.iter().position(|binding| *binding == profile.preferred_carrier) {
+            if let Some(index) = order
+                .iter()
+                .position(|binding| *binding == profile.preferred_carrier)
+            {
                 let preferred = order.remove(index);
                 order.insert(0, preferred);
             }
@@ -154,7 +157,11 @@ impl PersonaEngine {
         };
         PersonaProfile {
             scheduler,
-            prefers_fragmentation: rng.gen_bool(matches!(inputs.policy_mode, PolicyMode::StealthFirst).then_some(0.45).unwrap_or(0.2)),
+            prefers_fragmentation: rng.gen_bool(
+                matches!(inputs.policy_mode, PolicyMode::StealthFirst)
+                    .then_some(0.45)
+                    .unwrap_or(0.2),
+            ),
             idle_resume_ramp_ms: if matches!(idle_resume, IdleResumeBehavior::GentleRamp) {
                 rng.gen_range(25..=90)
             } else {
@@ -166,7 +173,11 @@ impl PersonaEngine {
 
     /// Samples a jittered keepalive interval while respecting the safe range from the spec.
     #[must_use]
-    pub fn sample_keepalive_interval(inputs: &PersonaInputs, estimated_binding_secs: Option<u64>, sample_index: u64) -> u64 {
+    pub fn sample_keepalive_interval(
+        inputs: &PersonaInputs,
+        estimated_binding_secs: Option<u64>,
+        sample_index: u64,
+    ) -> u64 {
         let mut hasher = Sha256::new();
         hasher.update(inputs.persona_seed);
         hasher.update(sample_index.to_be_bytes());

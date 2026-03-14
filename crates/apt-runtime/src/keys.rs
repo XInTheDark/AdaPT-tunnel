@@ -19,7 +19,8 @@ pub struct GeneratedClientIdentity {
 }
 
 pub fn generate_server_keyset() -> Result<GeneratedServerKeyset, RuntimeError> {
-    let static_keypair = generate_static_keypair().map_err(|error| RuntimeError::CommandFailed(error.to_string()))?;
+    let static_keypair = generate_static_keypair()
+        .map_err(|error| RuntimeError::CommandFailed(error.to_string()))?;
     Ok(GeneratedServerKeyset {
         admission_key: random(),
         server_static_private_key: static_keypair.private,
@@ -30,7 +31,8 @@ pub fn generate_server_keyset() -> Result<GeneratedServerKeyset, RuntimeError> {
 }
 
 pub fn generate_client_identity() -> Result<GeneratedClientIdentity, RuntimeError> {
-    let static_keypair = generate_static_keypair().map_err(|error| RuntimeError::CommandFailed(error.to_string()))?;
+    let static_keypair = generate_static_keypair()
+        .map_err(|error| RuntimeError::CommandFailed(error.to_string()))?;
     Ok(GeneratedClientIdentity {
         client_static_private_key: static_keypair.private,
         client_static_public_key: static_keypair.public,
@@ -44,9 +46,11 @@ pub fn write_key_file(path: &Path, key: &[u8; 32]) -> Result<(), RuntimeError> {
             source,
         })?;
     }
-    fs::write(path, format!("{}\n", encode_key_hex(key))).map_err(|source| RuntimeError::IoWithPath {
-        path: path.to_path_buf(),
-        source,
+    fs::write(path, format!("{}\n", encode_key_hex(key))).map_err(|source| {
+        RuntimeError::IoWithPath {
+            path: path.to_path_buf(),
+            source,
+        }
     })?;
     #[cfg(unix)]
     {

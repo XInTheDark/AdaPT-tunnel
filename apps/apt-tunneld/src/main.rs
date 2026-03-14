@@ -6,7 +6,10 @@ use std::path::PathBuf;
 use tracing_subscriber::{fmt, EnvFilter};
 
 #[derive(Debug, Parser)]
-#[command(name = "apt-tunneld", about = "Compatibility alias for the combined APT server daemon")]
+#[command(
+    name = "apt-tunneld",
+    about = "Compatibility alias for the combined APT server daemon"
+)]
 struct Cli {
     /// Path to the server config. If omitted, /etc/adapt/server.toml is used.
     #[arg(long)]
@@ -26,7 +29,11 @@ async fn main() {
     {
         Ok(config) => match run_server(config).await {
             Ok(result) => {
-                println!("{}", serde_json::to_string_pretty(&result).expect("json serialization should succeed"));
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("json serialization should succeed")
+                );
             }
             Err(error) => {
                 eprintln!("apt-tunneld failed: {error}");
@@ -41,8 +48,8 @@ async fn main() {
 }
 
 fn init_logging() {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,apt_runtime=info"));
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,apt_runtime=info"));
     let _ = fmt()
         .with_env_filter(env_filter)
         .with_target(false)

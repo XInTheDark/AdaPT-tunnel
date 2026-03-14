@@ -13,6 +13,10 @@ pub enum RuntimeError {
     TomlSerialize(#[from] toml::ser::Error),
     #[error("admission failure: {0}")]
     Admission(#[from] apt_admission::AdmissionError),
+    #[error("carrier failure: {0}")]
+    Carrier(#[from] apt_carriers::CarrierError),
+    #[error("crypto failure: {0}")]
+    Crypto(#[from] apt_crypto::CryptoError),
     #[error("tunnel failure: {0}")]
     Tunnel(#[from] apt_tunnel::TunnelError),
     #[error("serialization failure: {0}")]

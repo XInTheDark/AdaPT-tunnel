@@ -191,6 +191,8 @@ dependencies = [
  "apt-carriers",
  "apt-crypto",
  "apt-observability",
+ "apt-persona",
+ "apt-policy",
  "apt-tunnel",
  "apt-types",
  "base64",

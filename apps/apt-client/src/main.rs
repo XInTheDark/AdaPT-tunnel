@@ -70,9 +70,18 @@ async fn start_client(config: Option<PathBuf>) -> Result<(), Box<dyn std::error:
 
 fn generate_identity(out_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let identity = generate_client_identity()?;
-    write_key_file(&out_dir.join("client-static-private.key"), &identity.client_static_private_key)?;
-    write_key_file(&out_dir.join("client-static-public.key"), &identity.client_static_public_key)?;
-    println!("Standalone client identity written to {}", out_dir.display());
+    write_key_file(
+        &out_dir.join("client-static-private.key"),
+        &identity.client_static_private_key,
+    )?;
+    write_key_file(
+        &out_dir.join("client-static-public.key"),
+        &identity.client_static_public_key,
+    )?;
+    println!(
+        "Standalone client identity written to {}",
+        out_dir.display()
+    );
     Ok(())
 }
 
@@ -101,8 +110,8 @@ fn prompt_config_path() -> io::Result<PathBuf> {
 }
 
 fn init_logging() {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,apt_runtime=info"));
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,apt_runtime=info"));
     let _ = fmt()
         .with_env_filter(env_filter)
         .with_target(false)

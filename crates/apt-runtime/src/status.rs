@@ -19,7 +19,12 @@ pub struct ClientStatus {
 
 impl ClientStatus {
     #[must_use]
-    pub fn new(status: RuntimeStatus, server: String, tunnel_address: Option<IpAddr>, interface_name: Option<String>) -> Self {
+    pub fn new(
+        status: RuntimeStatus,
+        server: String,
+        tunnel_address: Option<IpAddr>,
+        interface_name: Option<String>,
+    ) -> Self {
         Self {
             status,
             server,

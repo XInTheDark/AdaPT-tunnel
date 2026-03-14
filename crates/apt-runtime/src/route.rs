@@ -85,7 +85,11 @@ fn configure_client_network_linux(
     if routes.iter().any(is_default_route) {
         let server_ip = server_addr.ip();
         let route = linux_route_to(server_ip)?;
-        let mut args = vec!["route".to_string(), "replace".to_string(), host_prefix(server_ip)];
+        let mut args = vec![
+            "route".to_string(),
+            "replace".to_string(),
+            host_prefix(server_ip),
+        ];
         if let Some(gateway) = route.gateway {
             args.push("via".to_string());
             args.push(gateway.to_string());
@@ -93,7 +97,12 @@ fn configure_client_network_linux(
         args.push("dev".to_string());
         args.push(route.interface_name.clone());
         run_command("ip", &args)?;
-        guard.cleanup_commands.push(vec!["ip".to_string(), "route".to_string(), "del".to_string(), host_prefix(server_ip)]);
+        guard.cleanup_commands.push(vec![
+            "ip".to_string(),
+            "route".to_string(),
+            "del".to_string(),
+            host_prefix(server_ip),
+        ]);
     }
 
     for route in routes {
@@ -101,15 +110,41 @@ fn configure_client_network_linux(
             if route_v4.prefix_len() == 0 {
                 run_command(
                     "ip",
-                    &["route".into(), "replace".into(), "default".into(), "dev".into(), interface_name.into()],
+                    &[
+                        "route".into(),
+                        "replace".into(),
+                        "default".into(),
+                        "dev".into(),
+                        interface_name.into(),
+                    ],
                 )?;
-                guard.cleanup_commands.push(vec!["ip".into(), "route".into(), "del".into(), "default".into(), "dev".into(), interface_name.into()]);
+                guard.cleanup_commands.push(vec![
+                    "ip".into(),
+                    "route".into(),
+                    "del".into(),
+                    "default".into(),
+                    "dev".into(),
+                    interface_name.into(),
+                ]);
             } else {
                 run_command(
                     "ip",
-                    &["route".into(), "replace".into(), route_v4.to_string(), "dev".into(), interface_name.into()],
+                    &[
+                        "route".into(),
+                        "replace".into(),
+                        route_v4.to_string(),
+                        "dev".into(),
+                        interface_name.into(),
+                    ],
                 )?;
-                guard.cleanup_commands.push(vec!["ip".into(), "route".into(), "del".into(), route_v4.to_string(), "dev".into(), interface_name.into()]);
+                guard.cleanup_commands.push(vec![
+                    "ip".into(),
+                    "route".into(),
+                    "del".into(),
+                    route_v4.to_string(),
+                    "dev".into(),
+                    interface_name.into(),
+                ]);
             }
         }
     }
@@ -126,14 +161,28 @@ fn configure_client_network_macos(
     if routes.iter().any(is_default_route) {
         let server_ip = server_addr.ip();
         let route = macos_route_to(server_ip)?;
-        let gateway = route
-            .gateway
-            .ok_or_else(|| RuntimeError::CommandFailed("macOS default route lookup returned no gateway".to_string()))?;
+        let gateway = route.gateway.ok_or_else(|| {
+            RuntimeError::CommandFailed(
+                "macOS default route lookup returned no gateway".to_string(),
+            )
+        })?;
         run_command(
             "route",
-            &["-n".into(), "add".into(), "-host".into(), server_ip.to_string(), gateway.to_string()],
+            &[
+                "-n".into(),
+                "add".into(),
+                "-host".into(),
+                server_ip.to_string(),
+                gateway.to_string(),
+            ],
         )?;
-        guard.cleanup_commands.push(vec!["route".into(), "-n".into(), "delete".into(), "-host".into(), server_ip.to_string()]);
+        guard.cleanup_commands.push(vec![
+            "route".into(),
+            "-n".into(),
+            "delete".into(),
+            "-host".into(),
+            server_ip.to_string(),
+        ]);
     }
 
     for route in routes {
@@ -207,7 +256,9 @@ fn configure_server_network_linux(
 
     if config.nat_ipv4 {
         let egress = config.egress_interface.as_ref().ok_or_else(|| {
-            RuntimeError::InvalidConfig("nat_ipv4 requires egress_interface to be configured".to_string())
+            RuntimeError::InvalidConfig(
+                "nat_ipv4 requires egress_interface to be configured".to_string(),
+            )
         })?;
         let subnet = subnet_from(config.tunnel_local_ipv4, config.tunnel_netmask).to_string();
         ensure_iptables_rule(&[
@@ -241,7 +292,10 @@ fn configure_server_network_linux(
         ])?;
     }
 
-    info!(interface = interface_name, "server network configuration applied");
+    info!(
+        interface = interface_name,
+        "server network configuration applied"
+    );
     Ok(guard)
 }
 
@@ -279,14 +333,18 @@ fn linux_route_to(ip: IpAddr) -> Result<ResolvedRoute, RuntimeError> {
     let mut index = 0;
     while index < tokens.len() {
         match tokens[index] {
-            "dev" if index + 1 < tokens.len() => interface_name = Some(tokens[index + 1].to_string()),
+            "dev" if index + 1 < tokens.len() => {
+                interface_name = Some(tokens[index + 1].to_string())
+            }
             "via" if index + 1 < tokens.len() => gateway = tokens[index + 1].parse().ok(),
             _ => {}
         }
         index += 1;
     }
     Ok(ResolvedRoute {
-        interface_name: interface_name.ok_or_else(|| RuntimeError::CommandFailed("unable to parse output from ip route get".to_string()))?,
+        interface_name: interface_name.ok_or_else(|| {
+            RuntimeError::CommandFailed("unable to parse output from ip route get".to_string())
+        })?,
         gateway,
     })
 }

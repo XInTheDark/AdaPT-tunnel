@@ -11,8 +11,8 @@ use apt_crypto::{
     SealedEnvelope, SessionSecretsForRole, StaticKeypair, TokenProtector,
 };
 use apt_types::{
-    AdmissionDefaults, AuthProfile, CarrierBinding, CipherSuite, ClientNonce,
-    CredentialIdentity, EndpointId, PathProfile, PolicyMode, RekeyLimits, SessionId, SessionRole,
+    AdmissionDefaults, AuthProfile, CarrierBinding, CipherSuite, ClientNonce, CredentialIdentity,
+    EndpointId, PathProfile, PolicyMode, RekeyLimits, SessionId, SessionRole,
 };
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,8 @@ use thiserror::Error;
 
 const VERSION: &str = "APT/1-core";
 const ACCEPTABLE_SLOT_SKEW: i64 = 1;
+const ADMISSION_FLAG_LOOKUP_HINT: u8 = 0x01;
+const ENVELOPE_NONCE_LEN: usize = 24;
 
 fn random_padding(len: usize) -> Vec<u8> {
     let mut out = vec![0_u8; len];
@@ -33,7 +35,11 @@ fn epoch_slot(now_secs: u64, slot_len_secs: u64) -> u64 {
 }
 
 fn candidate_slots(now_slot: u64) -> [u64; 3] {
-    [now_slot.saturating_sub(1), now_slot, now_slot.saturating_add(1)]
+    [
+        now_slot.saturating_sub(1),
+        now_slot,
+        now_slot.saturating_add(1),
+    ]
 }
 
 /// Errors produced by the admission logic.
@@ -62,11 +68,99 @@ pub struct AdmissionPacket {
     pub envelope: SealedEnvelope,
 }
 
+impl AdmissionPacket {
+    /// Encodes the carrier-visible admission packet without exposing a stable
+    /// bincode layout on the wire.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(
+            1 + self.lookup_hint.map_or(0, |_| 8)
+                + ENVELOPE_NONCE_LEN
+                + self.envelope.ciphertext.len(),
+        );
+        let mut flags = 0_u8;
+        if self.lookup_hint.is_some() {
+            flags |= ADMISSION_FLAG_LOOKUP_HINT;
+        }
+        out.push(flags);
+        if let Some(lookup_hint) = self.lookup_hint {
+            out.extend_from_slice(&lookup_hint);
+        }
+        out.extend_from_slice(&self.envelope.nonce);
+        out.extend_from_slice(&self.envelope.ciphertext);
+        out
+    }
+
+    /// Decodes the carrier-visible admission packet.
+    pub fn decode(bytes: &[u8]) -> Result<Self, AdmissionError> {
+        if bytes.len() < 1 + ENVELOPE_NONCE_LEN {
+            return Err(AdmissionError::Validation("malformed admission packet"));
+        }
+        let flags = bytes[0];
+        if flags & !ADMISSION_FLAG_LOOKUP_HINT != 0 {
+            return Err(AdmissionError::Validation("malformed admission packet"));
+        }
+        let mut cursor = 1_usize;
+        let lookup_hint = if flags & ADMISSION_FLAG_LOOKUP_HINT != 0 {
+            if bytes.len() < cursor + 8 + ENVELOPE_NONCE_LEN {
+                return Err(AdmissionError::Validation("malformed admission packet"));
+            }
+            let hint: [u8; 8] = bytes[cursor..cursor + 8]
+                .try_into()
+                .map_err(|_| AdmissionError::Validation("malformed admission packet"))?;
+            cursor += 8;
+            Some(hint)
+        } else {
+            None
+        };
+        if bytes.len() <= cursor + ENVELOPE_NONCE_LEN {
+            return Err(AdmissionError::Validation("malformed admission packet"));
+        }
+        let nonce: [u8; ENVELOPE_NONCE_LEN] = bytes[cursor..cursor + ENVELOPE_NONCE_LEN]
+            .try_into()
+            .map_err(|_| AdmissionError::Validation("malformed admission packet"))?;
+        let ciphertext = bytes[cursor + ENVELOPE_NONCE_LEN..].to_vec();
+        Ok(Self {
+            lookup_hint,
+            envelope: SealedEnvelope { nonce, ciphertext },
+        })
+    }
+}
+
 /// Encrypted server confirmation sent after the tunnel keys exist.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerConfirmationPacket {
     /// Encrypted payload.
     pub envelope: SealedEnvelope,
+}
+
+impl ServerConfirmationPacket {
+    /// Encodes the encrypted server confirmation packet.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(ENVELOPE_NONCE_LEN + self.envelope.ciphertext.len());
+        out.extend_from_slice(&self.envelope.nonce);
+        out.extend_from_slice(&self.envelope.ciphertext);
+        out
+    }
+
+    /// Decodes the encrypted server confirmation packet.
+    pub fn decode(bytes: &[u8]) -> Result<Self, AdmissionError> {
+        if bytes.len() <= ENVELOPE_NONCE_LEN {
+            return Err(AdmissionError::Validation(
+                "malformed server confirmation packet",
+            ));
+        }
+        let nonce: [u8; ENVELOPE_NONCE_LEN] = bytes[..ENVELOPE_NONCE_LEN]
+            .try_into()
+            .map_err(|_| AdmissionError::Validation("malformed server confirmation packet"))?;
+        Ok(Self {
+            envelope: SealedEnvelope {
+                nonce,
+                ciphertext: bytes[ENVELOPE_NONCE_LEN..].to_vec(),
+            },
+        })
+    }
 }
 
 /// Policy flags offered during `C0`.
@@ -552,7 +646,11 @@ pub struct AdmissionServer {
 impl AdmissionServer {
     /// Creates a new admission server.
     #[must_use]
-    pub fn new(config: AdmissionConfig, credentials: CredentialStore, secrets: AdmissionServerSecrets) -> Self {
+    pub fn new(
+        config: AdmissionConfig,
+        credentials: CredentialStore,
+        secrets: AdmissionServerSecrets,
+    ) -> Self {
         Self {
             config,
             credentials,
@@ -598,7 +696,9 @@ impl AdmissionServer {
     fn validate_epoch_slot(&self, msg_slot: u64, now_slot: u64) -> Result<(), AdmissionError> {
         let delta = i128::from(msg_slot) - i128::from(now_slot);
         if delta.unsigned_abs() > ACCEPTABLE_SLOT_SKEW as u128 {
-            return Err(AdmissionError::Validation("epoch slot outside acceptance window"));
+            return Err(AdmissionError::Validation(
+                "epoch slot outside acceptance window",
+            ));
         }
         Ok(())
     }
@@ -632,7 +732,10 @@ impl AdmissionServer {
     ) -> Result<(C0, ResolvedCredential), AdmissionError> {
         let now_slot = epoch_slot(now_secs, self.config.defaults.epoch_slot_secs);
         let aad = admission_associated_data(&self.config.endpoint_id, carrier);
-        for resolved in self.credentials.resolve_candidates(packet.lookup_hint, now_slot) {
+        for resolved in self
+            .credentials
+            .resolve_candidates(packet.lookup_hint, now_slot)
+        {
             let admission_key = derive_admission_key(&resolved.admission_key, resolved.epoch_slot);
             if let Ok(c0) = packet.envelope.open::<C0>(&admission_key, &aad) {
                 return Ok((c0, resolved));
@@ -649,7 +752,10 @@ impl AdmissionServer {
     ) -> Result<(C2, ResolvedCredential), AdmissionError> {
         let now_slot = epoch_slot(now_secs, self.config.defaults.epoch_slot_secs);
         let aad = admission_associated_data(&self.config.endpoint_id, carrier);
-        for resolved in self.credentials.resolve_candidates(packet.lookup_hint, now_slot) {
+        for resolved in self
+            .credentials
+            .resolve_candidates(packet.lookup_hint, now_slot)
+        {
             let admission_key = derive_admission_key(&resolved.admission_key, resolved.epoch_slot);
             if let Ok(c2) = packet.envelope.open::<C2>(&admission_key, &aad) {
                 return Ok((c2, resolved));
@@ -750,7 +856,8 @@ impl AdmissionServer {
                 resume_accepted,
             };
             let cookie_context = Self::build_cookie_context(&cookie_payload)?;
-            let fixed_ephemeral_private = derive_stateless_private_key(&self.cookie_key, &cookie_context);
+            let fixed_ephemeral_private =
+                derive_stateless_private_key(&self.cookie_key, &cookie_context);
             let server_contribution = derive_server_contribution(&self.cookie_key, &cookie_context);
 
             let mut noise = NoiseHandshake::new(NoiseHandshakeConfig {
@@ -788,13 +895,16 @@ impl AdmissionServer {
                 &aad,
                 &s1,
             )?;
-            let encoded_len = bincode::serialize(&AdmissionPacket {
+            let encoded_len = AdmissionPacket {
                 lookup_hint: None,
                 envelope: envelope.clone(),
-            })?
+            }
+            .encode()
             .len();
             if encoded_len > carrier.anti_amplification_budget(received_len) {
-                return Err(AdmissionError::Validation("s1 exceeds anti-amplification budget"));
+                return Err(AdmissionError::Validation(
+                    "s1 exceeds anti-amplification budget",
+                ));
             }
             Ok(AdmissionPacket {
                 lookup_hint: None,
@@ -860,10 +970,13 @@ impl AdmissionServer {
                 return Err(AdmissionError::Validation("unsupported version"));
             }
             if c2.selected_transport_ack != carrier.binding() {
-                return Err(AdmissionError::Validation("unexpected selected transport ack"));
+                return Err(AdmissionError::Validation(
+                    "unexpected selected transport ack",
+                ));
             }
 
-            let cookie_payload: CookiePayload = self.cookie_protector.open(&c2.anti_amplification_cookie)?;
+            let cookie_payload: CookiePayload =
+                self.cookie_protector.open(&c2.anti_amplification_cookie)?;
             if cookie_payload.source_id != source_id
                 || cookie_payload.endpoint_id != self.config.endpoint_id
                 || cookie_payload.carrier != carrier.binding()
@@ -878,10 +991,12 @@ impl AdmissionServer {
             }
 
             let cookie_context = Self::build_cookie_context(&cookie_payload)?;
-            let fixed_ephemeral_private = derive_stateless_private_key(&self.cookie_key, &cookie_context);
+            let fixed_ephemeral_private =
+                derive_stateless_private_key(&self.cookie_key, &cookie_context);
             let server_contribution = derive_server_contribution(&self.cookie_key, &cookie_context);
 
-            let admission_key = derive_admission_key(&resolved.admission_key, cookie_payload.epoch_slot);
+            let admission_key =
+                derive_admission_key(&resolved.admission_key, cookie_payload.epoch_slot);
             let mut noise = NoiseHandshake::new(NoiseHandshakeConfig {
                 role: SessionRole::Responder,
                 psk: admission_key,
@@ -897,7 +1012,8 @@ impl AdmissionServer {
             })?;
             let _replayed_msg2 = noise.write_message(&responder_payload)?;
             let client_payload_bytes = noise.read_message(&c2.noise_msg3)?;
-            let client_payload: NoiseInitiatorPayload = bincode::deserialize(&client_payload_bytes)?;
+            let client_payload: NoiseInitiatorPayload =
+                bincode::deserialize(&client_payload_bytes)?;
             let client_static_public = noise.remote_static_public();
             let handshake_hash = noise.handshake_hash();
             let raw_split = noise.raw_split()?;
@@ -998,13 +1114,21 @@ pub fn initiate_c0<C: CarrierProfile>(
     carrier: &C,
 ) -> Result<PreparedC0, AdmissionError> {
     if request.preferred_carrier != carrier.binding() {
-        return Err(AdmissionError::Validation("carrier mismatch for initiate_c0"));
+        return Err(AdmissionError::Validation(
+            "carrier mismatch for initiate_c0",
+        ));
     }
     if !request.supported_carriers.contains(&carrier.binding()) {
-        return Err(AdmissionError::Validation("preferred carrier not in supported set"));
+        return Err(AdmissionError::Validation(
+            "preferred carrier not in supported set",
+        ));
     }
-    let current_epoch_slot = epoch_slot(request.now_secs, AdmissionDefaults::default().epoch_slot_secs);
-    let per_epoch_admission_key = derive_admission_key(&credential.admission_key, current_epoch_slot);
+    let current_epoch_slot = epoch_slot(
+        request.now_secs,
+        AdmissionDefaults::default().epoch_slot_secs,
+    );
+    let per_epoch_admission_key =
+        derive_admission_key(&credential.admission_key, current_epoch_slot);
     let aad = admission_associated_data(&request.endpoint_id, carrier.binding());
     let mut noise = NoiseHandshake::new(NoiseHandshakeConfig {
         role: SessionRole::Initiator,
@@ -1072,14 +1196,19 @@ impl ClientPendingS1 {
             return Err(AdmissionError::Validation("server chose unsupported suite"));
         }
         if !self.supported_carriers.contains(&s1.chosen_carrier) {
-            return Err(AdmissionError::Validation("server chose unsupported carrier"));
+            return Err(AdmissionError::Validation(
+                "server chose unsupported carrier",
+            ));
         }
         let responder_payload_bytes = self.noise.read_message(&s1.noise_msg2)?;
-        let responder_payload: NoiseResponderPayload = bincode::deserialize(&responder_payload_bytes)?;
-        let observed_server_static = self
-            .noise
-            .remote_static_public()
-            .ok_or(AdmissionError::Validation("server static key not revealed by handshake"))?;
+        let responder_payload: NoiseResponderPayload =
+            bincode::deserialize(&responder_payload_bytes)?;
+        let observed_server_static =
+            self.noise
+                .remote_static_public()
+                .ok_or(AdmissionError::Validation(
+                    "server static key not revealed by handshake",
+                ))?;
         if observed_server_static != self.credential.server_static_public {
             return Err(AdmissionError::Validation("server static key mismatch"));
         }
@@ -1091,7 +1220,9 @@ impl ClientPendingS1 {
             client_contribution: self.client_contribution,
             user_identity,
         };
-        let noise_msg3 = self.noise.write_message(&bincode::serialize(&initiator_payload)?)?;
+        let noise_msg3 = self
+            .noise
+            .write_message(&bincode::serialize(&initiator_payload)?)?;
         let handshake_hash = self.noise.handshake_hash();
         let raw_split = self.noise.raw_split()?;
         let secrets = derive_session_secrets(
@@ -1111,10 +1242,9 @@ impl ClientPendingS1 {
         };
         let c2_envelope = SealedEnvelope::seal(&self.admission_key, &aad, &c2)?;
         let packet = AdmissionPacket {
-            lookup_hint: self
-                .credential
-                .enable_lookup_hint
-                .then(|| derive_lookup_hint(&self.credential.admission_key, self.admission_epoch_slot)),
+            lookup_hint: self.credential.enable_lookup_hint.then(|| {
+                derive_lookup_hint(&self.credential.admission_key, self.admission_epoch_slot)
+            }),
             envelope: c2_envelope,
         };
         Ok(PreparedC2 {
@@ -1132,6 +1262,13 @@ impl ClientPendingS1 {
 }
 
 impl ClientPendingS3 {
+    /// Returns the receive-direction control key that may be used to wrap the
+    /// outer carrier record for the encrypted `S3` confirmation.
+    #[must_use]
+    pub const fn confirmation_recv_ctrl_key(&self) -> &[u8; 32] {
+        &self.secrets.recv_ctrl
+    }
+
     /// Handles `S3` and finalizes the session.
     pub fn handle_s3<C: CarrierProfile>(
         self,
@@ -1200,7 +1337,13 @@ mod tests {
         let request = ClientSessionRequest::conservative(endpoint, now_secs);
         let prepared_c0 = initiate_c0(credential, request, &carrier).unwrap();
 
-        let s1 = match server.handle_c0("127.0.0.1:1111", &carrier, &prepared_c0.packet, 512, now_secs) {
+        let s1 = match server.handle_c0(
+            "127.0.0.1:1111",
+            &carrier,
+            &prepared_c0.packet,
+            512,
+            now_secs,
+        ) {
             ServerResponse::Reply(reply) => reply,
             ServerResponse::Drop(_) => panic!("expected reply"),
         };
@@ -1216,7 +1359,10 @@ mod tests {
             ServerResponse::Drop(_) => panic!("expected reply"),
         };
 
-        let client_session = prepared_c2.state.handle_s3(&established.packet, &carrier).unwrap();
+        let client_session = prepared_c2
+            .state
+            .handle_s3(&established.packet, &carrier)
+            .unwrap();
         assert_eq!(client_session.session_id, established.session.session_id);
         assert_eq!(client_session.chosen_carrier, CarrierBinding::D1DatagramUdp);
     }
@@ -1229,9 +1375,24 @@ mod tests {
         let request = ClientSessionRequest::conservative(endpoint, now_secs);
         let prepared_c0 = initiate_c0(credential, request, &carrier).unwrap();
 
-        let _ = server.handle_c0("127.0.0.1:1111", &carrier, &prepared_c0.packet, 512, now_secs);
-        let replay = server.handle_c0("127.0.0.1:1111", &carrier, &prepared_c0.packet, 512, now_secs);
-        assert!(matches!(replay, ServerResponse::Drop(InvalidInputBehavior::Silence)));
+        let _ = server.handle_c0(
+            "127.0.0.1:1111",
+            &carrier,
+            &prepared_c0.packet,
+            512,
+            now_secs,
+        );
+        let replay = server.handle_c0(
+            "127.0.0.1:1111",
+            &carrier,
+            &prepared_c0.packet,
+            512,
+            now_secs,
+        );
+        assert!(matches!(
+            replay,
+            ServerResponse::Drop(InvalidInputBehavior::Silence)
+        ));
     }
 
     #[test]
@@ -1242,7 +1403,13 @@ mod tests {
         let request = ClientSessionRequest::conservative(endpoint, now_secs);
         let prepared_c0 = initiate_c0(credential, request, &carrier).unwrap();
 
-        let s1 = match server.handle_c0("127.0.0.1:1111", &carrier, &prepared_c0.packet, 512, now_secs) {
+        let s1 = match server.handle_c0(
+            "127.0.0.1:1111",
+            &carrier,
+            &prepared_c0.packet,
+            512,
+            now_secs,
+        ) {
             ServerResponse::Reply(reply) => reply,
             ServerResponse::Drop(_) => panic!("expected reply"),
         };
@@ -1253,7 +1420,10 @@ mod tests {
             &prepared_c2.packet,
             now_secs + 60,
         );
-        assert!(matches!(response, ServerResponse::Drop(InvalidInputBehavior::Silence)));
+        assert!(matches!(
+            response,
+            ServerResponse::Drop(InvalidInputBehavior::Silence)
+        ));
     }
 
     #[test]
@@ -1263,8 +1433,17 @@ mod tests {
         let now_secs = 1_700_000_000;
         let request = ClientSessionRequest::conservative(endpoint, now_secs - 10_000);
         let prepared_c0 = initiate_c0(credential, request, &carrier).unwrap();
-        let response = server.handle_c0("127.0.0.1:1111", &carrier, &prepared_c0.packet, 512, now_secs);
-        assert!(matches!(response, ServerResponse::Drop(InvalidInputBehavior::Silence)));
+        let response = server.handle_c0(
+            "127.0.0.1:1111",
+            &carrier,
+            &prepared_c0.packet,
+            512,
+            now_secs,
+        );
+        assert!(matches!(
+            response,
+            ServerResponse::Drop(InvalidInputBehavior::Silence)
+        ));
     }
 
     #[test]
@@ -1275,7 +1454,16 @@ mod tests {
         let request = ClientSessionRequest::conservative(endpoint, now_secs);
         let mut prepared_c0 = initiate_c0(credential, request, &carrier).unwrap();
         prepared_c0.packet.envelope.ciphertext[0] ^= 0x44;
-        let response = server.handle_c0("127.0.0.1:1111", &carrier, &prepared_c0.packet, 512, now_secs);
-        assert!(matches!(response, ServerResponse::Drop(InvalidInputBehavior::Silence)));
+        let response = server.handle_c0(
+            "127.0.0.1:1111",
+            &carrier,
+            &prepared_c0.packet,
+            512,
+            now_secs,
+        );
+        assert!(matches!(
+            response,
+            ServerResponse::Drop(InvalidInputBehavior::Silence)
+        ));
     }
 }

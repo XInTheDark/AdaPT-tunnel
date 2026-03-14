@@ -1,5 +1,10 @@
 use crate::{error::RuntimeError, status::RuntimeStatus};
-use apt_types::EndpointId;
+use apt_persona::RememberedProfile;
+use apt_policy::LocalNormalityProfile;
+use apt_types::{
+    EndpointId, GatewayFingerprint, LinkType, LocalNetworkContext, PolicyMode, PublicRouteHint,
+    SessionPolicy,
+};
 use base64::Engine as _;
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
@@ -71,6 +76,8 @@ pub struct ClientConfig {
     pub routes: Vec<IpNet>,
     #[serde(default)]
     pub use_server_pushed_routes: bool,
+    #[serde(default)]
+    pub session_policy: SessionPolicy,
     #[serde(default = "default_keepalive_secs")]
     pub keepalive_secs: u64,
     #[serde(default = "default_session_idle_timeout_secs")]
@@ -121,6 +128,7 @@ impl ClientConfig {
             interface_name: self.interface_name.clone(),
             routes: self.routes.clone(),
             use_server_pushed_routes: self.use_server_pushed_routes,
+            session_policy: self.session_policy.clone(),
             keepalive_secs: self.keepalive_secs,
             session_idle_timeout_secs: self.session_idle_timeout_secs,
             handshake_timeout_secs: self.handshake_timeout_secs,
@@ -165,6 +173,8 @@ pub struct ServerConfig {
     pub push_routes: Vec<IpNet>,
     #[serde(default)]
     pub push_dns: Vec<IpAddr>,
+    #[serde(default)]
+    pub session_policy: SessionPolicy,
     #[serde(default = "default_keepalive_secs")]
     pub keepalive_secs: u64,
     #[serde(default = "default_session_idle_timeout_secs")]
@@ -220,6 +230,7 @@ impl ServerConfig {
             nat_ipv4: self.nat_ipv4,
             push_routes: self.push_routes.clone(),
             push_dns: self.push_dns.clone(),
+            session_policy: self.session_policy.clone(),
             keepalive_secs: self.keepalive_secs,
             session_idle_timeout_secs: self.session_idle_timeout_secs,
             udp_recv_buffer_bytes: self.udp_recv_buffer_bytes,
@@ -245,6 +256,7 @@ pub struct ResolvedClientConfig {
     pub interface_name: Option<String>,
     pub routes: Vec<IpNet>,
     pub use_server_pushed_routes: bool,
+    pub session_policy: SessionPolicy,
     pub keepalive_secs: u64,
     pub session_idle_timeout_secs: u64,
     pub handshake_timeout_secs: u64,
@@ -290,6 +302,7 @@ pub struct ResolvedServerConfig {
     pub nat_ipv4: bool,
     pub push_routes: Vec<IpNet>,
     pub push_dns: Vec<IpAddr>,
+    pub session_policy: SessionPolicy,
     pub keepalive_secs: u64,
     pub session_idle_timeout_secs: u64,
     pub udp_recv_buffer_bytes: usize,
@@ -312,10 +325,38 @@ pub enum ServerSessionExtension {
     TunnelParameters(SessionTransportParameters),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PersistedNetworkProfile {
+    pub context: LocalNetworkContext,
+    pub normality: LocalNormalityProfile,
+    pub remembered_profile: Option<RememberedProfile>,
+    pub last_mode: PolicyMode,
+}
+
+impl PersistedNetworkProfile {
+    #[must_use]
+    pub fn for_remote_route(route_hint: impl Into<String>) -> Self {
+        let context = LocalNetworkContext {
+            link_type: LinkType::Unknown,
+            gateway: GatewayFingerprint("unknown".to_string()),
+            local_label: "default".to_string(),
+            public_route: PublicRouteHint(route_hint.into()),
+        };
+        Self {
+            normality: LocalNormalityProfile::new(context.clone()),
+            context,
+            remembered_profile: None,
+            last_mode: PolicyMode::StealthFirst,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct ClientPersistentState {
     pub last_status: Option<RuntimeStatus>,
     pub resume_ticket: Option<Vec<u8>>,
+    #[serde(default)]
+    pub network_profile: Option<PersistedNetworkProfile>,
 }
 
 impl ClientPersistentState {
@@ -362,11 +403,13 @@ pub fn load_key32(spec: &str) -> Result<[u8; 32], RuntimeError> {
     } else {
         base64::engine::general_purpose::STANDARD
             .decode(trimmed)
-            .map_err(|_| RuntimeError::InvalidKeyMaterial("key must be 64 hex chars or base64".to_string()))?
+            .map_err(|_| {
+                RuntimeError::InvalidKeyMaterial("key must be 64 hex chars or base64".to_string())
+            })?
     };
-    bytes
-        .try_into()
-        .map_err(|_| RuntimeError::InvalidKeyMaterial("key material must decode to 32 bytes".to_string()))
+    bytes.try_into().map_err(|_| {
+        RuntimeError::InvalidKeyMaterial("key material must decode to 32 bytes".to_string())
+    })
 }
 
 fn decode_hex(input: &str) -> Result<Vec<u8>, RuntimeError> {
@@ -387,7 +430,9 @@ fn decode_nibble(byte: u8) -> Result<u8, RuntimeError> {
         b'0'..=b'9' => Ok(byte - b'0'),
         b'a'..=b'f' => Ok(byte - b'a' + 10),
         b'A'..=b'F' => Ok(byte - b'A' + 10),
-        _ => Err(RuntimeError::InvalidKeyMaterial("invalid hex digit in key material".to_string())),
+        _ => Err(RuntimeError::InvalidKeyMaterial(
+            "invalid hex digit in key material".to_string(),
+        )),
     }
 }
 
@@ -434,15 +479,22 @@ fn resolve_socket_addr(spec: &str) -> Result<SocketAddr, RuntimeError> {
         return Ok(parsed);
     }
     spec.to_socket_addrs()
-        .map_err(|source| RuntimeError::InvalidConfig(format!("unable to resolve {spec}: {source}")))?
+        .map_err(|source| {
+            RuntimeError::InvalidConfig(format!("unable to resolve {spec}: {source}"))
+        })?
         .next()
-        .ok_or_else(|| RuntimeError::InvalidConfig(format!("no socket addresses resolved for {spec}")))
+        .ok_or_else(|| {
+            RuntimeError::InvalidConfig(format!("no socket addresses resolved for {spec}"))
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn key_material_loads_from_hex() {
@@ -453,7 +505,10 @@ mod tests {
 
     #[test]
     fn key_material_loads_from_file() {
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let path = std::env::temp_dir().join(format!("adapt-key-{unique}.txt"));
         fs::write(&path, "22".repeat(32)).unwrap();
         let bytes = load_key32(&format!("file:{}", path.display())).unwrap();
@@ -463,7 +518,10 @@ mod tests {
 
     #[test]
     fn client_load_resolves_relative_key_paths() {
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let dir = std::env::temp_dir().join(format!("adapt-client-config-{unique}"));
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("shared-admission.key"), "11".repeat(32)).unwrap();
@@ -481,15 +539,24 @@ client_static_private_key = "file:./client-static-private.key"
         )
         .unwrap();
         let config = ClientConfig::load(dir.join("client.toml")).unwrap();
-        assert!(config.admission_key.contains(dir.to_string_lossy().as_ref()));
-        assert!(config.server_static_public_key.contains(dir.to_string_lossy().as_ref()));
-        assert!(config.client_static_private_key.contains(dir.to_string_lossy().as_ref()));
+        assert!(config
+            .admission_key
+            .contains(dir.to_string_lossy().as_ref()));
+        assert!(config
+            .server_static_public_key
+            .contains(dir.to_string_lossy().as_ref()));
+        assert!(config
+            .client_static_private_key
+            .contains(dir.to_string_lossy().as_ref()));
         let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn server_load_resolves_relative_key_paths() {
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let dir = std::env::temp_dir().join(format!("adapt-server-config-{unique}"));
         fs::create_dir_all(dir.join("clients")).unwrap();
         for file in [
@@ -524,7 +591,9 @@ tunnel_ipv4 = "10.77.0.2"
         )
         .unwrap();
         let config = ServerConfig::load(dir.join("server.toml")).unwrap();
-        assert!(config.admission_key.contains(dir.to_string_lossy().as_ref()));
+        assert!(config
+            .admission_key
+            .contains(dir.to_string_lossy().as_ref()));
         assert!(config.peers[0]
             .client_static_public_key
             .contains(dir.to_string_lossy().as_ref()));

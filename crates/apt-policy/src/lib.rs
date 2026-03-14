@@ -80,14 +80,26 @@ impl LocalNormalityProfile {
             NON_TUNNEL_TRAFFIC_WEIGHT
         };
         self.weighted_observations += weight;
-        push_weighted(&mut self.packet_sizes, WeightedSample { value: observation.packet_size.clamp(64, 4_096), weight });
+        push_weighted(
+            &mut self.packet_sizes,
+            WeightedSample {
+                value: observation.packet_size.clamp(64, 4_096),
+                weight,
+            },
+        );
         push_weighted(
             &mut self.gaps_ms,
-            WeightedSample { value: observation.inter_send_gap_ms.clamp(0, 60_000), weight },
+            WeightedSample {
+                value: observation.inter_send_gap_ms.clamp(0, 60_000),
+                weight,
+            },
         );
         push_weighted(
             &mut self.bursts,
-            WeightedSample { value: observation.burst_length.clamp(1, 256), weight },
+            WeightedSample {
+                value: observation.burst_length.clamp(1, 256),
+                weight,
+            },
         );
     }
 
@@ -130,7 +142,12 @@ impl PolicyController {
     /// Creates a new controller.
     #[must_use]
     pub fn new(initial_mode: PolicyMode, allow_speed_first: bool) -> Self {
-        Self { current_mode: initial_mode, allow_speed_first, stable_score: 0, impairment_score: 0 }
+        Self {
+            current_mode: initial_mode,
+            allow_speed_first,
+            stable_score: 0,
+            impairment_score: 0,
+        }
     }
 
     /// Applies a path signal and returns the updated mode.
@@ -193,7 +210,10 @@ fn push_weighted<T>(values: &mut Vec<WeightedSample<T>>, sample: WeightedSample<
     values.push(sample);
 }
 
-fn weighted_quantile_u16(values: &[WeightedSample<u16>], quantile: f32) -> Result<u16, PolicyError> {
+fn weighted_quantile_u16(
+    values: &[WeightedSample<u16>],
+    quantile: f32,
+) -> Result<u16, PolicyError> {
     if values.is_empty() {
         return Err(PolicyError::InsufficientData);
     }
@@ -211,7 +231,10 @@ fn weighted_quantile_u16(values: &[WeightedSample<u16>], quantile: f32) -> Resul
     Ok(values.last().expect("checked non-empty").value)
 }
 
-fn weighted_quantile_u32(values: &[WeightedSample<u32>], quantile: f32) -> Result<u32, PolicyError> {
+fn weighted_quantile_u32(
+    values: &[WeightedSample<u32>],
+    quantile: f32,
+) -> Result<u32, PolicyError> {
     if values.is_empty() {
         return Err(PolicyError::InsufficientData);
     }

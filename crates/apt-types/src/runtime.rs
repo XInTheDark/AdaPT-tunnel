@@ -144,9 +144,12 @@ impl SuiteBitmap {
     /// Chooses the first mutually supported suite in conservative order.
     #[must_use]
     pub fn choose(self, other: Self) -> Option<CipherSuite> {
-        [CipherSuite::NoiseXxPsk2X25519ChaChaPolyBlake2s, CipherSuite::HybridMlKem768X25519]
-            .into_iter()
-            .find(|suite| self.supports(*suite) && other.supports(*suite))
+        [
+            CipherSuite::NoiseXxPsk2X25519ChaChaPolyBlake2s,
+            CipherSuite::HybridMlKem768X25519,
+        ]
+        .into_iter()
+        .find(|suite| self.supports(*suite) && other.supports(*suite))
     }
 }
 

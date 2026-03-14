@@ -9,18 +9,20 @@ mod network;
 mod protocol;
 mod runtime;
 
-pub use compat::{LookupHint, OpaqueMessage, PathSignalEvent, ResumptionTicketClaims, TimingConfig};
+pub use compat::{
+    LookupHint, OpaqueMessage, PathSignalEvent, ResumptionTicketClaims, TimingConfig,
+};
 pub use config::{
     AdmissionDefaults, CredentialIdentity, KeepaliveTuning, LatencyBudget, PaddingBudget,
     RekeyLimits, SchedulerDefaults, SessionPolicy, TunnelDefaults,
 };
 pub use defaults::{
-    DEFAULT_ADMISSION_EPOCH_SLOT_SECS, DEFAULT_BULK_QUEUE_BUDGET_MS,
-    DEFAULT_COOKIE_LIFETIME_SECS, DEFAULT_HARD_REKEY_AGE_SECS, DEFAULT_HARD_REKEY_BYTES,
-    DEFAULT_IDLE_KEEPALIVE_BASE_SECS, DEFAULT_IDLE_KEEPALIVE_JITTER_PERCENT,
-    DEFAULT_INTERACTIVE_QUEUE_BUDGET_MS, DEFAULT_MIN_REPLAY_WINDOW, DEFAULT_PROBATION_PADDING_BPS,
-    DEFAULT_REPLAY_RETENTION_SECS, DEFAULT_SOFT_REKEY_AGE_SECS, DEFAULT_SOFT_REKEY_BYTES,
-    DEFAULT_STEADY_PADDING_BPS, DEFAULT_TUNNEL_MTU,
+    DEFAULT_ADMISSION_EPOCH_SLOT_SECS, DEFAULT_BULK_QUEUE_BUDGET_MS, DEFAULT_COOKIE_LIFETIME_SECS,
+    DEFAULT_HARD_REKEY_AGE_SECS, DEFAULT_HARD_REKEY_BYTES, DEFAULT_IDLE_KEEPALIVE_BASE_SECS,
+    DEFAULT_IDLE_KEEPALIVE_JITTER_PERCENT, DEFAULT_INTERACTIVE_QUEUE_BUDGET_MS,
+    DEFAULT_MIN_REPLAY_WINDOW, DEFAULT_PROBATION_PADDING_BPS, DEFAULT_REPLAY_RETENTION_SECS,
+    DEFAULT_SOFT_REKEY_AGE_SECS, DEFAULT_SOFT_REKEY_BYTES, DEFAULT_STEADY_PADDING_BPS,
+    DEFAULT_TUNNEL_MTU,
 };
 pub use ids::{ClientNonce, EndpointId, SessionId};
 pub use network::{
@@ -29,7 +31,7 @@ pub use network::{
     RttClass,
 };
 pub use protocol::{
-    AuthProfile, CarrierBinding, CloseCode, ControlReliability, CipherSuite, IdleResumeBehavior,
+    AuthProfile, CarrierBinding, CipherSuite, CloseCode, ControlReliability, IdleResumeBehavior,
     InvalidInputBehavior, KeepaliveMode, PacingFamily, PolicyMode, SchedulerProfile, SessionRole,
 };
 pub use runtime::{
