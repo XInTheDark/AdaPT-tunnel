@@ -8,6 +8,7 @@ apt-runtime.workspace = true
 clap.workspace = true
 ipnet.workspace = true
 tokio.workspace = true
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

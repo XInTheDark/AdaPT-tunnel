@@ -3,6 +3,7 @@
 use apt_runtime::{run_server, ServerConfig};
 use clap::Parser;
 use std::path::PathBuf;
+use tracing_subscriber::{fmt, EnvFilter};
 
 #[derive(Debug, Parser)]
 #[command(name = "apt-tunneld", about = "Compatibility alias for the combined APT server daemon")]
@@ -14,6 +15,7 @@ struct Cli {
 
 #[tokio::main]
 async fn main() {
+    init_logging();
     let cli = Cli::parse();
     let config_path = cli
         .config
@@ -36,4 +38,14 @@ async fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn init_logging() {
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,apt_runtime=info"));
+    let _ = fmt()
+        .with_env_filter(env_filter)
+        .with_target(false)
+        .without_time()
+        .try_init();
 }

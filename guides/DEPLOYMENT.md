@@ -199,6 +199,7 @@ sudo ./target/release/apt-client up
 ```
 
 On macOS, leave `interface_name` unset in `client.toml` unless you intentionally want to target a specific `utunX` interface.
+When the session comes up, the client logs the assigned tunnel IP/interface and the server logs the accepted session.
 
 Alternative: if you want to run the bundle directly from another directory:
 

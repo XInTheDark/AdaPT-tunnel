@@ -86,6 +86,15 @@ pub async fn run_client(config: ResolvedClientConfig) -> Result<ClientRuntimeRes
     };
     let _route_guard = configure_client_network(&tun.interface_name, config.server_addr, &effective_routes)?;
 
+    info!(
+        server = %config.server_addr,
+        tunnel_ip = %transport.client_ipv4,
+        server_tunnel_ip = %transport.server_ipv4,
+        interface = %tun.interface_name,
+        routes = ?effective_routes,
+        "client session established"
+    );
+
     let credential_label = redact_credential(&established.credential_identity);
     record_event(
         &mut telemetry,
@@ -514,6 +523,12 @@ async fn handle_server_admission_packet(
     );
 
     let credential_label = redact_credential(&server_reply.session.credential_identity);
+    info!(
+        peer = %peer_addr,
+        assigned_ipv4 = %peer.tunnel_ipv4,
+        credential = %credential_label,
+        "server session established"
+    );
     record_event(
         telemetry,
         &AptEvent::AdmissionAccepted {

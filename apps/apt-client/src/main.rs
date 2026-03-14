@@ -6,6 +6,7 @@ use std::{
     io::{self, Write},
     path::PathBuf,
 };
+use tracing_subscriber::{fmt, EnvFilter};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -37,6 +38,7 @@ enum Command {
 
 #[tokio::main]
 async fn main() {
+    init_logging();
     if let Err(error) = run().await {
         eprintln!("apt-client failed: {error}");
         std::process::exit(1);
@@ -96,4 +98,14 @@ fn prompt_config_path() -> io::Result<PathBuf> {
     } else {
         PathBuf::from(trimmed)
     })
+}
+
+fn init_logging() {
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,apt_runtime=info"));
+    let _ = fmt()
+        .with_env_filter(env_filter)
+        .with_target(false)
+        .without_time()
+        .try_init();
 }

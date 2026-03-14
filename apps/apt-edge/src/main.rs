@@ -13,6 +13,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
 };
+use tracing_subscriber::{fmt, EnvFilter};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -95,6 +96,7 @@ enum Command {
 
 #[tokio::main]
 async fn main() {
+    init_logging();
     if let Err(error) = run().await {
         eprintln!("apt-edge failed: {error}");
         std::process::exit(1);
@@ -527,6 +529,16 @@ mod tests {
     fn dns_public_endpoint_is_allowed() {
         assert!(validate_client_reachable_endpoint("vpn.my-domain.test:51820").is_ok());
     }
+}
+
+fn init_logging() {
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,apt_runtime=info"));
+    let _ = fmt()
+        .with_env_filter(env_filter)
+        .with_target(false)
+        .without_time()
+        .try_init();
 }
 
 fn subnet_from(ip: Ipv4Addr, netmask: Ipv4Addr) -> Result<Ipv4Net, Box<dyn std::error::Error>> {

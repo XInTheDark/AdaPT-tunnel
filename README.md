@@ -77,6 +77,8 @@ sudo apt-client up
 
 On macOS, the client should normally let the OS auto-create a `utun` interface instead of hardcoding a custom TUN name.
 
+When the session comes up, the client now logs the assigned tunnel IP, interface, and routes. The server logs when a client session is established.
+
 If you prefer not to install the bundle into `/etc/adapt`, you can still run it directly with `--config client.toml`.
 
 ## Recommended quickstart
