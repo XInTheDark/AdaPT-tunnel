@@ -46,7 +46,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream, UdpSocket},
     sync::mpsc,
-    time::{interval, sleep, timeout},
+    time::{interval, timeout},
 };
 use tracing::{debug, info, warn};
 
@@ -532,11 +532,8 @@ pub async fn run_server(config: ResolvedServerConfig) -> Result<ServerRuntimeRes
             tun_packet = tun_rx.recv() => {
                 if let Some(packet) = tun_packet {
                     if let Some(destination) = extract_destination_ipv4(&packet) {
-                        if let Some(session_id) = sessions_by_client_ip.get(&destination).copied() {
+                            if let Some(session_id) = sessions_by_client_ip.get(&destination).copied() {
                             if let Some(session) = sessions.get_mut(&session_id) {
-                                if let Some(delay) = session.adaptive.pacing_delay(packet.len(), 1) {
-                                    sleep(delay).await;
-                                }
                                 let (frames, payload_bytes, burst_len) =
                                     collect_outbound_tun_frames(packet, &mut tun_rx, &session.adaptive);
                                 send_frames_to_server_path(
@@ -923,9 +920,6 @@ async fn run_client_session_loop(
                         let Some(active_path) = paths.get(&active_path_id) else {
                             return Err(RuntimeError::Timeout("all transports closed"));
                         };
-                        if let Some(delay) = adaptive.pacing_delay(packet.len(), 1) {
-                            sleep(delay).await;
-                        }
                         let (frames, payload_bytes, burst_len) =
                             collect_outbound_tun_frames(packet, &mut tun_rx, &adaptive);
                         send_frames_on_client_path(

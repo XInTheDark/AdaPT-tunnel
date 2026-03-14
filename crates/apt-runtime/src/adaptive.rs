@@ -6,8 +6,6 @@ use apt_types::{
     LocalNetworkContext, LossClass, MtuClass, NatClass, NetworkMetadataObservation, PathClass,
     PathProfile, PathSignalEvent, PolicyMode, PublicRouteHint, RttClass,
 };
-use rand::Rng;
-use std::time::Duration;
 
 const POLICY_OBSERVATION_INTERVAL_SECS: u64 = 15;
 const QUIET_IMPAIRMENT_THRESHOLD_SECS: u64 = 45;
@@ -154,42 +152,6 @@ impl AdaptiveDatapath {
 
     pub fn burst_cap(&self) -> usize {
         usize::from(self.persona.scheduler.burst_size_target.max(1))
-    }
-
-    pub fn pacing_delay(&self, payload_bytes: usize, burst_len: usize) -> Option<Duration> {
-        let interactive = payload_bytes <= 384;
-        let max_delay_ms = match self.persona.scheduler.pacing_family {
-            apt_types::PacingFamily::Smooth => {
-                if interactive {
-                    4
-                } else {
-                    8
-                }
-            }
-            apt_types::PacingFamily::Bursty => {
-                if burst_len >= self.burst_cap() {
-                    0
-                } else if interactive {
-                    2
-                } else {
-                    5
-                }
-            }
-            apt_types::PacingFamily::Opportunistic => {
-                if interactive {
-                    1
-                } else {
-                    3
-                }
-            }
-        };
-        if max_delay_ms == 0 {
-            None
-        } else {
-            Some(Duration::from_millis(
-                rand::thread_rng().gen_range(0..=max_delay_ms),
-            ))
-        }
     }
 
     pub fn maybe_padding_frame(&self, payload_bytes: usize, keepalive_only: bool) -> Option<Frame> {
