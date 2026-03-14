@@ -23,6 +23,7 @@ mod bundle;
 mod cli;
 mod init;
 mod start;
+mod startup;
 mod support;
 
 use self::{
@@ -63,6 +64,7 @@ async fn run() -> CliResult {
             interface_name,
             push_routes,
             dns_servers,
+            install_systemd_service,
             yes,
         } => init_server(
             out_dir,
@@ -81,6 +83,7 @@ async fn run() -> CliResult {
             interface_name,
             push_routes,
             dns_servers,
+            install_systemd_service,
             yes,
         )?,
         Command::AddClient {

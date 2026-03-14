@@ -114,6 +114,9 @@ pub(super) enum Command {
         /// DNS server(s) suggested to clients. Repeat for multiple entries.
         #[arg(long = "dns")]
         dns_servers: Vec<IpAddr>,
+        /// Install and enable a systemd service so the server starts on boot.
+        #[arg(long, default_value_t = false)]
+        install_systemd_service: bool,
         /// Use defaults for any missing values instead of prompting.
         #[arg(long, default_value_t = false)]
         yes: bool,
