@@ -11,6 +11,7 @@ mod config;
 mod dns;
 mod error;
 mod keys;
+mod quic;
 mod route;
 mod runtime;
 mod status;
@@ -20,13 +21,18 @@ mod wire;
 pub use apt_types::SessionPolicy;
 pub use config::{
     encode_key_hex, load_key32, AuthorizedPeerConfig, ClientConfig, ClientPersistentState,
-    ResolvedClientConfig, ResolvedServerConfig, RuntimeCarrierPreference, RuntimeMode,
-    ServerConfig, ServerSessionExtension, SessionTransportParameters,
+    ResolvedClientConfig, ResolvedClientD2Config, ResolvedRemoteEndpoint, ResolvedServerConfig,
+    ResolvedServerD2Config, RuntimeCarrierPreference, RuntimeMode, ServerConfig,
+    ServerSessionExtension, SessionTransportParameters,
 };
 pub use error::RuntimeError;
 pub use keys::{
-    generate_client_identity, generate_server_keyset, write_key_file, GeneratedClientIdentity,
-    GeneratedServerKeyset,
+    generate_client_identity, generate_d2_tls_identity, generate_server_keyset, write_key_file,
+    write_secret_file, GeneratedClientIdentity, GeneratedD2TlsIdentity, GeneratedServerKeyset,
+};
+pub use quic::{
+    d2_certificate_subject_alt_names, d2_default_bind, derive_d2_public_endpoint,
+    load_certificate_der, D2_DEFAULT_PORT,
 };
 pub use runtime::{run_client, run_server, ClientRuntimeResult, ServerRuntimeResult};
 pub use status::{ClientStatus, RuntimeStatus, ServerStatus, SessionSummary};

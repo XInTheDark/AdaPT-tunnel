@@ -4,7 +4,10 @@ mod admission;
 mod session;
 
 use self::{
-    admission::{handle_server_admission_datagram, handle_server_admission_stream},
+    admission::{
+        handle_server_admission_d2, handle_server_admission_datagram,
+        handle_server_admission_stream,
+    },
     session::{
         expire_server_session, handle_server_path_loss, process_known_server_path,
         process_migrated_server_path, try_match_server_session,
@@ -16,24 +19,32 @@ pub(super) async fn run_server(
 ) -> Result<ServerRuntimeResult, RuntimeError> {
     let observability = ObservabilityConfig::default();
     let mut telemetry = TelemetrySnapshot::new("apt-edge");
-    let bootstrap_carriers = RuntimeCarriers::new(config.tunnel_mtu, config.stream_decoy_surface);
+    let bootstrap_carriers = RuntimeCarriers::new(
+        config.tunnel_mtu,
+        config.stream_decoy_surface,
+        config.d2.is_some(),
+    );
     let effective_tunnel_mtu =
         effective_runtime_tunnel_mtu(config.tunnel_mtu, &config.endpoint_id, &bootstrap_carriers);
     if effective_tunnel_mtu < config.tunnel_mtu {
         warn!(
             configured_mtu = config.tunnel_mtu,
             effective_mtu = effective_tunnel_mtu,
-            carrier = CarrierBinding::D1DatagramUdp.as_str(),
-            "configured tunnel MTU exceeds the safe D1 payload budget; capping runtime MTU"
+            "configured tunnel MTU exceeds the smallest enabled datagram-carrier payload budget; capping runtime MTU"
         );
     }
-    let carriers = RuntimeCarriers::new(effective_tunnel_mtu, config.stream_decoy_surface);
+    let carriers = RuntimeCarriers::new(
+        effective_tunnel_mtu,
+        config.stream_decoy_surface,
+        config.d2.is_some(),
+    );
 
     let udp_socket = Arc::new(build_udp_socket(
         config.bind,
         config.udp_recv_buffer_bytes,
         config.udp_send_buffer_bytes,
     )?);
+    let d2_endpoint = build_server_d2_endpoint(&config)?;
     let tcp_listener = if config.allow_session_migration || config.stream_bind.is_some() {
         let bind = config.stream_bind.unwrap_or(config.bind);
         Some(TcpListener::bind(bind).await?)
@@ -81,6 +92,9 @@ pub(super) async fn run_server(
 
     let (transport_tx, mut transport_rx) = mpsc::unbounded_channel();
     spawn_server_udp_receiver(udp_socket.clone(), transport_tx.clone());
+    if let Some(endpoint) = d2_endpoint {
+        spawn_server_d2_listener(endpoint, transport_tx.clone());
+    }
     if let Some(listener) = tcp_listener {
         spawn_server_tcp_listener(listener, transport_tx.clone(), carriers.s1());
     }
@@ -88,6 +102,7 @@ pub(super) async fn run_server(
     let mut sessions: HashMap<SessionId, ServerSessionState> = HashMap::new();
     let mut path_to_session: HashMap<PathHandle, SessionId> = HashMap::new();
     let mut sessions_by_client_ip: HashMap<Ipv4Addr, SessionId> = HashMap::new();
+    let mut d2_peers: HashMap<u64, ServerD2Peer> = HashMap::new();
     let mut stream_peers: HashMap<u64, ServerStreamPeer> = HashMap::new();
     let mut tick = interval(Duration::from_secs(1));
     let mut tun_rx = tun.inbound_rx;
@@ -103,6 +118,7 @@ pub(super) async fn run_server(
                         if let Some(session_id) = path_to_session.get(&path).copied() {
                             process_known_server_path(
                                 &udp_socket,
+                                &d2_peers,
                                 &stream_peers,
                                 &carriers,
                                 &config,
@@ -154,6 +170,7 @@ pub(super) async fn run_server(
                             )? {
                                 process_migrated_server_path(
                                     &udp_socket,
+                                    &d2_peers,
                                     &stream_peers,
                                     &carriers,
                                     &config,
@@ -170,6 +187,102 @@ pub(super) async fn run_server(
                             }
                         }
                     }
+                    ServerTransportEvent::D2Opened { conn_id, peer_addr, sender } => {
+                        d2_peers.insert(conn_id, ServerD2Peer { peer_addr, sender });
+                    }
+                    ServerTransportEvent::D2Datagram { conn_id, bytes } => {
+                        let path = PathHandle::D2(conn_id);
+                        if let Some(session_id) = path_to_session.get(&path).copied() {
+                            process_known_server_path(
+                                &udp_socket,
+                                &d2_peers,
+                                &stream_peers,
+                                &carriers,
+                                &config,
+                                &tun_tx,
+                                &mut sessions,
+                                &mut path_to_session,
+                                session_id,
+                                path,
+                                CarrierBinding::D2EncryptedDatagram,
+                                bytes,
+                            )
+                            .await?;
+                            continue;
+                        }
+
+                        if let Some(carrier) = carriers.d2() {
+                            if let Some(decoded) = decode_server_d2_admission_packet(
+                                &config,
+                                carrier,
+                                &bytes,
+                                now_secs(),
+                            ) {
+                                if handle_server_admission_d2(
+                                    &d2_peers,
+                                    &mut admission,
+                                    &config,
+                                    &carriers,
+                                    effective_tunnel_mtu,
+                                    conn_id,
+                                    bytes.len(),
+                                    decoded,
+                                    &mut sessions,
+                                    &mut path_to_session,
+                                    &mut sessions_by_client_ip,
+                                    &mut telemetry,
+                                    &observability,
+                                )
+                                .await? {
+                                    continue;
+                                }
+                            }
+                        }
+
+                        if config.allow_session_migration {
+                            if let Some(matched) = try_match_server_session(
+                                &sessions,
+                                &config.endpoint_id,
+                                CarrierBinding::D2EncryptedDatagram,
+                                &bytes,
+                                now_secs(),
+                            )? {
+                                process_migrated_server_path(
+                                    &udp_socket,
+                                    &d2_peers,
+                                    &stream_peers,
+                                    &carriers,
+                                    &config,
+                                    &tun_tx,
+                                    &mut sessions,
+                                    &mut path_to_session,
+                                    matched,
+                                    path,
+                                    CarrierBinding::D2EncryptedDatagram,
+                                    &mut telemetry,
+                                    &observability,
+                                )
+                                .await?;
+                                continue;
+                            }
+                        }
+                    }
+                    ServerTransportEvent::D2Closed { conn_id } => {
+                        let path = PathHandle::D2(conn_id);
+                        d2_peers.remove(&conn_id);
+                        if let Some(session_id) = path_to_session.remove(&path) {
+                            if let Some(session) = sessions.get_mut(&session_id) {
+                                handle_server_path_loss(
+                                    session,
+                                    path,
+                                    &mut path_to_session,
+                                    &stream_peers,
+                                    &mut telemetry,
+                                    &observability,
+                                );
+                            }
+                        }
+                    }
                     ServerTransportEvent::StreamOpened { conn_id, peer_addr, sender } => {
                         stream_peers.insert(conn_id, ServerStreamPeer { peer_addr, sender });
                     }
@@ -178,6 +291,7 @@ pub(super) async fn run_server(
                         if let Some(session_id) = path_to_session.get(&path).copied() {
                             process_known_server_path(
                                 &udp_socket,
+                                &d2_peers,
                                 &stream_peers,
                                 &carriers,
                                 &config,
@@ -227,6 +341,7 @@ pub(super) async fn run_server(
                             )? {
                                 process_migrated_server_path(
                                     &udp_socket,
+                                    &d2_peers,
                                     &stream_peers,
                                     &carriers,
                                     &config,
@@ -250,12 +365,23 @@ pub(super) async fn run_server(
                     ServerTransportEvent::StreamClosed { conn_id, malformed } => {
                         let path = PathHandle::Stream(conn_id);
                         if malformed && !path_to_session.contains_key(&path) {
-                            let _ = send_invalid_stream_response(&stream_peers, conn_id, config.stream_decoy_surface);
+                            let _ = send_invalid_stream_response(
+                                &stream_peers,
+                                conn_id,
+                                config.stream_decoy_surface,
+                            );
                         }
                         stream_peers.remove(&conn_id);
                         if let Some(session_id) = path_to_session.remove(&path) {
                             if let Some(session) = sessions.get_mut(&session_id) {
-                                handle_server_path_loss(session, path, &mut path_to_session, &stream_peers, &mut telemetry, &observability);
+                                handle_server_path_loss(
+                                    session,
+                                    path,
+                                    &mut path_to_session,
+                                    &stream_peers,
+                                    &mut telemetry,
+                                    &observability,
+                                );
                             }
                         }
                     }
@@ -274,6 +400,7 @@ pub(super) async fn run_server(
                                 );
                                 send_frames_to_server_path(
                                     &udp_socket,
+                                    &d2_peers,
                                     &stream_peers,
                                     &carriers,
                                     &config.endpoint_id,
@@ -326,6 +453,7 @@ pub(super) async fn run_server(
                             let frame = Frame::PathChallenge { control_id, challenge: pending.challenge };
                             let _ = send_frames_to_path_handle(
                                 &udp_socket,
+                                &d2_peers,
                                 &stream_peers,
                                 &carriers,
                                 &config.endpoint_id,
@@ -362,6 +490,7 @@ pub(super) async fn run_server(
                         let burst_len = frames.iter().filter(|frame| matches!(frame, Frame::IpData(_))).count().max(1);
                         send_frames_to_server_path(
                             &udp_socket,
+                            &d2_peers,
                             &stream_peers,
                             &carriers,
                             &config.endpoint_id,
@@ -392,10 +521,14 @@ pub(super) async fn run_server(
         status: ServerStatus {
             bind: config.bind.to_string(),
             interface_name: Some(tun.interface_name),
-            listening_carriers: vec![
-                CarrierBinding::D1DatagramUdp,
-                CarrierBinding::S1EncryptedStream,
-            ],
+            listening_carriers: {
+                let mut carriers = vec![CarrierBinding::D1DatagramUdp];
+                if config.d2.is_some() {
+                    carriers.push(CarrierBinding::D2EncryptedDatagram);
+                }
+                carriers.push(CarrierBinding::S1EncryptedStream);
+                carriers
+            },
             active_sessions: sessions.len(),
             active_carrier: None,
             standby_carrier: None,

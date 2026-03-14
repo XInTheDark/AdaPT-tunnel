@@ -45,6 +45,16 @@ pub(super) fn client_carrier_attempt_order(
                 carrier_attempt_order_without_strict_override(config, persistent_state),
             ),
             crate::config::RuntimeCarrierPreference::D1 => Ok(vec![CarrierBinding::D1DatagramUdp]),
+            crate::config::RuntimeCarrierPreference::D2 => {
+                if config.d2.is_some() {
+                    Ok(vec![CarrierBinding::D2EncryptedDatagram])
+                } else {
+                    Err(RuntimeError::InvalidConfig(
+                        "D2 was requested explicitly, but no D2 endpoint/certificate is configured"
+                            .to_string(),
+                    ))
+                }
+            }
             crate::config::RuntimeCarrierPreference::S1 => {
                 if config.stream_server_addr.is_some() {
                     Ok(vec![CarrierBinding::S1EncryptedStream])
@@ -69,6 +79,9 @@ fn carrier_attempt_order_without_strict_override(
     persistent_state: &ClientPersistentState,
 ) -> Vec<CarrierBinding> {
     let mut available = vec![CarrierBinding::D1DatagramUdp];
+    if config.enable_d2_fallback && config.d2.is_some() {
+        available.push(CarrierBinding::D2EncryptedDatagram);
+    }
     if config.enable_s1_fallback && config.stream_server_addr.is_some() {
         available.push(CarrierBinding::S1EncryptedStream);
     }
@@ -91,6 +104,7 @@ fn carrier_attempt_order_without_strict_override(
     }
     for binding in [
         CarrierBinding::D1DatagramUdp,
+        CarrierBinding::D2EncryptedDatagram,
         CarrierBinding::S1EncryptedStream,
     ] {
         if available.contains(&binding) && !order.contains(&binding) {
@@ -107,21 +121,14 @@ pub(super) fn next_standby_candidate(
     active_path_id: u64,
 ) -> Option<CarrierBinding> {
     let active_binding = paths.get(&active_path_id)?.binding;
-    adaptive
-        .fallback_order()
-        .into_iter()
-        .filter(|binding| {
-            matches!(
-                binding,
-                CarrierBinding::D1DatagramUdp | CarrierBinding::S1EncryptedStream
-            )
-        })
-        .find(|binding| {
-            *binding != active_binding
-                && (*binding != CarrierBinding::S1EncryptedStream
-                    || (config.enable_s1_fallback && config.stream_server_addr.is_some()))
-                && !paths.values().any(|path| path.binding == *binding)
-        })
+    adaptive.fallback_order().into_iter().find(|binding| {
+        *binding != active_binding
+            && (*binding != CarrierBinding::D2EncryptedDatagram
+                || (config.enable_d2_fallback && config.d2.is_some()))
+            && (*binding != CarrierBinding::S1EncryptedStream
+                || (config.enable_s1_fallback && config.stream_server_addr.is_some()))
+            && !paths.values().any(|path| path.binding == *binding)
+    })
 }
 
 pub(super) fn schedule_next_standby_probe(
@@ -146,6 +153,11 @@ pub(super) fn jittered_interval_secs(base: u64) -> u64 {
 
 pub(super) fn client_route_exempt_endpoints(config: &ResolvedClientConfig) -> Vec<SocketAddr> {
     let mut endpoints = vec![config.server_addr];
+    if let Some(d2) = &config.d2 {
+        if !endpoints.contains(&d2.endpoint.addr) {
+            endpoints.push(d2.endpoint.addr);
+        }
+    }
     if let Some(stream_addr) = config.stream_server_addr {
         if !endpoints.contains(&stream_addr) {
             endpoints.push(stream_addr);

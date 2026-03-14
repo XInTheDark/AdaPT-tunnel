@@ -1,6 +1,8 @@
 # Logical client config embedded inside a single-file `.aptbundle`.
 
 server_addr = "203.0.113.10:51820"
+d2_server_addr = "203.0.113.10:443"
+d2_server_certificate = "file:/etc/adapt/d2-certificate.pem"
 stream_server_addr = "203.0.113.10:443"
 runtime_mode = "stealth"
 preferred_carrier = "d1"
@@ -16,6 +18,7 @@ bind = "0.0.0.0:0"
 # interface_name = "utun6"
 routes = ["0.0.0.0/0"]
 use_server_pushed_routes = true
+enable_d2_fallback = true
 enable_s1_fallback = true
 allow_session_migration = true
 # 0 means "use the persona-selected sparse standby probe cadence".

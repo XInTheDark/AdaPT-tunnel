@@ -27,6 +27,22 @@ pub(super) async fn perform_client_handshake(
                 )
                 .await
             }
+            CarrierBinding::D2EncryptedDatagram => {
+                let Some(carrier) = carriers.d2() else {
+                    return Err(RuntimeError::InvalidConfig(
+                        "D2 handshake was requested, but the runtime D2 carrier is unavailable"
+                            .to_string(),
+                    ));
+                };
+                attempt_client_handshake_d2(
+                    config,
+                    persistent_state,
+                    carrier,
+                    resume_ticket.clone(),
+                    &order,
+                )
+                .await
+            }
             CarrierBinding::S1EncryptedStream => {
                 attempt_client_handshake_s1(
                     config,
@@ -168,6 +184,98 @@ async fn attempt_client_handshake_d1(
     Err(RuntimeError::Timeout("admission handshake"))
 }
 
+async fn attempt_client_handshake_d2(
+    config: &ResolvedClientConfig,
+    persistent_state: &ClientPersistentState,
+    carrier: &D2Carrier,
+    resume_ticket: Option<SealedEnvelope>,
+    supported_carriers: &[CarrierBinding],
+) -> Result<HandshakeSuccess, RuntimeError> {
+    let (endpoint, connection) = open_client_d2_connection(config).await?;
+
+    for _ in 0..config.handshake_retries {
+        let now = now_secs();
+        let current_epoch_slot = now / DEFAULT_ADMISSION_EPOCH_SLOT_SECS;
+        let outer_key = derive_d2_admission_outer_key(&config.admission_key, current_epoch_slot)?;
+        let credential = client_credential(config);
+        let request = client_session_request(
+            config,
+            persistent_state,
+            CarrierBinding::D2EncryptedDatagram,
+            supported_carriers,
+            resume_ticket.clone(),
+            now,
+        );
+        let prepared_c0 = initiate_c0(credential, request, carrier)?;
+        let c0_bytes = encode_admission_d2_datagram(
+            carrier,
+            &config.endpoint_id,
+            &outer_key,
+            &prepared_c0.packet,
+        )?;
+        connection
+            .send_datagram_wait(bytes::Bytes::from(c0_bytes))
+            .await
+            .map_err(|error| RuntimeError::Quic(error.to_string()))?;
+
+        let s1_bytes = match timeout(
+            Duration::from_secs(config.handshake_timeout_secs),
+            connection.read_datagram(),
+        )
+        .await
+        {
+            Ok(Ok(bytes)) => bytes,
+            Ok(Err(error)) => return Err(RuntimeError::Quic(error.to_string())),
+            Err(_) => continue,
+        };
+        let s1 = match decode_client_d2_admission_packet(config, carrier, &s1_bytes, now_secs()) {
+            Some(packet) => packet,
+            None => continue,
+        };
+        let prepared_c2 = prepared_c0.state.handle_s1(&s1, carrier)?;
+        let c2_bytes = encode_admission_d2_datagram(
+            carrier,
+            &config.endpoint_id,
+            &outer_key,
+            &prepared_c2.packet,
+        )?;
+        connection
+            .send_datagram_wait(bytes::Bytes::from(c2_bytes))
+            .await
+            .map_err(|error| RuntimeError::Quic(error.to_string()))?;
+
+        let confirmation_outer_key =
+            derive_d2_confirmation_outer_key(prepared_c2.state.confirmation_recv_ctrl_key())?;
+        let s3_bytes = match timeout(
+            Duration::from_secs(config.handshake_timeout_secs),
+            connection.read_datagram(),
+        )
+        .await
+        {
+            Ok(Ok(bytes)) => bytes,
+            Ok(Err(error)) => return Err(RuntimeError::Quic(error.to_string())),
+            Err(_) => continue,
+        };
+        let s3: ServerConfirmationPacket = decode_confirmation_d2_datagram(
+            carrier,
+            &config.endpoint_id,
+            &confirmation_outer_key,
+            &s3_bytes,
+        )?;
+        let session = prepared_c2.state.handle_s3(&s3, carrier)?;
+        return Ok(HandshakeSuccess {
+            binding: CarrierBinding::D2EncryptedDatagram,
+            established: session,
+            transport: HandshakeTransport::D2 {
+                endpoint,
+                connection,
+            },
+        });
+    }
+
+    Err(RuntimeError::Timeout("admission handshake"))
+}
+
 async fn attempt_client_handshake_s1(
     config: &ResolvedClientConfig,
     persistent_state: &ClientPersistentState,
@@ -276,6 +384,21 @@ pub(super) fn decode_client_stream_admission_packet(
         })
 }
 
+pub(super) fn decode_client_d2_admission_packet(
+    config: &ResolvedClientConfig,
+    carrier: &D2Carrier,
+    datagram: &[u8],
+    now_secs: u64,
+) -> Option<AdmissionPacket> {
+    candidate_epoch_slots(now_secs)
+        .into_iter()
+        .find_map(|epoch_slot| {
+            let outer_key =
+                derive_d2_admission_outer_key(&config.admission_key, epoch_slot).ok()?;
+            decode_admission_d2_datagram(carrier, &config.endpoint_id, &outer_key, datagram).ok()
+        })
+}
+
 pub(super) fn decode_server_admission_packet(
     config: &ResolvedServerConfig,
     carrier: &D1Carrier,
@@ -323,6 +446,32 @@ pub(super) fn decode_server_stream_admission_packet(
         })
 }
 
+pub(super) fn decode_server_d2_admission_packet(
+    config: &ResolvedServerConfig,
+    carrier: &D2Carrier,
+    datagram: &[u8],
+    now_secs: u64,
+) -> Option<DecodedServerAdmissionPacket> {
+    server_admission_keys(config)
+        .into_iter()
+        .find_map(|admission_key| {
+            candidate_epoch_slots(now_secs)
+                .into_iter()
+                .find_map(|epoch_slot| {
+                    let outer_key =
+                        derive_d2_admission_outer_key(&admission_key, epoch_slot).ok()?;
+                    let packet = decode_admission_d2_datagram(
+                        carrier,
+                        &config.endpoint_id,
+                        &outer_key,
+                        datagram,
+                    )
+                    .ok()?;
+                    Some(DecodedServerAdmissionPacket { packet, outer_key })
+                })
+        })
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct DecodedServerAdmissionPacket {
     pub(super) packet: AdmissionPacket,
@@ -347,10 +496,15 @@ pub(super) fn admission_config(
     effective_tunnel_mtu: u16,
 ) -> AdmissionConfig {
     let mut admission = AdmissionConfig::conservative(config.endpoint_id.clone());
-    admission.allowed_carriers = vec![
-        CarrierBinding::D1DatagramUdp,
-        CarrierBinding::S1EncryptedStream,
-    ];
+    admission.allowed_carriers = vec![CarrierBinding::D1DatagramUdp];
+    if config.d2.is_some() {
+        admission
+            .allowed_carriers
+            .push(CarrierBinding::D2EncryptedDatagram);
+    }
+    admission
+        .allowed_carriers
+        .push(CarrierBinding::S1EncryptedStream);
     admission.default_policy = config.session_policy.initial_mode;
     admission.max_record_size = carriers.d1().max_record_size();
     admission.tunnel_mtu = effective_tunnel_mtu;

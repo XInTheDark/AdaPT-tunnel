@@ -56,6 +56,15 @@ pub(super) enum Command {
         /// Client-reachable host:port that clients should use, for example 203.0.113.10:51820 or vpn.example.com:51820.
         #[arg(long)]
         public_endpoint: Option<String>,
+        /// Enable the D2 QUIC-datagram carrier and generate a pinned server certificate.
+        #[arg(long, default_value_t = false)]
+        enable_d2: bool,
+        /// UDP listen address for the D2 QUIC carrier.
+        #[arg(long)]
+        d2_bind: Option<SocketAddr>,
+        /// Client-reachable host:port for the D2 QUIC carrier.
+        #[arg(long)]
+        d2_public_endpoint: Option<String>,
         /// TCP listen address for the stream fallback carrier.
         #[arg(long)]
         stream_bind: Option<SocketAddr>,
@@ -104,6 +113,21 @@ pub(super) enum Command {
         /// Specific client tunnel IP to assign. If omitted, the next free IP is chosen.
         #[arg(long)]
         client_ip: Option<Ipv4Addr>,
+        /// Use defaults for any missing values instead of prompting.
+        #[arg(long, default_value_t = false)]
+        yes: bool,
+    },
+    /// Enable or refresh the D2 QUIC carrier on an existing server config.
+    EnableD2 {
+        /// Path to the server config created by `apt-edge init`.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// UDP listen address for the D2 QUIC carrier.
+        #[arg(long)]
+        d2_bind: Option<SocketAddr>,
+        /// Client-reachable host:port for the D2 QUIC carrier.
+        #[arg(long)]
+        d2_public_endpoint: Option<String>,
         /// Use defaults for any missing values instead of prompting.
         #[arg(long, default_value_t = false)]
         yes: bool,

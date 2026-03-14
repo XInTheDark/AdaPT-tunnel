@@ -3,6 +3,7 @@ use super::*;
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn process_known_server_path(
     udp_socket: &UdpSocket,
+    d2_peers: &HashMap<u64, ServerD2Peer>,
     stream_peers: &HashMap<u64, ServerStreamPeer>,
     carriers: &RuntimeCarriers,
     config: &ResolvedServerConfig,
@@ -29,6 +30,7 @@ pub(super) async fn process_known_server_path(
     let decoded = session.tunnel.decode_packet(&tunnel_bytes, now_secs())?;
     handle_server_decoded_packet(
         udp_socket,
+        d2_peers,
         stream_peers,
         carriers,
         &config.endpoint_id,
@@ -47,6 +49,7 @@ pub(super) async fn process_known_server_path(
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn process_migrated_server_path(
     udp_socket: &UdpSocket,
+    d2_peers: &HashMap<u64, ServerD2Peer>,
     stream_peers: &HashMap<u64, ServerStreamPeer>,
     carriers: &RuntimeCarriers,
     config: &ResolvedServerConfig,
@@ -65,6 +68,7 @@ pub(super) async fn process_migrated_server_path(
     session.tunnel = matched.tunnel;
     handle_server_decoded_packet(
         udp_socket,
+        d2_peers,
         stream_peers,
         carriers,
         &config.endpoint_id,
@@ -83,6 +87,7 @@ pub(super) async fn process_migrated_server_path(
 #[allow(clippy::too_many_arguments)]
 async fn handle_server_decoded_packet(
     udp_socket: &UdpSocket,
+    d2_peers: &HashMap<u64, ServerD2Peer>,
     stream_peers: &HashMap<u64, ServerStreamPeer>,
     carriers: &RuntimeCarriers,
     endpoint_id: &apt_types::EndpointId,
@@ -213,6 +218,7 @@ async fn handle_server_decoded_packet(
     if !response_frames.is_empty() {
         send_frames_to_server_path(
             udp_socket,
+            d2_peers,
             stream_peers,
             carriers,
             endpoint_id,

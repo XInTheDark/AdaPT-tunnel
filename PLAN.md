@@ -200,7 +200,7 @@ Finish the broader platform and operator story after the biggest stealth/surviva
 #### Deliverables
 
 1. **Additional carrier families**
-   - evaluate and implement `D2` where an encrypted datagram-capable outer transport is practical
+   - validate and harden the live `D2` encrypted datagram carrier
    - implement `H1` only if highly restrictive request/response fallback is still needed after `S1`
 
 2. **Per-user provisioning end-to-end**
@@ -240,8 +240,8 @@ Phase 3 is complete when all of the following are true:
 
 With Phases 1 and 2 complete, the next highest-value work is:
 
-1. **additional carrier families where still justified (`D2`, optionally `H1`)**
-2. **per-user provisioning / operator hardening**
-3. **IPv6, DNS automation, and broader deployment polish**
+1. **IPv6 and broader deployment polish**
+2. **performance/stress hardening for the now-live carrier set (`D1`, `D2`, `S1`)**
+3. **additional carrier families only where still justified (`H1` or others)**
 
 That is the fastest route to turning the current AdaPT runtime from “adaptive multi-carrier tunnel” into a broader, more operator-ready platform.

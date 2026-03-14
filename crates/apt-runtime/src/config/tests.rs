@@ -1,4 +1,5 @@
 use super::*;
+use crate::{generate_d2_tls_identity, load_certificate_der};
 use std::{
     fs,
     time::{SystemTime, UNIX_EPOCH},
@@ -238,6 +239,7 @@ client_static_private_key = "file:./client-static-private.key"
     let upgraded = fs::read_to_string(&config_path).unwrap();
     assert!(upgraded.contains("runtime_mode = \"stealth\""));
     assert!(upgraded.contains("preferred_carrier = \"d1\""));
+    assert!(upgraded.contains("enable_d2_fallback = false"));
     assert!(upgraded.contains("enable_s1_fallback = true"));
     let _ = fs::remove_dir_all(dir);
 }
@@ -258,6 +260,9 @@ fn client_resolve_rejects_unimplemented_hybrid_pq() {
         interface_name: None,
         routes: Vec::new(),
         use_server_pushed_routes: true,
+        enable_d2_fallback: false,
+        d2_server_addr: None,
+        d2_server_certificate: None,
         session_policy: SessionPolicy {
             initial_mode: PolicyMode::StealthFirst,
             allow_speed_first: false,
@@ -277,6 +282,49 @@ fn client_resolve_rejects_unimplemented_hybrid_pq() {
     };
     let error = config.resolve().unwrap_err();
     assert!(error.to_string().contains("allow_hybrid_pq"));
+}
+
+#[test]
+fn client_resolve_supports_inline_d2_certificate_material() {
+    let identity = generate_d2_tls_identity(vec!["127.0.0.1".to_string()]).unwrap();
+    let config = ClientConfig {
+        server_addr: "198.51.100.10:51820".to_string(),
+        runtime_mode: RuntimeMode::Stealth,
+        preferred_carrier: RuntimeCarrierPreference::D1,
+        auth_profile: AuthProfile::SharedDeployment,
+        endpoint_id: "adapt-demo".to_string(),
+        admission_key: "11".repeat(32),
+        server_static_public_key: "22".repeat(32),
+        client_static_private_key: "33".repeat(32),
+        client_identity: None,
+        bind: "0.0.0.0:0".parse().unwrap(),
+        interface_name: None,
+        routes: Vec::new(),
+        use_server_pushed_routes: true,
+        enable_d2_fallback: true,
+        d2_server_addr: Some("127.0.0.1:443".to_string()),
+        d2_server_certificate: Some(
+            base64::engine::general_purpose::STANDARD.encode(&identity.certificate_der),
+        ),
+        session_policy: SessionPolicy::default(),
+        enable_s1_fallback: true,
+        stream_server_addr: None,
+        allow_session_migration: true,
+        standby_health_check_secs: 0,
+        keepalive_secs: 25,
+        session_idle_timeout_secs: 180,
+        handshake_timeout_secs: 5,
+        handshake_retries: 5,
+        udp_recv_buffer_bytes: 4 * 1024 * 1024,
+        udp_send_buffer_bytes: 4 * 1024 * 1024,
+        state_path: PathBuf::from("client-state.toml"),
+    };
+    let resolved = config.resolve().unwrap();
+    assert_eq!(resolved.d2.as_ref().unwrap().endpoint.addr.port(), 443);
+    assert_eq!(
+        resolved.d2.unwrap().server_certificate_der,
+        identity.certificate_der
+    );
 }
 
 #[test]
@@ -333,6 +381,10 @@ fn server_resolve_rejects_unimplemented_hybrid_pq() {
         bind: "0.0.0.0:51820".parse().unwrap(),
         public_endpoint: "203.0.113.10:51820".to_string(),
         runtime_mode: RuntimeMode::Stealth,
+        d2_bind: None,
+        d2_public_endpoint: None,
+        d2_certificate: None,
+        d2_private_key: None,
         stream_bind: None,
         stream_public_endpoint: None,
         stream_decoy_surface: false,
@@ -365,4 +417,62 @@ fn server_resolve_rejects_unimplemented_hybrid_pq() {
     };
     let error = config.resolve().unwrap_err();
     assert!(error.to_string().contains("allow_hybrid_pq"));
+}
+
+#[test]
+fn server_resolve_derives_d2_public_endpoint_when_enabled() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("adapt-server-d2-{unique}"));
+    fs::create_dir_all(&dir).unwrap();
+    let identity = generate_d2_tls_identity(vec!["198.51.100.10".to_string()]).unwrap();
+    let cert_path = dir.join("d2-cert.pem");
+    let key_path = dir.join("d2-key.pem");
+    fs::write(&cert_path, identity.certificate_pem).unwrap();
+    fs::write(&key_path, identity.private_key_pem).unwrap();
+
+    let config = ServerConfig {
+        bind: "0.0.0.0:51820".parse().unwrap(),
+        public_endpoint: "198.51.100.10:51820".to_string(),
+        runtime_mode: RuntimeMode::Stealth,
+        d2_bind: Some("0.0.0.0:443".parse().unwrap()),
+        d2_public_endpoint: None,
+        d2_certificate: Some(format!("file:{}", cert_path.display())),
+        d2_private_key: Some(format!("file:{}", key_path.display())),
+        stream_bind: None,
+        stream_public_endpoint: None,
+        stream_decoy_surface: false,
+        endpoint_id: "adapt-demo".to_string(),
+        admission_key: "11".repeat(32),
+        server_static_private_key: "22".repeat(32),
+        server_static_public_key: "33".repeat(32),
+        cookie_key: "44".repeat(32),
+        ticket_key: "55".repeat(32),
+        interface_name: Some("aptsrv0".to_string()),
+        tunnel_local_ipv4: Ipv4Addr::new(10, 77, 0, 1),
+        tunnel_netmask: Ipv4Addr::new(255, 255, 255, 0),
+        tunnel_mtu: 1380,
+        egress_interface: Some("eth0".to_string()),
+        enable_ipv4_forwarding: true,
+        nat_ipv4: true,
+        push_routes: Vec::new(),
+        push_dns: Vec::new(),
+        session_policy: SessionPolicy::default(),
+        allow_session_migration: true,
+        keepalive_secs: 25,
+        session_idle_timeout_secs: 180,
+        udp_recv_buffer_bytes: 4 * 1024 * 1024,
+        udp_send_buffer_bytes: 4 * 1024 * 1024,
+        peers: Vec::new(),
+    };
+    let resolved = config.resolve().unwrap();
+    let d2 = resolved.d2.unwrap();
+    assert_eq!(d2.public_endpoint, "198.51.100.10:443");
+    assert_eq!(
+        load_certificate_der(&d2.certificate_spec).unwrap(),
+        identity.certificate_der
+    );
+    let _ = fs::remove_dir_all(dir);
 }

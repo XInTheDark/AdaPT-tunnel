@@ -1,4 +1,5 @@
 use super::*;
+use crate::quic::{load_certificate_der, resolve_d2_remote_endpoint};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientConfig {
@@ -23,6 +24,12 @@ pub struct ClientConfig {
     pub routes: Vec<IpNet>,
     #[serde(default)]
     pub use_server_pushed_routes: bool,
+    #[serde(default = "default_enable_d2_fallback")]
+    pub enable_d2_fallback: bool,
+    #[serde(default)]
+    pub d2_server_addr: Option<String>,
+    #[serde(default)]
+    pub d2_server_certificate: Option<String>,
     #[serde(default)]
     pub session_policy: SessionPolicy,
     #[serde(default = "default_enable_s1_fallback")]
@@ -65,6 +72,9 @@ impl ClientConfig {
         resolve_file_spec_relative_to_base(&mut config.admission_key, base);
         resolve_file_spec_relative_to_base(&mut config.server_static_public_key, base);
         resolve_file_spec_relative_to_base(&mut config.client_static_private_key, base);
+        if let Some(d2_server_certificate) = &mut config.d2_server_certificate {
+            resolve_file_spec_relative_to_base(d2_server_certificate, base);
+        }
         Ok(config)
     }
 
@@ -105,6 +115,8 @@ impl ClientConfig {
             interface_name: self.interface_name.clone(),
             routes: self.routes.clone(),
             use_server_pushed_routes: self.use_server_pushed_routes,
+            enable_d2_fallback: self.enable_d2_fallback,
+            d2: resolve_client_d2_config(self)?,
             session_policy,
             enable_s1_fallback: self.enable_s1_fallback,
             stream_server_addr: self
@@ -126,6 +138,19 @@ impl ClientConfig {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedRemoteEndpoint {
+    pub original: String,
+    pub addr: SocketAddr,
+    pub server_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedClientD2Config {
+    pub endpoint: ResolvedRemoteEndpoint,
+    pub server_certificate_der: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedClientConfig {
     pub server_addr: SocketAddr,
     pub runtime_mode: RuntimeMode,
@@ -141,6 +166,8 @@ pub struct ResolvedClientConfig {
     pub interface_name: Option<String>,
     pub routes: Vec<IpNet>,
     pub use_server_pushed_routes: bool,
+    pub enable_d2_fallback: bool,
+    pub d2: Option<ResolvedClientD2Config>,
     pub session_policy: SessionPolicy,
     pub enable_s1_fallback: bool,
     pub stream_server_addr: Option<SocketAddr>,
@@ -153,4 +180,27 @@ pub struct ResolvedClientConfig {
     pub udp_recv_buffer_bytes: usize,
     pub udp_send_buffer_bytes: usize,
     pub state_path: PathBuf,
+}
+
+fn resolve_client_d2_config(
+    config: &ClientConfig,
+) -> Result<Option<ResolvedClientD2Config>, RuntimeError> {
+    let any_present = config.d2_server_addr.is_some() || config.d2_server_certificate.is_some();
+    if !any_present {
+        return Ok(None);
+    }
+    let Some(endpoint_spec) = config.d2_server_addr.as_deref() else {
+        return Err(RuntimeError::InvalidConfig(
+            "D2 is partially configured, but d2_server_addr is missing".to_string(),
+        ));
+    };
+    let Some(certificate_spec) = config.d2_server_certificate.as_deref() else {
+        return Err(RuntimeError::InvalidConfig(
+            "D2 is partially configured, but d2_server_certificate is missing".to_string(),
+        ));
+    };
+    Ok(Some(ResolvedClientD2Config {
+        endpoint: resolve_d2_remote_endpoint(endpoint_spec)?,
+        server_certificate_der: load_certificate_der(certificate_spec)?,
+    }))
 }

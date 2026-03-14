@@ -24,12 +24,13 @@ mod tests;
 
 use self::io::*;
 
+pub(crate) use self::io::resolve_socket_addr;
 pub use self::{
-    client::{ClientConfig, ResolvedClientConfig},
+    client::{ClientConfig, ResolvedClientConfig, ResolvedClientD2Config, ResolvedRemoteEndpoint},
     io::{encode_key_hex, load_key32},
     server::{
-        AuthorizedPeerConfig, ResolvedAuthorizedPeer, ResolvedServerConfig, ServerConfig,
-        ServerSessionExtension, SessionTransportParameters,
+        AuthorizedPeerConfig, ResolvedAuthorizedPeer, ResolvedServerConfig, ResolvedServerD2Config,
+        ServerConfig, ServerSessionExtension, SessionTransportParameters,
     },
     state::{ClientPersistentState, PersistedNetworkProfile},
 };
@@ -83,6 +84,10 @@ fn default_enable_s1_fallback() -> bool {
     true
 }
 
+fn default_enable_d2_fallback() -> bool {
+    false
+}
+
 fn default_allow_session_migration() -> bool {
     true
 }
@@ -133,6 +138,7 @@ pub enum RuntimeCarrierPreference {
     Auto,
     #[default]
     D1,
+    D2,
     S1,
 }
 
@@ -142,6 +148,7 @@ impl RuntimeCarrierPreference {
         match self {
             Self::Auto => None,
             Self::D1 => Some(CarrierBinding::D1DatagramUdp),
+            Self::D2 => Some(CarrierBinding::D2EncryptedDatagram),
             Self::S1 => Some(CarrierBinding::S1EncryptedStream),
         }
     }

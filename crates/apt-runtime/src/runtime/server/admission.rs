@@ -162,6 +162,94 @@ pub(super) async fn handle_server_admission_stream(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(super) async fn handle_server_admission_d2(
+    d2_peers: &HashMap<u64, ServerD2Peer>,
+    admission: &mut AdmissionServer,
+    config: &ResolvedServerConfig,
+    carriers: &RuntimeCarriers,
+    effective_tunnel_mtu: u16,
+    conn_id: u64,
+    received_len: usize,
+    decoded: DecodedServerAdmissionPacket,
+    sessions: &mut HashMap<SessionId, ServerSessionState>,
+    path_to_session: &mut HashMap<PathHandle, SessionId>,
+    sessions_by_client_ip: &mut HashMap<Ipv4Addr, SessionId>,
+    telemetry: &mut TelemetrySnapshot,
+    observability: &ObservabilityConfig,
+) -> Result<bool, RuntimeError> {
+    let Some(peer) = d2_peers.get(&conn_id) else {
+        return Ok(false);
+    };
+    let Some(carrier) = carriers.d2() else {
+        return Ok(false);
+    };
+    match admission.handle_c0(
+        &peer.peer_addr.to_string(),
+        carrier,
+        &decoded.packet,
+        received_len,
+        now_secs(),
+    ) {
+        ServerResponse::Reply(reply) => {
+            let bytes = encode_admission_d2_datagram(
+                carrier,
+                &config.endpoint_id,
+                &decoded.outer_key,
+                &reply,
+            )?;
+            queue_path_payload(&PathSender::D2(peer.sender.clone()), bytes)?;
+            return Ok(true);
+        }
+        ServerResponse::Drop(_) => {}
+    }
+
+    let server_reply = match admission.handle_c2_with_extension_builder(
+        &peer.peer_addr.to_string(),
+        carrier,
+        &decoded.packet,
+        now_secs(),
+        |session| {
+            let authorized = authorize_established_session(config, session)
+                .map_err(|_| AdmissionError::Validation("unauthorized peer"))?;
+            Ok(vec![bincode::serialize(
+                &ServerSessionExtension::TunnelParameters(assign_transport_parameters(
+                    config,
+                    authorized,
+                    effective_tunnel_mtu,
+                )),
+            )?])
+        },
+    ) {
+        ServerResponse::Reply(reply) => reply,
+        ServerResponse::Drop(_) => return Ok(false),
+    };
+
+    let authorized = authorize_established_session(config, &server_reply.session)?;
+    let confirmation_outer_key =
+        derive_d2_confirmation_outer_key(&server_reply.session.secrets.send_ctrl)?;
+    let bytes = encode_confirmation_d2_datagram(
+        carrier,
+        &config.endpoint_id,
+        &confirmation_outer_key,
+        &server_reply.packet,
+    )?;
+    queue_path_payload(&PathSender::D2(peer.sender.clone()), bytes)?;
+
+    install_server_session(
+        config,
+        sessions,
+        path_to_session,
+        sessions_by_client_ip,
+        telemetry,
+        observability,
+        server_reply.session,
+        authorized,
+        PathHandle::D2(conn_id),
+        CarrierBinding::D2EncryptedDatagram,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn install_server_session(
     config: &ResolvedServerConfig,
     sessions: &mut HashMap<SessionId, ServerSessionState>,
@@ -210,6 +298,7 @@ fn install_server_session(
             adaptive,
             outer_keys: RuntimeOuterKeys {
                 d1: derive_d1_tunnel_outer_keys(&session.secrets)?,
+                d2: derive_d2_tunnel_outer_keys(&session.secrets)?,
                 s1: derive_s1_tunnel_outer_keys(&session.secrets)?,
             },
             encapsulation: TunnelEncapsulation::for_policy(session.policy_mode),

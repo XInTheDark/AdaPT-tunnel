@@ -5,6 +5,9 @@ pub(super) fn init_server(
     out_dir: Option<PathBuf>,
     bind: Option<SocketAddr>,
     public_endpoint: Option<String>,
+    enable_d2: bool,
+    d2_bind: Option<SocketAddr>,
+    d2_public_endpoint: Option<String>,
     stream_bind: Option<SocketAddr>,
     stream_public_endpoint: Option<String>,
     stream_decoy_surface: bool,
@@ -17,6 +20,7 @@ pub(super) fn init_server(
     yes: bool,
 ) -> CliResult {
     let out_dir = out_dir.unwrap_or_else(|| PathBuf::from("/etc/adapt"));
+    let d2_requested = enable_d2 || d2_bind.is_some() || d2_public_endpoint.is_some();
     let bind = match bind {
         Some(bind) => bind,
         None if yes => "0.0.0.0:51820".parse()?,
@@ -135,12 +139,26 @@ pub(super) fn init_server(
     write_key_file(&out_dir.join("cookie.key"), &keyset.cookie_key)?;
     write_key_file(&out_dir.join("ticket.key"), &keyset.ticket_key)?;
     fs::create_dir_all(out_dir.join("bundles"))?;
+    let d2 = if d2_requested {
+        Some(configure_d2_material(
+            &out_dir,
+            &public_endpoint,
+            d2_bind,
+            d2_public_endpoint,
+        )?)
+    } else {
+        None
+    };
 
     let server_ip = first_usable_ipv4(subnet)?;
     let config = ServerConfig {
         bind,
         public_endpoint,
         runtime_mode: RuntimeMode::Stealth,
+        d2_bind: d2.as_ref().map(|value| value.bind),
+        d2_public_endpoint: d2.as_ref().map(|value| value.public_endpoint.clone()),
+        d2_certificate: d2.as_ref().map(|value| value.certificate_spec.clone()),
+        d2_private_key: d2.as_ref().map(|value| value.private_key_spec.clone()),
         stream_bind,
         stream_public_endpoint,
         stream_decoy_surface,
@@ -188,6 +206,10 @@ pub(super) fn init_server(
         "  • Public endpoint for clients: {}",
         config.public_endpoint
     );
+    match &config.d2_public_endpoint {
+        Some(endpoint) => println!("  • D2 QUIC endpoint: {endpoint}"),
+        None => println!("  • D2 QUIC endpoint: disabled"),
+    }
     match &config.stream_public_endpoint {
         Some(endpoint) => println!("  • Stream fallback endpoint: {endpoint}"),
         None => println!("  • Stream fallback endpoint: disabled"),
@@ -207,4 +229,105 @@ pub(super) fn init_server(
         config_path.display()
     );
     Ok(())
+}
+
+pub(super) fn enable_d2_for_server(
+    config: Option<PathBuf>,
+    d2_bind: Option<SocketAddr>,
+    d2_public_endpoint: Option<String>,
+    yes: bool,
+) -> CliResult {
+    let config_path =
+        match config {
+            Some(path) => path,
+            None => match find_server_config() {
+                Some(path) => path,
+                None if yes => return Err(
+                    "could not find a server config; pass --config or run `apt-edge init` first"
+                        .into(),
+                ),
+                None => prompt_path("Server config path", Some("/etc/adapt/server.toml"))?,
+            },
+        };
+    let mut server_config = ServerConfig::load(&config_path)?;
+    let config_dir = config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let d2 = configure_d2_material(
+        &config_dir,
+        &server_config.public_endpoint,
+        d2_bind.or(server_config.d2_bind),
+        d2_public_endpoint.or_else(|| server_config.d2_public_endpoint.clone()),
+    )?;
+    server_config.d2_bind = Some(d2.bind);
+    server_config.d2_public_endpoint = Some(d2.public_endpoint.clone());
+    server_config.d2_certificate = Some(d2.certificate_spec.clone());
+    server_config.d2_private_key = Some(d2.private_key_spec.clone());
+    server_config.store(&config_path)?;
+
+    println!("\nD2 carrier enabled.\n");
+    println!("Updated server config:");
+    println!("  • {}", config_path.display());
+    println!("D2 QUIC endpoint:");
+    println!("  • {}", d2.public_endpoint);
+    println!("Generated certificate files:");
+    println!("  • {}/d2-certificate.pem", config_dir.display());
+    println!("  • {}/d2-private-key.pem", config_dir.display());
+    println!("\nNext steps:");
+    println!("  1. Restart the server after any running session drain:");
+    println!(
+        "     sudo apt-edge start --config {}",
+        config_path.display()
+    );
+    println!("  2. Re-issue client bundles so they contain the pinned D2 certificate:");
+    println!(
+        "     apt-edge add-client --config {} --name <client-name> --auth per-user",
+        config_path.display()
+    );
+    println!("  3. On a client, test strict D2 with:");
+    println!("     sudo apt-client up --carrier d2");
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct D2Material {
+    bind: SocketAddr,
+    public_endpoint: String,
+    certificate_spec: String,
+    private_key_spec: String,
+}
+
+fn configure_d2_material(
+    out_dir: &Path,
+    fallback_public_endpoint: &str,
+    d2_bind: Option<SocketAddr>,
+    d2_public_endpoint: Option<String>,
+) -> CliResult<D2Material> {
+    let bind = d2_bind.unwrap_or_else(d2_default_bind);
+    let public_endpoint = match d2_public_endpoint {
+        Some(value) => {
+            validate_client_reachable_endpoint(&value)?;
+            value
+        }
+        None => derive_d2_public_endpoint(fallback_public_endpoint).ok_or_else(|| {
+            "could not derive a D2 public endpoint; pass --d2-public-endpoint explicitly"
+                .to_string()
+        })?,
+    };
+    let identity = generate_d2_tls_identity(d2_certificate_subject_alt_names(&public_endpoint))?;
+    write_secret_file(
+        &out_dir.join("d2-certificate.pem"),
+        identity.certificate_pem.as_bytes(),
+    )?;
+    write_secret_file(
+        &out_dir.join("d2-private-key.pem"),
+        identity.private_key_pem.as_bytes(),
+    )?;
+    Ok(D2Material {
+        bind,
+        public_endpoint,
+        certificate_spec: "file:./d2-certificate.pem".to_string(),
+        private_key_spec: "file:./d2-private-key.pem".to_string(),
+    })
 }

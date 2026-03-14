@@ -18,7 +18,7 @@ sudo ./target/release/apt-client up
 
 Expected result:
 
-- the client establishes a session over either `D1` or `S1` and creates its TUN interface
+- the client establishes a session over `D1`, `D2`, or `S1` and creates its TUN interface
 - the server creates its TUN interface and shows one active session
 
 ## 2. Validate the tunnel interfaces
@@ -137,10 +137,24 @@ sudo tcpdump -ni aptsrv0
 
 Expected:
 
-- UDP traffic on the `D1` listening port and/or TCP traffic on the `S1` listening port
+- UDP traffic on the `D1` listening port, optional UDP traffic on the `D2` QUIC port, and/or TCP traffic on the `S1` listening port
 - decrypted IP packets traversing the server TUN interface
 
-## 9. Stream fallback smoke test
+## 9. D2 QUIC-datagram smoke test
+
+If your server config includes `d2_bind` / `d2_public_endpoint`, validate `D2` directly:
+
+```bash
+sudo ./target/release/apt-client up --carrier d2
+```
+
+Expected:
+
+- the client establishes a session successfully over `D2`
+- the server logs a `D2` carrier session
+- `ping 10.77.0.1` and the full-tunnel checks still work over that forced carrier
+
+## 10. Stream fallback smoke test
 
 If your server config includes `stream_bind` / `stream_public_endpoint`, you can validate the `S1` runtime directly:
 
@@ -160,7 +174,7 @@ You can then return to the normal conservative preference order with:
 sudo ./target/release/apt-client up --carrier auto
 ```
 
-## 10. Resume-ticket smoke test
+## 11. Resume-ticket smoke test
 
 1. Connect once.
 2. Stop the client cleanly.
@@ -172,16 +186,19 @@ Expected:
 - the state file is preserved on disk
 - older state/config files are rewritten with newly added runtime fields as they are loaded
 
-## 11. Common failure checks
+## 12. Common failure checks
 
 If the client does not connect:
 
 - confirm the server UDP port is reachable for `D1`
+- confirm the server UDP QUIC port is reachable for `D2` when enabled
 - confirm the server TCP stream port is reachable for `S1` when fallback is enabled
 - confirm `endpoint_id` matches on both sides
 - confirm the client has the correct `.aptbundle` generated for that peer
 - confirm the bundle was copied intact and not mixed up with another client's bundle
 - confirm the server `[[peers]]` entry matches the client public key
+- confirm `d2_server_addr` / `d2_public_endpoint` are correct if you are forcing or expecting `D2`
+- confirm the client's `d2_server_certificate` matches the server's current `D2` certificate
 - confirm `stream_server_addr` / `stream_public_endpoint` are correct if you are forcing or expecting `S1`
 - confirm you did not pin the client to the wrong carrier with `--carrier`
 - confirm both processes have the privileges needed to create TUN devices

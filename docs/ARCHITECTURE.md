@@ -60,6 +60,7 @@ Primary spec coverage:
 Owns the outer transport abstraction:
 - trait(s) for carrier embedding
 - datagram binding `D1`
+- encrypted datagram binding `D2`
 - stream binding `S1`
 - invalid-input behaviour and close semantics
 - migration hooks shared with policy/tunnel layers

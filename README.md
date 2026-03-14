@@ -15,11 +15,12 @@ Implemented today:
 - cryptographic helpers and Noise `XXpsk2` session establishment
 - admission handshake (`C0 -> S1 -> C2 -> S3`)
 - encrypted inner tunnel packet core with replay protection and rekey support
-- carrier helpers and live runtime paths for `D1` datagram and `S1` encrypted-stream transport
+- carrier helpers and live runtime paths for `D1` datagram, `D2` QUIC-datagram, and `S1` encrypted-stream transport
 - first-cut persona, policy, and observability layers
-- combined server daemon runtime over `D1` + `S1` (`apt-edge start`)
-- client runtime with conservative `D1 -> S1` fallback (`apt-client up`)
+- combined server daemon runtime over `D1`, optional `D2`, and optional `S1` (`apt-edge start`)
+- client runtime with conservative `D1 -> D2 -> S1` fallback when the optional carriers are configured (`apt-client up`)
 - guided server initialization (`apt-edge init`)
+- guided D2 enablement / certificate generation for existing deployments (`apt-edge enable-d2`)
 - shared/per-user client bundle provisioning and revocation (`apt-edge add-client`, `apt-edge revoke-client`)
 - TUN interface wiring, route/NAT orchestration, and best-effort pushed DNS automation
 - authenticated path revalidation and sparse standby probing
@@ -175,6 +176,9 @@ Useful options:
 - `--stream-bind` — TCP listen address for the `S1` fallback carrier
 - `--stream-public-endpoint` — client-reachable `S1` endpoint, usually `host:443`
 - `--stream-decoy-surface` — whether invalid unauthenticated stream input should get a decoy-like HTTP surface
+- `--enable-d2` — enable the `D2` QUIC-datagram carrier and generate a pinned server certificate
+- `--d2-bind` — UDP listen address for the `D2` QUIC carrier
+- `--d2-public-endpoint` — client-reachable `D2` endpoint, usually `host:443`
 - `--push-route` — route(s) to push to clients
 - `--dns` — DNS server(s) to push to clients
 - `--yes` — skip prompts and use defaults for omitted values
@@ -200,6 +204,16 @@ Useful options:
 - `--name` — client name to revoke
 - `--yes` — skip prompts for missing values
 
+#### `apt-edge enable-d2`
+Enable or refresh the `D2` QUIC-datagram carrier on an existing server config.
+
+Useful options:
+
+- `--config` — server config path
+- `--d2-bind` — UDP listen address for the `D2` QUIC carrier
+- `--d2-public-endpoint` — client-reachable `D2` endpoint, usually `host:443`
+- `--yes` — skip prompts for missing values
+
 #### `apt-edge start`
 Start the combined server daemon.
 
@@ -217,7 +231,7 @@ Useful option:
 
 - `--bundle` — path to the single-file client bundle
 - `--mode stealth|balanced|speed` — one-shot runtime mode override
-- `--carrier auto|d1|s1` — one-shot preferred-carrier override
+- `--carrier auto|d1|d2|s1` — one-shot preferred-carrier override
 
 If omitted, the client tries common default locations first. It also auto-creates a blank optional override TOML next to the installed bundle so local client-only settings can be edited without changing the bundle itself.
 
@@ -288,7 +302,7 @@ Current limitations include:
 - server runtime target is Linux
 - client runtime target is Linux/macOS
 - DNS automation is best-effort rather than universal: Linux currently uses `resolvectl`, and macOS temporarily overrides the primary network service DNS while the tunnel is up
-- the live fallback set is now `D1` + `S1`; `D2` and `H1` are still future work
+- the live carrier set is now `D1`, optional `D2`, and optional `S1`; `H1` remains future work
 - IPv6 tunnel/runtime handling is still incomplete
 - the stream fallback carrier is a practical generic TCP stream runtime in this repo; it is not yet a polished outer-TLS impersonation layer
 - config auto-upgrade rewrites parsed TOML with new defaulted fields, so comments/formatting in older configs may be normalized on startup

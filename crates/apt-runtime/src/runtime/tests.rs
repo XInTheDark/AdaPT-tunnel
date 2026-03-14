@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::{
-    ResolvedAuthorizedPeer, ResolvedClientConfig, ResolvedServerConfig, RuntimeCarrierPreference,
-    RuntimeMode,
+    ResolvedAuthorizedPeer, ResolvedClientConfig, ResolvedClientD2Config, ResolvedRemoteEndpoint,
+    ResolvedServerConfig, RuntimeCarrierPreference, RuntimeMode,
 };
 use apt_admission::{initiate_c0, ClientCredential, ClientSessionRequest};
 use apt_carriers::D1Carrier;
@@ -12,7 +12,7 @@ use std::{
 };
 
 fn test_runtime_carriers() -> RuntimeCarriers {
-    RuntimeCarriers::new(1_380, false)
+    RuntimeCarriers::new(1_380, false, false)
 }
 
 fn test_runtime_outer_keys() -> RuntimeOuterKeys {
@@ -20,6 +20,10 @@ fn test_runtime_outer_keys() -> RuntimeOuterKeys {
         d1: D1OuterKeys {
             send: [0x11; 32],
             recv: [0x22; 32],
+        },
+        d2: D2OuterKeys {
+            send: [0x55; 32],
+            recv: [0x66; 32],
         },
         s1: S1OuterKeys {
             send: [0x33; 32],
@@ -63,6 +67,8 @@ fn test_client_config() -> ResolvedClientConfig {
         interface_name: None,
         routes: Vec::new(),
         use_server_pushed_routes: true,
+        enable_d2_fallback: false,
+        d2: None,
         session_policy: apt_types::SessionPolicy::default(),
         enable_s1_fallback: true,
         stream_server_addr: Some("198.51.100.10:443".parse::<SocketAddr>().unwrap()),
@@ -83,6 +89,7 @@ fn test_server_config() -> ResolvedServerConfig {
         bind: "0.0.0.0:51820".parse::<SocketAddr>().unwrap(),
         public_endpoint: "198.51.100.10:51820".to_string(),
         runtime_mode: RuntimeMode::Stealth,
+        d2: None,
         stream_bind: Some("0.0.0.0:443".parse::<SocketAddr>().unwrap()),
         stream_public_endpoint: Some("198.51.100.10:443".to_string()),
         stream_decoy_surface: false,
@@ -145,11 +152,28 @@ fn standby_probe_schedule_is_jittered() {
 
 #[test]
 fn effective_d1_tunnel_mtu_stays_within_runtime_bounds() {
-    let carriers = RuntimeCarriers::new(1_380, false);
+    let carriers = RuntimeCarriers::new(1_380, false, false);
     let effective =
         effective_runtime_tunnel_mtu(1_380, &EndpointId::new("adapt-test".to_string()), &carriers);
     assert!(effective <= 1_380);
     assert!(effective >= 1_200);
+}
+
+#[test]
+fn strict_d2_override_uses_only_d2() {
+    let mut config = test_client_config();
+    config.preferred_carrier = RuntimeCarrierPreference::D2;
+    config.strict_preferred_carrier = true;
+    config.d2 = Some(ResolvedClientD2Config {
+        endpoint: ResolvedRemoteEndpoint {
+            original: "198.51.100.10:443".to_string(),
+            addr: "198.51.100.10:443".parse().unwrap(),
+            server_name: "198.51.100.10".to_string(),
+        },
+        server_certificate_der: vec![0xAA; 32],
+    });
+    let order = client_carrier_attempt_order(&config, &ClientPersistentState::default()).unwrap();
+    assert_eq!(order, vec![CarrierBinding::D2EncryptedDatagram]);
 }
 
 #[test]

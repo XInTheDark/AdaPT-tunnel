@@ -49,12 +49,16 @@ Key points:
 
 - `bind` — UDP listen address
 - `public_endpoint` — what clients should dial
+- `d2_bind` — optional UDP listen address for the `D2` QUIC-datagram carrier
+- `d2_public_endpoint` — optional client-facing `D2` endpoint, usually `host:443`
+- `d2_certificate` — optional server certificate for `D2`; supports `file:/path`, inline PEM, or base64-encoded DER
+- `d2_private_key` — optional server private key for `D2`; supports `file:/path`, inline PEM, or base64-encoded DER/key data
 - `stream_bind` — optional TCP listen address for the `S1` fallback carrier
 - `stream_public_endpoint` — optional client-facing `S1` endpoint, usually `host:443`
 - `stream_decoy_surface` — whether invalid unauthenticated stream input gets a decoy-like HTTP surface
 - `runtime_mode` — default runtime preset (`stealth`, `balanced`, or `speed`)
 - `endpoint_id` — deployment identifier
-- key fields support either inline hex or `file:/path`
+- the core 32-byte APT keys support either inline hex or `file:/path`
 - `tunnel_local_ipv4` + `tunnel_netmask` define the tunnel subnet
 - `push_routes` usually contains `0.0.0.0/0` for full tunnel
 - `push_dns` is applied automatically where supported by the client platform
@@ -69,9 +73,12 @@ Key points:
 ### Client config
 
 - `server_addr` — server host:port the client should connect to
+- `enable_d2_fallback` — enables conservative `D1 -> D2` fallback when `d2_server_addr` and `d2_server_certificate` are present
+- `d2_server_addr` — optional `D2` QUIC endpoint, usually `host:443`
+- `d2_server_certificate` — pinned `D2` server certificate; supports `file:/path`, inline PEM, or base64-encoded DER
 - `stream_server_addr` — optional TCP `S1` endpoint for fallback, usually `host:443`
 - `runtime_mode` — default runtime preset (`stealth`, `balanced`, or `speed`)
-- `preferred_carrier` — `d1`, `s1`, or `auto`
+- `preferred_carrier` — `d1`, `d2`, `s1`, or `auto`
 - `endpoint_id` — must match the server
 - `auth_profile` — `shared-deployment` or `per-user`
 - `admission_key` — either the shared deployment key or the user's dedicated admission key
@@ -118,7 +125,7 @@ Use `/etc/adapt/client.override.toml` for client-local changes that should not r
 Optional one-shot overrides:
 
 - `--mode stealth|balanced|speed`
-- `--carrier auto|d1|s1`
+- `--carrier auto|d1|d2|s1`
 
 To run a bundle from a non-default location:
 
@@ -131,6 +138,9 @@ That direct-launch path creates a sidecar override file such as `/path/to/laptop
 Useful override fields include:
 
 - `server_addr`
+- `enable_d2_fallback`
+- `d2_server_addr`
+- `d2_server_certificate`
 - `stream_server_addr`
 - `runtime_mode`
 - `preferred_carrier`

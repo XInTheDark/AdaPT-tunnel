@@ -177,7 +177,10 @@ impl CarrierBitmap {
     /// Returns the practical first-milestone carrier set.
     #[must_use]
     pub const fn baseline() -> Self {
-        Self(0).with(CarrierBinding::D1).with(CarrierBinding::S1)
+        Self(0)
+            .with(CarrierBinding::D1)
+            .with(CarrierBinding::D2)
+            .with(CarrierBinding::S1)
     }
 
     /// Adds a carrier to the bitmap.

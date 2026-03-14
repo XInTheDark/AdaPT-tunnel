@@ -1,5 +1,6 @@
 use super::*;
 use apt_bundle::{store_client_bundle, ClientBundle, DEFAULT_CLIENT_BUNDLE_FILE_NAME};
+use base64::Engine as _;
 
 pub(super) fn add_client(
     config: Option<PathBuf>,
@@ -91,6 +92,7 @@ pub(super) fn add_client(
     server_config.store(&config_path)?;
 
     let server_static_public_key = load_key32(&server_config.server_static_public_key)?;
+    let d2_bundle = build_client_d2_bundle_fields(&server_config)?;
     let client_config = ClientConfig {
         server_addr: server_config.public_endpoint.clone(),
         runtime_mode: server_config.runtime_mode,
@@ -105,6 +107,9 @@ pub(super) fn add_client(
         interface_name: None,
         routes: Vec::new(),
         use_server_pushed_routes: true,
+        enable_d2_fallback: d2_bundle.is_some(),
+        d2_server_addr: d2_bundle.as_ref().map(|value| value.endpoint.clone()),
+        d2_server_certificate: d2_bundle.as_ref().map(|value| value.certificate.clone()),
         session_policy: SessionPolicy::default(),
         enable_s1_fallback: true,
         stream_server_addr: server_config.stream_public_endpoint.clone(),
@@ -241,4 +246,39 @@ fn auth_profile_label(auth_profile: AuthProfile) -> &'static str {
         AuthProfile::SharedDeployment => "shared-deployment",
         AuthProfile::PerUser => "per-user",
     }
+}
+
+#[derive(Clone, Debug)]
+struct ClientD2BundleFields {
+    endpoint: String,
+    certificate: String,
+}
+
+fn build_client_d2_bundle_fields(
+    server_config: &ServerConfig,
+) -> CliResult<Option<ClientD2BundleFields>> {
+    let any_present = server_config.d2_bind.is_some()
+        || server_config.d2_public_endpoint.is_some()
+        || server_config.d2_certificate.is_some()
+        || server_config.d2_private_key.is_some();
+    if !any_present {
+        return Ok(None);
+    }
+
+    let endpoint = match server_config.d2_public_endpoint.as_ref() {
+        Some(value) => value.clone(),
+        None => derive_d2_public_endpoint(&server_config.public_endpoint).ok_or_else(|| {
+            "D2 is partially configured, but d2_public_endpoint could not be derived".to_string()
+        })?,
+    };
+    let certificate_spec = server_config
+        .d2_certificate
+        .as_deref()
+        .ok_or_else(|| "D2 is partially configured, but d2_certificate is missing".to_string())?;
+    let certificate =
+        base64::engine::general_purpose::STANDARD.encode(load_certificate_der(certificate_spec)?);
+    Ok(Some(ClientD2BundleFields {
+        endpoint,
+        certificate,
+    }))
 }

@@ -156,6 +156,7 @@ impl AdmissionConfig {
             allowed_suites: vec![CipherSuite::NoiseXxPsk2X25519ChaChaPolyBlake2s],
             allowed_carriers: vec![
                 CarrierBinding::D1DatagramUdp,
+                CarrierBinding::D2EncryptedDatagram,
                 CarrierBinding::S1EncryptedStream,
             ],
             default_policy: PolicyMode::StealthFirst,

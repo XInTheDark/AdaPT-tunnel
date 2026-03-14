@@ -98,7 +98,7 @@ pub(super) fn resolve_file_spec_relative_to_base(spec: &mut String, base: &Path)
     }
 }
 
-pub(super) fn resolve_socket_addr(spec: &str) -> Result<SocketAddr, RuntimeError> {
+pub(crate) fn resolve_socket_addr(spec: &str) -> Result<SocketAddr, RuntimeError> {
     if spec.contains("example.com") {
         return Err(RuntimeError::InvalidConfig(format!(
             "server address `{spec}` still uses the example placeholder; replace it with the server's reachable IP:port or DNS name"

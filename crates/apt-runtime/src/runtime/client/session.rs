@@ -12,6 +12,7 @@ pub(super) async fn run_client_session_loop(
 ) -> Result<ClientStatus, RuntimeError> {
     let outer_keys = RuntimeOuterKeys {
         d1: derive_d1_tunnel_outer_keys(&handshake.established.secrets)?,
+        d2: derive_d2_tunnel_outer_keys(&handshake.established.secrets)?,
         s1: derive_s1_tunnel_outer_keys(&handshake.established.secrets)?,
     };
     let mut adaptive = AdaptiveDatapath::new_client(
@@ -68,7 +69,6 @@ pub(super) async fn run_client_session_loop(
         handshake.binding,
         handshake.transport,
         event_tx.clone(),
-        carriers,
     )?;
     let mut active_path_id = active_path.id;
     let mut standby_path_id = None;
@@ -361,7 +361,6 @@ pub(super) async fn run_client_session_loop(
                             next_path_id,
                             binding,
                             config,
-                            carriers,
                             event_tx.clone(),
                         )
                         .await {

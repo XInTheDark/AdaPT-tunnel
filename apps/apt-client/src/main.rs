@@ -37,6 +37,7 @@ impl From<CliRuntimeMode> for RuntimeMode {
 enum CliCarrier {
     Auto,
     D1,
+    D2,
     S1,
 }
 
@@ -45,6 +46,7 @@ impl From<CliCarrier> for RuntimeCarrierPreference {
         match value {
             CliCarrier::Auto => Self::Auto,
             CliCarrier::D1 => Self::D1,
+            CliCarrier::D2 => Self::D2,
             CliCarrier::S1 => Self::S1,
         }
     }

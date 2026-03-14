@@ -1,4 +1,5 @@
 use super::*;
+use crate::quic::{derive_d2_public_endpoint, load_certificate_chain, load_private_key};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthorizedPeerConfig {
@@ -19,6 +20,14 @@ pub struct ServerConfig {
     pub public_endpoint: String,
     #[serde(default)]
     pub runtime_mode: RuntimeMode,
+    #[serde(default)]
+    pub d2_bind: Option<SocketAddr>,
+    #[serde(default)]
+    pub d2_public_endpoint: Option<String>,
+    #[serde(default)]
+    pub d2_certificate: Option<String>,
+    #[serde(default)]
+    pub d2_private_key: Option<String>,
     #[serde(default)]
     pub stream_bind: Option<SocketAddr>,
     #[serde(default)]
@@ -78,6 +87,12 @@ impl ServerConfig {
         resolve_file_spec_relative_to_base(&mut config.server_static_public_key, base);
         resolve_file_spec_relative_to_base(&mut config.cookie_key, base);
         resolve_file_spec_relative_to_base(&mut config.ticket_key, base);
+        if let Some(d2_certificate) = &mut config.d2_certificate {
+            resolve_file_spec_relative_to_base(d2_certificate, base);
+        }
+        if let Some(d2_private_key) = &mut config.d2_private_key {
+            resolve_file_spec_relative_to_base(d2_private_key, base);
+        }
         for peer in &mut config.peers {
             if let Some(admission_key) = &mut peer.admission_key {
                 resolve_file_spec_relative_to_base(admission_key, base);
@@ -103,6 +118,7 @@ impl ServerConfig {
             bind: self.bind,
             public_endpoint: self.public_endpoint.clone(),
             runtime_mode: self.runtime_mode,
+            d2: resolve_server_d2_config(self)?,
             stream_bind: self.stream_bind.or(Some(self.bind)),
             stream_public_endpoint: self
                 .stream_public_endpoint
@@ -176,10 +192,19 @@ impl ResolvedAuthorizedPeer {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedServerD2Config {
+    pub bind: SocketAddr,
+    pub public_endpoint: String,
+    pub certificate_spec: String,
+    pub private_key_spec: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedServerConfig {
     pub bind: SocketAddr,
     pub public_endpoint: String,
     pub runtime_mode: RuntimeMode,
+    pub d2: Option<ResolvedServerD2Config>,
     pub stream_bind: Option<SocketAddr>,
     pub stream_public_endpoint: Option<String>,
     pub stream_decoy_surface: bool,
@@ -220,4 +245,46 @@ pub struct SessionTransportParameters {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServerSessionExtension {
     TunnelParameters(SessionTransportParameters),
+}
+
+fn resolve_server_d2_config(
+    config: &ServerConfig,
+) -> Result<Option<ResolvedServerD2Config>, RuntimeError> {
+    let any_present = config.d2_bind.is_some()
+        || config.d2_public_endpoint.is_some()
+        || config.d2_certificate.is_some()
+        || config.d2_private_key.is_some();
+    if !any_present {
+        return Ok(None);
+    }
+
+    let Some(bind) = config.d2_bind else {
+        return Err(RuntimeError::InvalidConfig(
+            "D2 is partially configured, but d2_bind is missing".to_string(),
+        ));
+    };
+    let public_endpoint = match &config.d2_public_endpoint {
+        Some(value) => value.clone(),
+        None => derive_d2_public_endpoint(&config.public_endpoint).ok_or_else(|| {
+            RuntimeError::InvalidConfig(
+                "D2 is configured, but d2_public_endpoint could not be derived".to_string(),
+            )
+        })?,
+    };
+    let certificate_spec = config.d2_certificate.clone().ok_or_else(|| {
+        RuntimeError::InvalidConfig("D2 is configured, but d2_certificate is missing".to_string())
+    })?;
+    let private_key_spec = config.d2_private_key.clone().ok_or_else(|| {
+        RuntimeError::InvalidConfig("D2 is configured, but d2_private_key is missing".to_string())
+    })?;
+
+    let _ = load_certificate_chain(&certificate_spec)?;
+    let _ = load_private_key(&private_key_spec)?;
+
+    Ok(Some(ResolvedServerD2Config {
+        bind,
+        public_endpoint,
+        certificate_spec,
+        private_key_spec,
+    }))
 }

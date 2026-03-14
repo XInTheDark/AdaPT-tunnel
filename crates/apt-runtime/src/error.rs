@@ -21,6 +21,8 @@ pub enum RuntimeError {
     Tunnel(#[from] apt_tunnel::TunnelError),
     #[error("serialization failure: {0}")]
     Serialization(#[from] Box<bincode::ErrorKind>),
+    #[error("quic transport failure: {0}")]
+    Quic(String),
     #[error("invalid key material: {0}")]
     InvalidKeyMaterial(String),
     #[error("invalid configuration: {0}")]

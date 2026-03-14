@@ -10,7 +10,7 @@ pub(super) async fn run_client(
 ) -> Result<ClientRuntimeResult, RuntimeError> {
     let observability = ObservabilityConfig::default();
     let mut telemetry = TelemetrySnapshot::new("apt-client");
-    let carriers = RuntimeCarriers::new(1_380, false);
+    let carriers = RuntimeCarriers::new(1_380, false, config.d2.is_some());
 
     let mut persistent_state = ClientPersistentState::load(&config.state_path)?;
     persistent_state.last_status = Some(RuntimeStatus::Starting);

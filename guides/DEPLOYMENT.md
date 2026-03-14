@@ -8,7 +8,7 @@ It uses the user-friendly CLI flow instead of hand-editing every file first.
 
 - server: Linux
 - client: Linux or macOS
-- transport: `D1` over UDP, with optional `S1` TCP stream fallback
+- transport: `D1` over UDP, optional `D2` over QUIC datagrams, and optional `S1` TCP stream fallback
 - auth model: shared-deployment or per-user admission keys; the guided flow now defaults to per-user
 
 ## 1. Get the binaries
@@ -105,12 +105,19 @@ The command walks you through the main values, then creates:
 - `/etc/adapt/server.toml` by default
 - the server key files
 - a `bundles/` directory for single-file client bundles
+- optional `D2` certificate/key files when you enable `D2`
 
 If you keep the stream fallback enabled, the resulting config also carries:
 
 - `stream_bind` for the server-side `S1` listener, typically `0.0.0.0:443`
 - `stream_public_endpoint` for the client-facing `S1` endpoint, typically `host:443`
 - `stream_decoy_surface = true` so unauthenticated stream input gets a decoy-like HTTP surface instead of an APT-specific error
+
+If you enable the `D2` QUIC-datagram carrier, the resulting config also carries:
+
+- `d2_bind` for the server-side QUIC listener, typically `0.0.0.0:443`
+- `d2_public_endpoint` for the client-facing `D2` endpoint, typically `host:443`
+- `d2_certificate` and `d2_private_key` pointing at the generated pinned server identity files
 
 Important:
 
@@ -126,6 +133,9 @@ You can also run it non-interactively, for example:
   --out-dir /etc/adapt \
   --bind 0.0.0.0:51820 \
   --public-endpoint vpn.example.com:51820 \
+  --enable-d2 \
+  --d2-bind 0.0.0.0:443 \
+  --d2-public-endpoint vpn.example.com:443 \
   --stream-bind 0.0.0.0:443 \
   --stream-public-endpoint vpn.example.com:443 \
   --stream-decoy-surface \
@@ -137,6 +147,12 @@ You can also run it non-interactively, for example:
   --dns 1.1.1.1 \
   --dns 1.0.0.1 \
   --yes
+```
+
+For an existing deployment that already has a `server.toml`, you can enable or refresh `D2` in place with:
+
+```bash
+./target/release/apt-edge enable-d2 --config /etc/adapt/server.toml --d2-public-endpoint vpn.example.com:443
 ```
 
 ## 3. Generate a client bundle
@@ -188,7 +204,7 @@ Useful one-shot overrides:
 - `--mode balanced` — less conservative pacing/fallback behavior
 - `--mode speed` — fastest policy preset
 
-When `stream_bind` is configured, the server listens on both the UDP `D1` address and the TCP `S1` fallback address.
+When `d2_bind` and/or `stream_bind` are configured, the server listens on the UDP `D1` address plus the optional `D2` QUIC and `S1` fallback addresses.
 
 The server must run with privileges sufficient to:
 
@@ -206,6 +222,7 @@ The bundle is a single compressed custom-format file containing:
 - the client private key
 - the deployment or per-user admission key
 - the server static public key
+- the `D2` endpoint and pinned certificate when the server has `D2` enabled
 
 ## 6. Start the client
 
@@ -228,9 +245,9 @@ On first run, it also creates a blank optional override file at `/etc/adapt/clie
 Useful one-shot overrides:
 
 - `--mode stealth|balanced|speed` — temporary runtime-mode override
-- `--carrier auto|d1|s1` — temporary carrier preference override
+- `--carrier auto|d1|d2|s1` — temporary carrier preference override
 
-The generated bundle keeps `D1` as the normal first choice and uses `S1` conservatively when the stream endpoint is present and the datagram path is blocked or unstable.
+The generated bundle keeps `D1` as the normal first choice. When `D2` and/or `S1` are present, the conservative automatic order is `D1 -> D2 -> S1`.
 
 On macOS, the embedded client config leaves `interface_name` unset unless you intentionally rebuild a bundle that targets a specific `utunX` interface.
 When the session comes up, the client logs the assigned tunnel IP/interface, applies pushed DNS servers automatically where the local platform supports it, and the server logs the accepted session.

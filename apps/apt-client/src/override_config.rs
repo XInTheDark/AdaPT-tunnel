@@ -19,6 +19,9 @@ pub(super) struct ClientOverrideConfig {
     pub interface_name: Option<String>,
     pub routes: Option<Vec<IpNet>>,
     pub use_server_pushed_routes: Option<bool>,
+    pub enable_d2_fallback: Option<bool>,
+    pub d2_server_addr: Option<String>,
+    pub d2_server_certificate: Option<String>,
     pub session_policy: Option<SessionPolicy>,
     pub enable_s1_fallback: Option<bool>,
     pub stream_server_addr: Option<String>,
@@ -97,6 +100,16 @@ impl ClientOverrideConfig {
         if let Some(use_server_pushed_routes) = self.use_server_pushed_routes {
             config.use_server_pushed_routes = use_server_pushed_routes;
         }
+        if let Some(enable_d2_fallback) = self.enable_d2_fallback {
+            config.enable_d2_fallback = enable_d2_fallback;
+        }
+        if let Some(d2_server_addr) = self.d2_server_addr.as_ref() {
+            config.d2_server_addr = normalized_optional_string(d2_server_addr);
+        }
+        if let Some(d2_server_certificate) = self.d2_server_certificate.as_ref() {
+            config.d2_server_certificate =
+                normalize_optional_file_spec(d2_server_certificate, base);
+        }
         if let Some(session_policy) = self.session_policy.as_ref() {
             config.session_policy = session_policy.clone();
         }
@@ -145,6 +158,23 @@ fn normalized_optional_string(value: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
+fn normalize_optional_file_spec(value: &str, base: &Path) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(path) = trimmed.strip_prefix("file:") {
+        let candidate = Path::new(path);
+        let resolved = if candidate.is_relative() {
+            base.join(candidate)
+        } else {
+            candidate.to_path_buf()
+        };
+        return Some(format!("file:{}", resolved.display()));
+    }
+    Some(trimmed.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,6 +197,9 @@ mod tests {
             interface_name: None,
             routes: Vec::new(),
             use_server_pushed_routes: true,
+            enable_d2_fallback: true,
+            d2_server_addr: Some("198.51.100.10:443".to_string()),
+            d2_server_certificate: Some("BASE64-D2-CERT".to_string()),
             session_policy: SessionPolicy::default(),
             enable_s1_fallback: true,
             stream_server_addr: Some("198.51.100.10:443".to_string()),
@@ -187,11 +220,15 @@ mod tests {
         let mut config = test_config();
         ClientOverrideConfig {
             interface_name: Some("   ".to_string()),
+            d2_server_addr: Some("".to_string()),
+            d2_server_certificate: Some("   ".to_string()),
             stream_server_addr: Some(String::new()),
             ..ClientOverrideConfig::default()
         }
         .apply_to(&mut config, Path::new("/etc/adapt/client.override.toml"));
         assert_eq!(config.interface_name, None);
+        assert_eq!(config.d2_server_addr, None);
+        assert_eq!(config.d2_server_certificate, None);
         assert_eq!(config.stream_server_addr, None);
     }
 
@@ -214,17 +251,35 @@ mod tests {
         let mut config = test_config();
         ClientOverrideConfig {
             runtime_mode: Some(RuntimeMode::Balanced),
-            preferred_carrier: Some(RuntimeCarrierPreference::S1),
+            preferred_carrier: Some(RuntimeCarrierPreference::D2),
             server_addr: Some("203.0.113.5:443".to_string()),
+            enable_d2_fallback: Some(false),
+            d2_server_addr: Some("203.0.113.5:8443".to_string()),
             routes: Some(vec!["10.0.0.0/8".parse().unwrap()]),
             use_server_pushed_routes: Some(false),
             ..ClientOverrideConfig::default()
         }
         .apply_to(&mut config, Path::new("/etc/adapt/client.override.toml"));
         assert_eq!(config.runtime_mode, RuntimeMode::Balanced);
-        assert_eq!(config.preferred_carrier, RuntimeCarrierPreference::S1);
+        assert_eq!(config.preferred_carrier, RuntimeCarrierPreference::D2);
         assert_eq!(config.server_addr, "203.0.113.5:443");
+        assert!(!config.enable_d2_fallback);
+        assert_eq!(config.d2_server_addr.as_deref(), Some("203.0.113.5:8443"));
         assert_eq!(config.routes, vec!["10.0.0.0/8".parse().unwrap()]);
         assert!(!config.use_server_pushed_routes);
+    }
+
+    #[test]
+    fn relative_d2_certificate_file_is_resolved_from_override_file() {
+        let mut config = test_config();
+        ClientOverrideConfig {
+            d2_server_certificate: Some("file:certs/d2.pem".to_string()),
+            ..ClientOverrideConfig::default()
+        }
+        .apply_to(&mut config, Path::new("/etc/adapt/client.override.toml"));
+        assert_eq!(
+            config.d2_server_certificate.as_deref(),
+            Some("file:/etc/adapt/certs/d2.pem")
+        );
     }
 }

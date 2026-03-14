@@ -7,6 +7,7 @@ edition.workspace = true
 apt-bundle.workspace = true
 apt-runtime.workspace = true
 apt-types.workspace = true
+base64.workspace = true
 clap.workspace = true
 ipnet.workspace = true
 rand.workspace = true
