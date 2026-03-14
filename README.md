@@ -35,6 +35,13 @@ The intended day-to-day workflow is now CLI-driven.
 sudo apt-edge init
 ```
 
+When `apt-edge init` asks for the client-facing endpoint, use the server's **real reachable address and port**:
+
+- a public IP is fine, for example `203.0.113.10:51820`
+- a DNS name is also fine, for example `vpn.example.com:51820`
+
+Do **not** leave an example placeholder there. Whatever you enter is copied into generated client bundles.
+
 This guided command creates:
 
 - `/etc/adapt/server.toml` by default

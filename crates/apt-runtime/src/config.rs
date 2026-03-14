@@ -425,6 +425,11 @@ fn resolve_file_spec_relative_to_base(spec: &mut String, base: &Path) {
 }
 
 fn resolve_socket_addr(spec: &str) -> Result<SocketAddr, RuntimeError> {
+    if spec.contains("example.com") {
+        return Err(RuntimeError::InvalidConfig(format!(
+            "server address `{spec}` still uses the example placeholder; replace it with the server's reachable IP:port or DNS name"
+        )));
+    }
     if let Ok(parsed) = spec.parse() {
         return Ok(parsed);
     }
@@ -524,6 +529,12 @@ tunnel_ipv4 = "10.77.0.2"
             .client_static_public_key
             .contains(dir.to_string_lossy().as_ref()));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn placeholder_server_address_is_rejected() {
+        let error = resolve_socket_addr("vpn.example.com:51820").unwrap_err();
+        assert!(error.to_string().contains("example placeholder"));
     }
 
     #[test]

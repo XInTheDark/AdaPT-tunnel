@@ -315,8 +315,8 @@ fn ensure_iptables_rule(rule: &[String]) -> Result<(), RuntimeError> {
     check_args.push("-C".to_string());
     check_args.push(chain.clone());
     check_args.extend(rest.iter().cloned());
-    let check = Command::new("iptables").args(&check_args).status()?;
-    if check.success() {
+    let check = Command::new("iptables").args(&check_args).output()?;
+    if check.status.success() {
         return Ok(());
     }
     let mut add_args = prefix;

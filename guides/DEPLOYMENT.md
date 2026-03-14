@@ -107,6 +107,13 @@ The command walks you through the main values, then creates:
 - the server key files
 - a `bundles/` directory for client packages
 
+Important:
+
+- for the client-facing endpoint, enter the server's **real client-reachable IP:port or DNS name:port**
+- using the raw public IP is completely fine
+- whatever you enter there becomes `public_endpoint` in `server.toml` and `server_addr` in generated client bundles
+- do not leave an example placeholder there unless that hostname actually resolves for your clients
+
 You can also run it non-interactively, for example:
 
 ```bash

@@ -35,7 +35,7 @@ enum Command {
         /// UDP listen address for the server.
         #[arg(long)]
         bind: Option<SocketAddr>,
-        /// Public host:port that clients should use, for example vpn.example.com:51820.
+        /// Client-reachable host:port that clients should use, for example 203.0.113.10:51820 or vpn.example.com:51820.
         #[arg(long)]
         public_endpoint: Option<String>,
         /// Logical deployment identifier.
@@ -158,15 +158,28 @@ fn init_server(
         None => prompt_parse("UDP listen address", Some("0.0.0.0:51820"))?,
     };
     let public_endpoint = match public_endpoint {
-        Some(value) => value,
-        None if yes && !bind.ip().is_unspecified() => bind.to_string(),
+        Some(value) => {
+            validate_client_reachable_endpoint(&value)?;
+            value
+        }
+        None if yes && !bind.ip().is_unspecified() => {
+            let value = bind.to_string();
+            validate_client_reachable_endpoint(&value)?;
+            value
+        }
         None if yes => {
             return Err("--public-endpoint is required when using --yes with an unspecified bind address".into())
         }
-        None => prompt_string(
-            "Public host:port clients should use",
-            Some("vpn.example.com:51820"),
-        )?,
+        None => loop {
+            let value = prompt_string(
+                "Client-reachable public IP/DNS and port",
+                None,
+            )?;
+            match validate_client_reachable_endpoint(&value) {
+                Ok(()) => break value,
+                Err(error) => eprintln!("Invalid value: {error}"),
+            }
+        },
     };
     let endpoint_id = match endpoint_id {
         Some(value) => value,
@@ -398,7 +411,7 @@ fn write_bundle_readme(bundle_dir: &Path, name: &str) -> io::Result<()> {
     fs::write(
         bundle_dir.join("START-HERE.txt"),
         format!(
-            "APT client bundle for {name}\n\nRecommended install location on the client:\n  /etc/adapt\n\nRecommended steps:\n1. Copy this entire folder to the client device.\n2. On the client, install the bundle into /etc/adapt:\n\n   sudo mkdir -p /etc/adapt\n   sudo cp -R ./* /etc/adapt/\n\n3. Start the VPN using the default config location:\n\n   sudo apt-client up\n\nAlternative: you can also run directly from this folder with:\n\n   sudo apt-client up --config client.toml\n"
+            "APT client bundle for {name}\n\nRecommended install location on the client:\n  /etc/adapt\n\nRecommended steps:\n1. Copy this entire folder to the client device.\n2. On the client, install the bundle into /etc/adapt:\n\n   sudo mkdir -p /etc/adapt\n   sudo cp -R ./* /etc/adapt/\n\n3. Start the VPN using the default config location:\n\n   sudo apt-client up\n\nAlternative: you can also run directly from this folder with:\n\n   sudo apt-client up --config client.toml\n\nNote:\n- `client.toml` contains the server address from the server's `public_endpoint` setting.\n- That value must be a client-reachable IP:port or DNS name:port.\n"
         ),
     )
 }
@@ -448,6 +461,22 @@ fn prompt_path(label: &str, default: Option<&str>) -> Result<PathBuf, Box<dyn st
     Ok(PathBuf::from(prompt_string(label, default)?))
 }
 
+fn validate_client_reachable_endpoint(endpoint: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let trimmed = endpoint.trim();
+    if trimmed.is_empty() {
+        return Err("endpoint cannot be empty; use a client-reachable IP:port or DNS name:port".into());
+    }
+    if trimmed.contains("example.com") {
+        return Err("endpoint still uses the example placeholder; replace it with the server's real public IP:port or DNS name:port".into());
+    }
+    if let Ok(addr) = trimmed.parse::<SocketAddr>() {
+        if addr.ip().is_unspecified() {
+            return Err("endpoint cannot use 0.0.0.0 or another unspecified address; use the server's real public IP:port or DNS name:port".into());
+        }
+    }
+    Ok(())
+}
+
 fn first_usable_ipv4(subnet: Ipv4Net) -> Result<Ipv4Addr, Box<dyn std::error::Error>> {
     let network = u32::from(subnet.network());
     let broadcast = u32::from(subnet.broadcast());
@@ -473,6 +502,31 @@ fn next_available_client_ipv4(config: &ServerConfig) -> Result<Ipv4Addr, Box<dyn
         }
     }
     Err("no free client IPs remain in the configured tunnel subnet".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_client_reachable_endpoint;
+
+    #[test]
+    fn placeholder_public_endpoint_is_rejected() {
+        assert!(validate_client_reachable_endpoint("vpn.example.com:51820").is_err());
+    }
+
+    #[test]
+    fn unspecified_public_endpoint_is_rejected() {
+        assert!(validate_client_reachable_endpoint("0.0.0.0:51820").is_err());
+    }
+
+    #[test]
+    fn explicit_ip_public_endpoint_is_allowed() {
+        assert!(validate_client_reachable_endpoint("203.0.113.10:51820").is_ok());
+    }
+
+    #[test]
+    fn dns_public_endpoint_is_allowed() {
+        assert!(validate_client_reachable_endpoint("vpn.my-domain.test:51820").is_ok());
+    }
 }
 
 fn subnet_from(ip: Ipv4Addr, netmask: Ipv4Addr) -> Result<Ipv4Net, Box<dyn std::error::Error>> {
