@@ -1,9 +1,10 @@
 use crate::error::RuntimeError;
 use apt_admission::{AdmissionPacket, ServerConfirmationPacket};
-use apt_carriers::D1Carrier;
+use apt_carriers::{CarrierProfile, D1Carrier};
 use apt_crypto::{
     admission_associated_data, derive_admission_key, derive_runtime_key, open_opaque_payload,
-    seal_opaque_payload, SessionSecretsForRole,
+    open_opaque_payload_bytes, seal_opaque_payload, seal_opaque_payload_bytes,
+    SessionSecretsForRole,
 };
 use apt_types::{CarrierBinding, EndpointId, OpaqueMessage};
 
@@ -154,7 +155,11 @@ pub fn encode_tunnel_datagram(
     outer_key: &[u8; 32],
     packet_bytes: &[u8],
 ) -> Result<Vec<u8>, RuntimeError> {
-    encode_opaque_datagram(carrier, endpoint_id, outer_key, packet_bytes)
+    let datagram = seal_opaque_payload_bytes(outer_key, &d1_outer_aad(endpoint_id), packet_bytes)?;
+    if datagram.len() > usize::from(carrier.max_record_size()) {
+        return Err(RuntimeError::Carrier(apt_carriers::CarrierError::Oversize));
+    }
+    Ok(datagram)
 }
 
 pub fn decode_tunnel_datagram(
@@ -163,7 +168,13 @@ pub fn decode_tunnel_datagram(
     outer_key: &[u8; 32],
     datagram: &[u8],
 ) -> Result<Vec<u8>, RuntimeError> {
-    decode_opaque_datagram(carrier, endpoint_id, outer_key, datagram)
+    if datagram.is_empty() || datagram.len() > usize::from(carrier.max_record_size()) {
+        return Err(RuntimeError::Carrier(
+            apt_carriers::CarrierError::MalformedRecord,
+        ));
+    }
+    open_opaque_payload_bytes(outer_key, &d1_outer_aad(endpoint_id), datagram)
+        .map_err(RuntimeError::from)
 }
 
 pub fn encode_tunnel_stream_payload(
@@ -171,7 +182,8 @@ pub fn encode_tunnel_stream_payload(
     outer_key: &[u8; 32],
     packet_bytes: &[u8],
 ) -> Result<Vec<u8>, RuntimeError> {
-    encode_opaque_bytes(&s1_outer_aad(endpoint_id), outer_key, packet_bytes)
+    seal_opaque_payload_bytes(outer_key, &s1_outer_aad(endpoint_id), packet_bytes)
+        .map_err(RuntimeError::from)
 }
 
 pub fn decode_tunnel_stream_payload(
@@ -179,7 +191,8 @@ pub fn decode_tunnel_stream_payload(
     outer_key: &[u8; 32],
     payload: &[u8],
 ) -> Result<Vec<u8>, RuntimeError> {
-    decode_opaque_bytes(&s1_outer_aad(endpoint_id), outer_key, payload)
+    open_opaque_payload_bytes(outer_key, &s1_outer_aad(endpoint_id), payload)
+        .map_err(RuntimeError::from)
 }
 
 fn encode_opaque_datagram(

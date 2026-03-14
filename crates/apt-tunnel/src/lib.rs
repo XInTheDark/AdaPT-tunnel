@@ -5,8 +5,8 @@
 //! the session helper until acknowledged or expired.
 
 use apt_crypto::{
-    derive_rekey_phase, open_tunnel_payload, open_tunnel_payload_with_nonce, seal_tunnel_payload,
-    seal_tunnel_payload_with_nonce, CryptoError, SessionSecretsForRole,
+    derive_rekey_phase, tunnel_nonce_from_packet_number, CryptoError, SessionSecretsForRole,
+    TunnelAead,
 };
 use apt_types::{CloseCode, RekeyLimits, SessionId, SessionRole};
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,7 @@ const FLAG_HAS_CONTROL: u8 = 0x01;
 const PACKET_NONCE_LEN: usize = 12;
 const DEFAULT_RETRANSMIT_INTERVAL_SECS: u64 = 1;
 const DEFAULT_CONTROL_LIFETIME_SECS: u64 = 10;
+const FAST_PATH_SINGLE_IP_DATA_TAG: u8 = 0xA1;
 
 /// Errors returned by the tunnel layer.
 #[derive(Debug, Error)]
@@ -291,7 +292,12 @@ impl ReplayWindow {
         self.seen.insert(packet_number);
         if let Some(largest) = self.largest_seen {
             let floor = largest.saturating_sub(self.window_size);
-            self.seen.retain(|value| *value >= floor);
+            while let Some(oldest) = self.seen.iter().next().copied() {
+                if oldest >= floor {
+                    break;
+                }
+                self.seen.remove(&oldest);
+            }
         }
         Ok(())
     }
@@ -305,20 +311,24 @@ struct PendingControl {
     attempts: u8,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct PendingSendRekey {
     control_id: u64,
     next_phase: u8,
     next_send_data: [u8; 32],
     next_send_ctrl: [u8; 32],
+    next_send_data_aead: TunnelAead,
+    next_send_ctrl_aead: TunnelAead,
     next_rekey: [u8; 32],
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct StagedRecvRekey {
     next_phase: u8,
     next_recv_data: [u8; 32],
     next_recv_ctrl: [u8; 32],
+    next_recv_data_aead: TunnelAead,
+    next_recv_ctrl_aead: TunnelAead,
     next_rekey: [u8; 32],
 }
 
@@ -343,6 +353,10 @@ pub struct TunnelSession {
     recv_data_key: [u8; 32],
     send_ctrl_key: [u8; 32],
     recv_ctrl_key: [u8; 32],
+    send_data_aead: TunnelAead,
+    recv_data_aead: TunnelAead,
+    send_ctrl_aead: TunnelAead,
+    recv_ctrl_aead: TunnelAead,
     rekey_secret: [u8; 32],
     send_key_phase: u8,
     recv_key_phase: u8,
@@ -369,6 +383,14 @@ impl TunnelSession {
         replay_window_size: u64,
         now_secs: u64,
     ) -> Self {
+        let send_data_aead =
+            TunnelAead::new(&secrets.send_data).expect("session secrets are fixed length");
+        let recv_data_aead =
+            TunnelAead::new(&secrets.recv_data).expect("session secrets are fixed length");
+        let send_ctrl_aead =
+            TunnelAead::new(&secrets.send_ctrl).expect("session secrets are fixed length");
+        let recv_ctrl_aead =
+            TunnelAead::new(&secrets.recv_ctrl).expect("session secrets are fixed length");
         Self {
             session_id,
             role,
@@ -376,6 +398,10 @@ impl TunnelSession {
             recv_data_key: secrets.recv_data,
             send_ctrl_key: secrets.send_ctrl,
             recv_ctrl_key: secrets.recv_ctrl,
+            send_data_aead,
+            recv_data_aead,
+            send_ctrl_aead,
+            recv_ctrl_aead,
             rekey_secret: secrets.rekey,
             send_key_phase: 0,
             recv_key_phase: 0,
@@ -497,6 +523,8 @@ impl TunnelSession {
             next_phase,
             next_send_data,
             next_send_ctrl,
+            next_send_data_aead: TunnelAead::new(&next_send_data)?,
+            next_send_ctrl_aead: TunnelAead::new(&next_send_ctrl)?,
             next_rekey: phase.next_rekey,
         });
         let frame = Frame::SessionUpdate {
@@ -515,52 +543,57 @@ impl TunnelSession {
         frames: &[Frame],
         now_secs: u64,
     ) -> Result<EncodedPacket, TunnelError> {
-        let mut has_control = false;
-        let mut wire_frames = Vec::with_capacity(frames.len());
-        for frame in frames {
-            match frame {
-                Frame::IpData(packet) => wire_frames.push(WireFrame::IpData(packet.clone())),
-                Frame::Padding(bytes) => wire_frames.push(WireFrame::Padding(bytes.clone())),
-                Frame::CtrlAck { .. }
-                | Frame::PathChallenge { .. }
-                | Frame::PathResponse { .. }
-                | Frame::SessionUpdate { .. }
-                | Frame::Ping
-                | Frame::Close { .. } => {
-                    has_control = true;
-                    let control_plaintext = bincode::serialize(&ControlFrame::try_from(frame)?)?;
-                    let sequence_number = self.send_ctrl_sequence;
-                    self.send_ctrl_sequence = self.send_ctrl_sequence.saturating_add(1);
-                    let ciphertext = seal_tunnel_payload(
-                        &self.send_ctrl_key,
-                        sequence_number,
-                        b"apt ctrl",
-                        &control_plaintext,
-                    )?;
-                    wire_frames.push(WireFrame::EncryptedControl(EncryptedControlFrame {
-                        sequence_number,
-                        ciphertext,
-                    }));
-                }
-            }
-        }
-
         let header = TunnelPacketHeader {
-            flags: if has_control { FLAG_HAS_CONTROL } else { 0 },
+            flags: if frames
+                .iter()
+                .any(|frame| !matches!(frame, Frame::IpData(_) | Frame::Padding(_)))
+            {
+                FLAG_HAS_CONTROL
+            } else {
+                0
+            },
             key_phase: self.send_key_phase,
             packet_number: self.send_packet_number,
         };
-        let plaintext = bincode::serialize(&WirePacketBody {
-            header,
-            frames: wire_frames,
-        })?;
-        let nonce: [u8; PACKET_NONCE_LEN] = rand::random();
-        let ciphertext = seal_tunnel_payload_with_nonce(
-            &self.send_data_key,
-            &nonce,
-            &self.session_id.0,
-            &plaintext,
-        )?;
+        let plaintext = if let [Frame::IpData(packet)] = frames {
+            encode_fast_path_single_ip_data(header, packet)?
+        } else {
+            let mut wire_frames = Vec::with_capacity(frames.len());
+            for frame in frames {
+                match frame {
+                    Frame::IpData(packet) => wire_frames.push(WireFrame::IpData(packet.clone())),
+                    Frame::Padding(bytes) => wire_frames.push(WireFrame::Padding(bytes.clone())),
+                    Frame::CtrlAck { .. }
+                    | Frame::PathChallenge { .. }
+                    | Frame::PathResponse { .. }
+                    | Frame::SessionUpdate { .. }
+                    | Frame::Ping
+                    | Frame::Close { .. } => {
+                        let control_plaintext =
+                            bincode::serialize(&ControlFrame::try_from(frame)?)?;
+                        let sequence_number = self.send_ctrl_sequence;
+                        self.send_ctrl_sequence = self.send_ctrl_sequence.saturating_add(1);
+                        let ciphertext = self.send_ctrl_aead.seal(
+                            sequence_number,
+                            b"apt ctrl",
+                            &control_plaintext,
+                        )?;
+                        wire_frames.push(WireFrame::EncryptedControl(EncryptedControlFrame {
+                            sequence_number,
+                            ciphertext,
+                        }));
+                    }
+                }
+            }
+            bincode::serialize(&WirePacketBody {
+                header,
+                frames: wire_frames,
+            })?
+        };
+        let nonce = tunnel_nonce_from_packet_number(header.packet_number);
+        let ciphertext =
+            self.send_data_aead
+                .seal_with_nonce(&nonce, &self.session_id.0, &plaintext)?;
         let mut packet = Vec::with_capacity(nonce.len() + ciphertext.len());
         packet.extend_from_slice(&nonce);
         packet.extend_from_slice(&ciphertext);
@@ -577,11 +610,13 @@ impl TunnelSession {
 
     fn apply_ack(&mut self, acked_control_id: u64, now_secs: u64) {
         self.pending_controls.remove(&acked_control_id);
-        if let Some(pending) = self.pending_send_rekey {
+        if let Some(pending) = self.pending_send_rekey.as_ref() {
             if pending.control_id == acked_control_id {
                 self.send_key_phase = pending.next_phase;
                 self.send_data_key = pending.next_send_data;
                 self.send_ctrl_key = pending.next_send_ctrl;
+                self.send_data_aead = pending.next_send_data_aead.clone();
+                self.send_ctrl_aead = pending.next_send_ctrl_aead.clone();
                 self.rekey_secret = pending.next_rekey;
                 self.bytes_sent_under_phase = 0;
                 self.phase_started_at_secs = now_secs;
@@ -611,17 +646,21 @@ impl TunnelSession {
             next_phase,
             next_recv_data,
             next_recv_ctrl,
+            next_recv_data_aead: TunnelAead::new(&next_recv_data)?,
+            next_recv_ctrl_aead: TunnelAead::new(&next_recv_ctrl)?,
             next_rekey: phase.next_rekey,
         });
         Ok(())
     }
 
     fn maybe_promote_recv_phase(&mut self, key_phase: u8, now_secs: u64) {
-        if let Some(staged) = self.staged_recv_rekey {
+        if let Some(staged) = self.staged_recv_rekey.as_ref() {
             if staged.next_phase == key_phase {
                 self.recv_key_phase = staged.next_phase;
                 self.recv_data_key = staged.next_recv_data;
                 self.recv_ctrl_key = staged.next_recv_ctrl;
+                self.recv_data_aead = staged.next_recv_data_aead.clone();
+                self.recv_ctrl_aead = staged.next_recv_ctrl_aead.clone();
                 self.rekey_secret = staged.next_rekey;
                 self.phase_started_at_secs = now_secs;
                 self.staged_recv_rekey = None;
@@ -644,46 +683,62 @@ impl TunnelSession {
         let ciphertext = &bytes[PACKET_NONCE_LEN..];
         let session_aad = &self.session_id.0;
 
-        let try_decrypt = |key: &[u8; 32]| -> Result<Option<WirePacketBody>, TunnelError> {
-            match open_tunnel_payload_with_nonce(key, &nonce, session_aad, ciphertext) {
-                Ok(plaintext) => {
-                    let body = bincode::deserialize(&plaintext)?;
-                    Ok(Some(body))
-                }
+        let try_decrypt = |aead: &TunnelAead| -> Result<Option<Vec<u8>>, TunnelError> {
+            match aead.open_with_nonce(&nonce, session_aad, ciphertext) {
+                Ok(plaintext) => Ok(Some(plaintext)),
                 Err(CryptoError::Aead) => Ok(None),
                 Err(error) => Err(TunnelError::Crypto(error)),
             }
         };
 
-        let (header, wire_frames) = if let Some(body) = try_decrypt(&self.recv_data_key)? {
-            if body.header.key_phase != self.recv_key_phase {
+        let decoded_plaintext = if let Some(plaintext) = try_decrypt(&self.recv_data_aead)? {
+            let decoded = decode_packet_plaintext(&plaintext)?;
+            if decoded.header().key_phase != self.recv_key_phase {
                 return Err(TunnelError::InvalidState("unexpected receive key phase"));
             }
-            (body.header, body.frames)
-        } else if let Some(staged) = self.staged_recv_rekey {
-            if let Some(body) = try_decrypt(&staged.next_recv_data)? {
-                if body.header.key_phase != staged.next_phase {
+            decoded
+        } else if let Some(staged) = self.staged_recv_rekey.as_ref() {
+            if let Some(plaintext) = try_decrypt(&staged.next_recv_data_aead)? {
+                let decoded = decode_packet_plaintext(&plaintext)?;
+                if decoded.header().key_phase != staged.next_phase {
                     return Err(TunnelError::InvalidState(
                         "unexpected staged receive key phase",
                     ));
                 }
-                (body.header, body.frames)
+                decoded
             } else {
                 return Err(TunnelError::Crypto(CryptoError::Aead));
             }
         } else {
             return Err(TunnelError::Crypto(CryptoError::Aead));
         };
+        let header = decoded_plaintext.header();
         self.replay_window.check_and_insert(header.packet_number)?;
 
-        let ctrl_key = if header.key_phase == self.recv_key_phase {
-            self.recv_ctrl_key
+        if let DecodedPlaintext::FastPath { packet, .. } = decoded_plaintext {
+            self.maybe_promote_recv_phase(header.key_phase, now_secs);
+            return Ok(DecodedPacket {
+                header,
+                frames: vec![Frame::IpData(packet)],
+                ack_suggestions: Vec::new(),
+            });
+        }
+        let DecodedPlaintext::Standard(body) = decoded_plaintext else {
+            unreachable!("fast-path case already returned")
+        };
+
+        let ctrl_aead = if header.key_phase == self.recv_key_phase {
+            self.recv_ctrl_aead.clone()
         } else if self
             .staged_recv_rekey
             .as_ref()
             .is_some_and(|staged| staged.next_phase == header.key_phase)
         {
-            self.staged_recv_rekey.unwrap().next_recv_ctrl
+            self.staged_recv_rekey
+                .as_ref()
+                .expect("checked above")
+                .next_recv_ctrl_aead
+                .clone()
         } else {
             return Err(TunnelError::InvalidState(
                 "unknown receive control key phase",
@@ -692,13 +747,12 @@ impl TunnelSession {
 
         let mut frames = Vec::new();
         let mut ack_suggestions = Vec::new();
-        for wire_frame in wire_frames {
+        for wire_frame in body.frames {
             match wire_frame {
                 WireFrame::IpData(packet) => frames.push(Frame::IpData(packet)),
                 WireFrame::Padding(bytes) => frames.push(Frame::Padding(bytes)),
                 WireFrame::EncryptedControl(control) => {
-                    let plaintext = open_tunnel_payload(
-                        &ctrl_key,
+                    let plaintext = ctrl_aead.open(
                         control.sequence_number,
                         b"apt ctrl",
                         &control.ciphertext,
@@ -742,10 +796,76 @@ impl TunnelSession {
     }
 }
 
+fn encode_fast_path_single_ip_data(
+    header: TunnelPacketHeader,
+    packet: &[u8],
+) -> Result<Vec<u8>, TunnelError> {
+    let packet_len = u16::try_from(packet.len())
+        .map_err(|_| TunnelError::InvalidState("ip packet too large"))?;
+    let mut plaintext = Vec::with_capacity(1 + 1 + 1 + 8 + 2 + packet.len());
+    plaintext.push(FAST_PATH_SINGLE_IP_DATA_TAG);
+    plaintext.push(header.flags);
+    plaintext.push(header.key_phase);
+    plaintext.extend_from_slice(&header.packet_number.to_be_bytes());
+    plaintext.extend_from_slice(&packet_len.to_be_bytes());
+    plaintext.extend_from_slice(packet);
+    Ok(plaintext)
+}
+
+fn decode_fast_path_header(plaintext: &[u8]) -> Option<TunnelPacketHeader> {
+    if plaintext.len() < 13 || plaintext.first().copied()? != FAST_PATH_SINGLE_IP_DATA_TAG {
+        return None;
+    }
+    Some(TunnelPacketHeader {
+        flags: plaintext.get(1).copied()?,
+        key_phase: plaintext.get(2).copied()?,
+        packet_number: u64::from_be_bytes(plaintext.get(3..11)?.try_into().ok()?),
+    })
+}
+
+enum DecodedPlaintext {
+    FastPath {
+        header: TunnelPacketHeader,
+        packet: Vec<u8>,
+    },
+    Standard(WirePacketBody),
+}
+
+impl DecodedPlaintext {
+    fn header(&self) -> TunnelPacketHeader {
+        match self {
+            Self::FastPath { header, .. } => *header,
+            Self::Standard(body) => body.header,
+        }
+    }
+}
+
+fn decode_packet_plaintext(plaintext: &[u8]) -> Result<DecodedPlaintext, TunnelError> {
+    if let Some(header) = decode_fast_path_header(plaintext) {
+        let packet_len = u16::from_be_bytes(
+            plaintext
+                .get(11..13)
+                .ok_or(TunnelError::MalformedPacket)?
+                .try_into()
+                .map_err(|_| TunnelError::MalformedPacket)?,
+        ) as usize;
+        let packet = plaintext.get(13..).ok_or(TunnelError::MalformedPacket)?;
+        if packet.len() != packet_len {
+            return Err(TunnelError::MalformedPacket);
+        }
+        return Ok(DecodedPlaintext::FastPath {
+            header,
+            packet: packet.to_vec(),
+        });
+    }
+
+    Ok(DecodedPlaintext::Standard(bincode::deserialize(plaintext)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apt_crypto::tunnel_nonce_from_packet_number;
+    use apt_crypto::{open_tunnel_payload_with_nonce, tunnel_nonce_from_packet_number};
     use apt_types::RekeyLimits;
 
     fn test_session_pair() -> (TunnelSession, TunnelSession) {
@@ -813,6 +933,30 @@ mod tests {
         let decoded = responder.decode_packet(&packet.bytes, 0).unwrap();
         assert_eq!(decoded.frames.len(), 3);
         assert_eq!(decoded.ack_suggestions.len(), 1);
+    }
+
+    #[test]
+    fn single_ip_frame_uses_fast_path_encoding() {
+        let (mut initiator, mut responder) = test_session_pair();
+        let packet = initiator
+            .encode_packet(&[Frame::IpData(vec![0x5A; 512])], 0)
+            .unwrap();
+        let nonce: [u8; PACKET_NONCE_LEN] = packet.bytes[..PACKET_NONCE_LEN].try_into().unwrap();
+        let plaintext = open_tunnel_payload_with_nonce(
+            &initiator.send_data_key,
+            &nonce,
+            &initiator.session_id.0,
+            &packet.bytes[PACKET_NONCE_LEN..],
+        )
+        .unwrap();
+        assert_eq!(
+            plaintext.first().copied(),
+            Some(FAST_PATH_SINGLE_IP_DATA_TAG)
+        );
+
+        let decoded = responder.decode_packet(&packet.bytes, 0).unwrap();
+        assert_eq!(decoded.frames, vec![Frame::IpData(vec![0x5A; 512])]);
+        assert!(decoded.ack_suggestions.is_empty());
     }
 
     #[test]

@@ -39,6 +39,164 @@ fn random_bytes<const N: usize>() -> [u8; N] {
     out
 }
 
+/// Cached ChaCha20-Poly1305 tunnel cipher for repeated packet operations.
+pub struct TunnelAead {
+    key: [u8; AEAD_KEY_LEN],
+    cipher: ChaCha20Poly1305,
+}
+
+impl TunnelAead {
+    /// Builds a cached tunnel AEAD instance for one direction.
+    pub fn new(key: &[u8; AEAD_KEY_LEN]) -> Result<Self, CryptoError> {
+        let cipher = ChaCha20Poly1305::new_from_slice(key)
+            .map_err(|_| CryptoError::InvalidInput("invalid ChaCha20-Poly1305 key"))?;
+        Ok(Self { key: *key, cipher })
+    }
+
+    /// Encrypts tunnel payload bytes with a packet-number-derived nonce.
+    pub fn seal(
+        &self,
+        packet_number: u64,
+        associated_data: &[u8],
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, CryptoError> {
+        self.seal_with_nonce(
+            &tunnel_nonce_from_packet_number(packet_number),
+            associated_data,
+            plaintext,
+        )
+    }
+
+    /// Encrypts tunnel payload bytes with an explicit 96-bit nonce.
+    pub fn seal_with_nonce(
+        &self,
+        nonce: &[u8; TUNNEL_NONCE_LEN],
+        associated_data: &[u8],
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, CryptoError> {
+        self.cipher
+            .encrypt(
+                nonce.into(),
+                Payload {
+                    msg: plaintext,
+                    aad: associated_data,
+                },
+            )
+            .map_err(|_| CryptoError::Aead)
+    }
+
+    /// Decrypts tunnel payload bytes with a packet-number-derived nonce.
+    pub fn open(
+        &self,
+        packet_number: u64,
+        associated_data: &[u8],
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, CryptoError> {
+        self.open_with_nonce(
+            &tunnel_nonce_from_packet_number(packet_number),
+            associated_data,
+            ciphertext,
+        )
+    }
+
+    /// Decrypts tunnel payload bytes with an explicit 96-bit nonce.
+    pub fn open_with_nonce(
+        &self,
+        nonce: &[u8; TUNNEL_NONCE_LEN],
+        associated_data: &[u8],
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, CryptoError> {
+        self.cipher
+            .decrypt(
+                nonce.into(),
+                Payload {
+                    msg: ciphertext,
+                    aad: associated_data,
+                },
+            )
+            .map_err(|_| CryptoError::Aead)
+    }
+}
+
+impl Clone for TunnelAead {
+    fn clone(&self) -> Self {
+        Self::new(&self.key).expect("cached tunnel cipher key was validated at construction")
+    }
+}
+
+impl fmt::Debug for TunnelAead {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TunnelAead")
+            .field("key", &"[redacted]")
+            .finish()
+    }
+}
+
+/// Cached XChaCha20-Poly1305 outer cipher for repeated opaque-record operations.
+pub struct OpaqueAead {
+    key: [u8; AEAD_KEY_LEN],
+    cipher: XChaCha20Poly1305,
+}
+
+impl OpaqueAead {
+    /// Builds a cached outer-record AEAD instance.
+    pub fn new(key: &[u8; AEAD_KEY_LEN]) -> Result<Self, CryptoError> {
+        let cipher = XChaCha20Poly1305::new_from_slice(key)
+            .map_err(|_| CryptoError::InvalidInput("invalid XChaCha key"))?;
+        Ok(Self { key: *key, cipher })
+    }
+
+    /// Encrypts raw bytes with an explicit XChaCha20 nonce.
+    pub fn seal_with_nonce(
+        &self,
+        nonce: &[u8; COOKIE_NONCE_LEN],
+        associated_data: &[u8],
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, CryptoError> {
+        self.cipher
+            .encrypt(
+                nonce.into(),
+                Payload {
+                    msg: plaintext,
+                    aad: associated_data,
+                },
+            )
+            .map_err(|_| CryptoError::Aead)
+    }
+
+    /// Decrypts raw bytes with an explicit XChaCha20 nonce.
+    pub fn open_with_nonce(
+        &self,
+        nonce: &[u8; COOKIE_NONCE_LEN],
+        associated_data: &[u8],
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, CryptoError> {
+        self.cipher
+            .decrypt(
+                nonce.into(),
+                Payload {
+                    msg: ciphertext,
+                    aad: associated_data,
+                },
+            )
+            .map_err(|_| CryptoError::Aead)
+    }
+}
+
+impl Clone for OpaqueAead {
+    fn clone(&self) -> Self {
+        Self::new(&self.key).expect("cached opaque cipher key was validated at construction")
+    }
+}
+
+impl fmt::Debug for OpaqueAead {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OpaqueAead")
+            .field("key", &"[redacted]")
+            .finish()
+    }
+}
+
 fn expand_hkdf(secret: &[u8], info: &[u8]) -> Result<[u8; 32], CryptoError> {
     let hk = Hkdf::<Sha256>::new(None, secret);
     let mut out = [0_u8; 32];
@@ -180,10 +338,16 @@ pub struct ResumeTicket {
 /// Helper for producing admission associated-data bindings.
 #[must_use]
 pub fn admission_associated_data(endpoint_id: &EndpointId, carrier: CarrierBinding) -> Vec<u8> {
-    let mut out = Vec::with_capacity(endpoint_id.as_str().len() + 8);
+    let carrier_label: &[u8] = match carrier {
+        CarrierBinding::D1DatagramUdp => b"D1DatagramUdp",
+        CarrierBinding::S1EncryptedStream => b"S1EncryptedStream",
+        CarrierBinding::D2EncryptedDatagram => b"D2EncryptedDatagram",
+        CarrierBinding::H1RequestResponse => b"H1RequestResponse",
+    };
+    let mut out = Vec::with_capacity(endpoint_id.as_str().len() + 1 + carrier_label.len());
     out.extend_from_slice(endpoint_id.as_str().as_bytes());
     out.push(0xff);
-    out.extend_from_slice(format!("{carrier:?}").as_bytes());
+    out.extend_from_slice(carrier_label);
     out
 }
 
@@ -193,19 +357,23 @@ pub fn seal_opaque_payload(
     associated_data: &[u8],
     plaintext: &[u8],
 ) -> Result<OpaqueMessage, CryptoError> {
-    let cipher = XChaCha20Poly1305::new_from_slice(key)
-        .map_err(|_| CryptoError::InvalidInput("invalid XChaCha key"))?;
+    let cipher = OpaqueAead::new(key)?;
     let nonce = random_bytes();
-    let ciphertext = cipher
-        .encrypt(
-            (&nonce).into(),
-            Payload {
-                msg: plaintext,
-                aad: associated_data,
-            },
-        )
-        .map_err(|_| CryptoError::Aead)?;
+    let ciphertext = cipher.seal_with_nonce(&nonce, associated_data, plaintext)?;
     Ok(OpaqueMessage { nonce, ciphertext })
+}
+
+/// Encrypts raw bytes into a nonce-prefixed opaque XChaCha20-Poly1305 payload.
+pub fn seal_opaque_payload_bytes(
+    key: &[u8; AEAD_KEY_LEN],
+    associated_data: &[u8],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
+    let message = seal_opaque_payload(key, associated_data, plaintext)?;
+    let mut out = Vec::with_capacity(message.nonce.len() + message.ciphertext.len());
+    out.extend_from_slice(&message.nonce);
+    out.extend_from_slice(&message.ciphertext);
+    Ok(out)
 }
 
 /// Decrypts raw bytes from an opaque XChaCha20-Poly1305 message.
@@ -214,17 +382,23 @@ pub fn open_opaque_payload(
     associated_data: &[u8],
     message: &OpaqueMessage,
 ) -> Result<Vec<u8>, CryptoError> {
-    let cipher = XChaCha20Poly1305::new_from_slice(key)
-        .map_err(|_| CryptoError::InvalidInput("invalid XChaCha key"))?;
-    cipher
-        .decrypt(
-            (&message.nonce).into(),
-            Payload {
-                msg: &message.ciphertext,
-                aad: associated_data,
-            },
-        )
-        .map_err(|_| CryptoError::Aead)
+    OpaqueAead::new(key)?.open_with_nonce(&message.nonce, associated_data, &message.ciphertext)
+}
+
+/// Decrypts raw bytes from a nonce-prefixed opaque XChaCha20-Poly1305 payload.
+pub fn open_opaque_payload_bytes(
+    key: &[u8; AEAD_KEY_LEN],
+    associated_data: &[u8],
+    payload: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
+    if payload.len() <= COOKIE_NONCE_LEN {
+        return Err(CryptoError::InvalidInput("malformed opaque payload"));
+    }
+    let (nonce, ciphertext) = payload.split_at(COOKIE_NONCE_LEN);
+    let nonce: [u8; COOKIE_NONCE_LEN] = nonce
+        .try_into()
+        .map_err(|_| CryptoError::InvalidInput("malformed opaque payload"))?;
+    OpaqueAead::new(key)?.open_with_nonce(&nonce, associated_data, ciphertext)
 }
 
 /// Derives the per-epoch admission AEAD key from a provisioned admission secret.
@@ -467,17 +641,7 @@ pub fn seal_tunnel_payload_with_nonce(
     associated_data: &[u8],
     plaintext: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
-    let cipher = ChaCha20Poly1305::new_from_slice(key)
-        .map_err(|_| CryptoError::InvalidInput("invalid ChaCha20-Poly1305 key"))?;
-    cipher
-        .encrypt(
-            nonce.into(),
-            Payload {
-                msg: plaintext,
-                aad: associated_data,
-            },
-        )
-        .map_err(|_| CryptoError::Aead)
+    TunnelAead::new(key)?.seal_with_nonce(nonce, associated_data, plaintext)
 }
 
 /// Decrypts tunnel payload bytes with a packet-number-derived nonce.
@@ -502,17 +666,7 @@ pub fn open_tunnel_payload_with_nonce(
     associated_data: &[u8],
     ciphertext: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
-    let cipher = ChaCha20Poly1305::new_from_slice(key)
-        .map_err(|_| CryptoError::InvalidInput("invalid ChaCha20-Poly1305 key"))?;
-    cipher
-        .decrypt(
-            nonce.into(),
-            Payload {
-                msg: ciphertext,
-                aad: associated_data,
-            },
-        )
-        .map_err(|_| CryptoError::Aead)
+    TunnelAead::new(key)?.open_with_nonce(nonce, associated_data, ciphertext)
 }
 
 /// X25519 keypair used by the server static identity.

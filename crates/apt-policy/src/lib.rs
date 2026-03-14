@@ -8,6 +8,7 @@ use apt_types::{
     CarrierBinding, LocalNetworkContext, NetworkMetadataObservation, PathSignalEvent, PolicyMode,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use thiserror::Error;
 
 const MAX_STORED_SAMPLES: usize = 512;
@@ -52,9 +53,9 @@ pub struct LocalNormalityProfile {
     pub context: LocalNetworkContext,
     /// Successful APT sessions observed on this context.
     pub successful_sessions: u32,
-    packet_sizes: Vec<WeightedSample<u16>>,
-    gaps_ms: Vec<WeightedSample<u32>>,
-    bursts: Vec<WeightedSample<u16>>,
+    packet_sizes: VecDeque<WeightedSample<u16>>,
+    gaps_ms: VecDeque<WeightedSample<u32>>,
+    bursts: VecDeque<WeightedSample<u16>>,
     weighted_observations: f32,
 }
 
@@ -65,9 +66,9 @@ impl LocalNormalityProfile {
         Self {
             context,
             successful_sessions: 0,
-            packet_sizes: Vec::new(),
-            gaps_ms: Vec::new(),
-            bursts: Vec::new(),
+            packet_sizes: VecDeque::new(),
+            gaps_ms: VecDeque::new(),
+            bursts: VecDeque::new(),
             weighted_observations: 0.0,
         }
     }
@@ -203,21 +204,21 @@ impl PolicyController {
     }
 }
 
-fn push_weighted<T>(values: &mut Vec<WeightedSample<T>>, sample: WeightedSample<T>) {
+fn push_weighted<T>(values: &mut VecDeque<WeightedSample<T>>, sample: WeightedSample<T>) {
     if values.len() == MAX_STORED_SAMPLES {
-        values.remove(0);
+        values.pop_front();
     }
-    values.push(sample);
+    values.push_back(sample);
 }
 
 fn weighted_quantile_u16(
-    values: &[WeightedSample<u16>],
+    values: &VecDeque<WeightedSample<u16>>,
     quantile: f32,
 ) -> Result<u16, PolicyError> {
     if values.is_empty() {
         return Err(PolicyError::InsufficientData);
     }
-    let mut sorted = values.to_vec();
+    let mut sorted: Vec<_> = values.iter().cloned().collect();
     sorted.sort_by_key(|sample| sample.value);
     let total_weight: f32 = sorted.iter().map(|sample| sample.weight).sum();
     let target = total_weight * quantile;
@@ -228,17 +229,17 @@ fn weighted_quantile_u16(
             return Ok(sample.value);
         }
     }
-    Ok(values.last().expect("checked non-empty").value)
+    Ok(values.back().expect("checked non-empty").value)
 }
 
 fn weighted_quantile_u32(
-    values: &[WeightedSample<u32>],
+    values: &VecDeque<WeightedSample<u32>>,
     quantile: f32,
 ) -> Result<u32, PolicyError> {
     if values.is_empty() {
         return Err(PolicyError::InsufficientData);
     }
-    let mut sorted = values.to_vec();
+    let mut sorted: Vec<_> = values.iter().cloned().collect();
     sorted.sort_by_key(|sample| sample.value);
     let total_weight: f32 = sorted.iter().map(|sample| sample.weight).sum();
     let target = total_weight * quantile;
@@ -249,7 +250,7 @@ fn weighted_quantile_u32(
             return Ok(sample.value);
         }
     }
-    Ok(values.last().expect("checked non-empty").value)
+    Ok(values.back().expect("checked non-empty").value)
 }
 
 #[cfg(test)]

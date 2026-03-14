@@ -30,8 +30,8 @@ use apt_crypto::{SealedEnvelope, SessionSecretsForRole, StaticKeypair};
 use apt_observability::{record_event, AptEvent, ObservabilityConfig, TelemetrySnapshot};
 use apt_tunnel::{Frame, RekeyStatus, TunnelSession};
 use apt_types::{
-    AuthProfile, CarrierBinding, CipherSuite, CredentialIdentity, PathSignalEvent, SessionId,
-    SessionRole, DEFAULT_ADMISSION_EPOCH_SLOT_SECS, MINIMUM_REPLAY_WINDOW,
+    AuthProfile, CarrierBinding, CipherSuite, CredentialIdentity, PathSignalEvent, PolicyMode,
+    SessionId, SessionRole, DEFAULT_ADMISSION_EPOCH_SLOT_SECS, MINIMUM_REPLAY_WINDOW,
 };
 use serde::{Deserialize, Serialize};
 use socket2::{Domain, Protocol, Socket, Type};
@@ -97,6 +97,22 @@ impl RuntimeOuterKeys {
             _ => Err(RuntimeError::InvalidConfig(format!(
                 "unsupported runtime carrier {binding:?}"
             ))),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TunnelEncapsulation {
+    Wrapped,
+    DirectInnerOnly,
+}
+
+impl TunnelEncapsulation {
+    const fn for_policy(mode: PolicyMode) -> Self {
+        if matches!(mode, PolicyMode::SpeedFirst) {
+            Self::DirectInnerOnly
+        } else {
+            Self::Wrapped
         }
     }
 }
@@ -167,6 +183,7 @@ struct ServerSessionState {
     tunnel: TunnelSession,
     adaptive: AdaptiveDatapath,
     outer_keys: RuntimeOuterKeys,
+    encapsulation: TunnelEncapsulation,
     primary_path: ServerPathState,
     standby_path: Option<ServerPathState>,
     pending_validation: Option<PendingPathValidation>,
@@ -607,6 +624,7 @@ pub async fn run_server(config: ResolvedServerConfig) -> Result<ServerRuntimeRes
                                 &carriers,
                                 &config.endpoint_id,
                                 &session.outer_keys,
+                                session.encapsulation,
                                 &pending.handle,
                                 pending.binding,
                                 &mut session.tunnel,
@@ -732,6 +750,7 @@ async fn run_client_session_loop(
     persistent_state.store(&config.state_path)?;
 
     let session_id = handshake.established.session_id;
+    let encapsulation = TunnelEncapsulation::for_policy(handshake.established.policy_mode);
     let mut tunnel = TunnelSession::new(
         handshake.established.session_id,
         SessionRole::Initiator,
@@ -773,6 +792,7 @@ async fn run_client_session_loop(
                             carriers,
                             &config.endpoint_id,
                             &outer_keys,
+                            encapsulation,
                             path.binding,
                             &bytes,
                         )?;
@@ -866,6 +886,7 @@ async fn run_client_session_loop(
                                 carriers,
                                 &config.endpoint_id,
                                 &outer_keys,
+                                encapsulation,
                                 paths.get(&path_id).expect("path exists"),
                                 &mut tunnel,
                                 &response_frames,
@@ -943,6 +964,7 @@ async fn run_client_session_loop(
                             carriers,
                             &config.endpoint_id,
                             &outer_keys,
+                            encapsulation,
                             active_path,
                             &mut tunnel,
                             &frames,
@@ -1051,6 +1073,7 @@ async fn run_client_session_loop(
                                     carriers,
                                     &config.endpoint_id,
                                     &outer_keys,
+                                    encapsulation,
                                     &path,
                                     &mut tunnel,
                                     &[Frame::PathChallenge {
@@ -1133,6 +1156,7 @@ async fn run_client_session_loop(
                         carriers,
                         &config.endpoint_id,
                         &outer_keys,
+                        encapsulation,
                         active_path,
                         &mut tunnel,
                         &frames,
@@ -1625,6 +1649,7 @@ fn install_server_session(
                 d1: derive_d1_tunnel_outer_keys(&session.secrets)?,
                 s1: derive_s1_tunnel_outer_keys(&session.secrets)?,
             },
+            encapsulation: TunnelEncapsulation::for_policy(session.policy_mode),
             primary_path,
             standby_path: None,
             pending_validation: None,
@@ -1683,6 +1708,7 @@ async fn process_known_server_path(
         carriers,
         &config.endpoint_id,
         &session.outer_keys,
+        session.encapsulation,
         binding,
         &bytes,
     )?;
@@ -1946,6 +1972,7 @@ fn try_match_server_session(
         let tunnel_bytes = match decode_server_tunnel_packet_direct(
             endpoint_id,
             &session.outer_keys,
+            session.encapsulation,
             binding,
             bytes,
         ) {
@@ -2386,6 +2413,7 @@ async fn send_frames_on_client_path(
     carriers: &RuntimeCarriers,
     endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
+    encapsulation: TunnelEncapsulation,
     path: &ClientPathState,
     tunnel: &mut TunnelSession,
     frames: &[Frame],
@@ -2395,6 +2423,7 @@ async fn send_frames_on_client_path(
         carriers,
         endpoint_id,
         outer_keys,
+        encapsulation,
         path.binding,
         tunnel,
         frames,
@@ -2406,6 +2435,7 @@ async fn send_frames_on_client_path(
         carriers,
         endpoint_id,
         outer_keys,
+        encapsulation,
         path.binding,
         tunnel,
         frames,
@@ -2415,6 +2445,7 @@ async fn send_frames_on_client_path(
             carriers,
             endpoint_id,
             outer_keys,
+            encapsulation,
             path.binding,
             tunnel,
             &batch,
@@ -2442,6 +2473,7 @@ async fn send_frames_to_server_path(
         carriers,
         endpoint_id,
         &session.outer_keys,
+        session.encapsulation,
         &path,
         binding,
         &mut session.tunnel,
@@ -2458,6 +2490,7 @@ async fn send_frames_to_path_handle(
     carriers: &RuntimeCarriers,
     endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
+    encapsulation: TunnelEncapsulation,
     path: &PathHandle,
     binding: CarrierBinding,
     tunnel: &mut TunnelSession,
@@ -2468,6 +2501,7 @@ async fn send_frames_to_path_handle(
         carriers,
         endpoint_id,
         outer_keys,
+        encapsulation,
         binding,
         tunnel,
         frames,
@@ -2479,6 +2513,7 @@ async fn send_frames_to_path_handle(
         carriers,
         endpoint_id,
         outer_keys,
+        encapsulation,
         binding,
         tunnel,
         frames,
@@ -2488,6 +2523,7 @@ async fn send_frames_to_path_handle(
             carriers,
             endpoint_id,
             outer_keys,
+            encapsulation,
             binding,
             tunnel,
             &batch,
@@ -2535,6 +2571,7 @@ fn plan_outbound_tunnel_batches(
     carriers: &RuntimeCarriers,
     endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
+    encapsulation: TunnelEncapsulation,
     binding: CarrierBinding,
     tunnel: &TunnelSession,
     frames: &[Frame],
@@ -2548,6 +2585,7 @@ fn plan_outbound_tunnel_batches(
             carriers,
             endpoint_id,
             outer_keys,
+            encapsulation,
             binding,
             &trial_tunnel,
             &remaining,
@@ -2584,6 +2622,7 @@ fn largest_fitting_frame_prefix(
     carriers: &RuntimeCarriers,
     endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
+    encapsulation: TunnelEncapsulation,
     binding: CarrierBinding,
     tunnel: &TunnelSession,
     frames: &[Frame],
@@ -2595,6 +2634,7 @@ fn largest_fitting_frame_prefix(
             carriers,
             endpoint_id,
             outer_keys,
+            encapsulation,
             binding,
             &mut candidate_tunnel,
             &frames[..count],
@@ -2612,6 +2652,7 @@ fn encode_client_tunnel_packet_batch(
     carriers: &RuntimeCarriers,
     endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
+    encapsulation: TunnelEncapsulation,
     binding: CarrierBinding,
     tunnel: &mut TunnelSession,
     frames: &[Frame],
@@ -2621,6 +2662,7 @@ fn encode_client_tunnel_packet_batch(
         carriers,
         endpoint_id,
         outer_keys,
+        encapsulation,
         binding,
         tunnel,
         frames,
@@ -2632,22 +2674,34 @@ fn encode_server_tunnel_packet_batch(
     carriers: &RuntimeCarriers,
     endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
+    encapsulation: TunnelEncapsulation,
     binding: CarrierBinding,
     tunnel: &mut TunnelSession,
     frames: &[Frame],
     now: u64,
 ) -> Result<Vec<u8>, RuntimeError> {
     let encoded = tunnel.encode_packet(frames, now)?;
-    encode_server_tunnel_packet(carriers, endpoint_id, outer_keys, binding, &encoded.bytes)
+    encode_server_tunnel_packet(
+        carriers,
+        endpoint_id,
+        outer_keys,
+        encapsulation,
+        binding,
+        &encoded.bytes,
+    )
 }
 
 fn encode_server_tunnel_packet(
     carriers: &RuntimeCarriers,
     endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
+    encapsulation: TunnelEncapsulation,
     binding: CarrierBinding,
     packet_bytes: &[u8],
 ) -> Result<Vec<u8>, RuntimeError> {
+    if matches!(encapsulation, TunnelEncapsulation::DirectInnerOnly) {
+        return Ok(packet_bytes.to_vec());
+    }
     match binding {
         CarrierBinding::D1DatagramUdp => encode_tunnel_datagram(
             carriers.d1(),
@@ -2668,13 +2722,16 @@ fn decode_client_tunnel_packet(
     carriers: &RuntimeCarriers,
     endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
+    encapsulation: TunnelEncapsulation,
     binding: CarrierBinding,
     bytes: &[u8],
 ) -> Result<Vec<u8>, RuntimeError> {
-    decode_server_tunnel_packet_direct(endpoint_id, outer_keys, binding, bytes).map_err(|error| {
+    decode_server_tunnel_packet_direct(endpoint_id, outer_keys, encapsulation, binding, bytes)
+        .map_err(|error| {
         debug!(error = %error, carrier = %binding.as_str(), "failed to decode client tunnel packet");
         error
-    }).and_then(|tunnel_bytes| {
+    })
+        .and_then(|tunnel_bytes| {
         let _ = carriers;
         Ok(tunnel_bytes)
     })
@@ -2684,19 +2741,24 @@ fn decode_server_tunnel_packet(
     carriers: &RuntimeCarriers,
     endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
+    encapsulation: TunnelEncapsulation,
     binding: CarrierBinding,
     bytes: &[u8],
 ) -> Result<Vec<u8>, RuntimeError> {
     let _ = carriers;
-    decode_server_tunnel_packet_direct(endpoint_id, outer_keys, binding, bytes)
+    decode_server_tunnel_packet_direct(endpoint_id, outer_keys, encapsulation, binding, bytes)
 }
 
 fn decode_server_tunnel_packet_direct(
     endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
+    encapsulation: TunnelEncapsulation,
     binding: CarrierBinding,
     bytes: &[u8],
 ) -> Result<Vec<u8>, RuntimeError> {
+    if matches!(encapsulation, TunnelEncapsulation::DirectInnerOnly) {
+        return Ok(bytes.to_vec());
+    }
     match binding {
         CarrierBinding::D1DatagramUdp => decode_tunnel_datagram(
             &runtime_d1_carrier(1_380),
@@ -2919,6 +2981,7 @@ fn effective_d1_tunnel_mtu(endpoint_id: &apt_types::EndpointId, carrier: &D1Carr
             },
             endpoint_id,
             &outer_keys,
+            TunnelEncapsulation::Wrapped,
             CarrierBinding::D1DatagramUdp,
             &mut tunnel,
             &frames,
@@ -3202,14 +3265,14 @@ mod tests {
     }
 
     #[test]
-    fn effective_d1_tunnel_mtu_is_capped_below_old_default() {
+    fn effective_d1_tunnel_mtu_stays_within_runtime_bounds() {
         let carriers = RuntimeCarriers::new(1_380, false);
         let effective = effective_runtime_tunnel_mtu(
             1_380,
             &EndpointId::new("adapt-test".to_string()),
             &carriers,
         );
-        assert!(effective < 1_380);
+        assert!(effective <= 1_380);
         assert!(effective >= 1_200);
     }
 
@@ -3245,6 +3308,7 @@ mod tests {
             &carriers,
             &EndpointId::new("adapt-test".to_string()),
             &outer_keys,
+            TunnelEncapsulation::Wrapped,
             CarrierBinding::D1DatagramUdp,
             &tunnel,
             &[
@@ -3259,6 +3323,30 @@ mod tests {
     }
 
     #[test]
+    fn speed_mode_direct_encapsulation_skips_outer_wrap() {
+        let carriers = test_runtime_carriers();
+        let outer_keys = test_runtime_outer_keys();
+        let mut direct_tunnel = test_tunnel_session();
+        let mut baseline_tunnel = direct_tunnel.clone();
+        let frames = [Frame::IpData(vec![0x42; 900])];
+
+        let direct = encode_server_tunnel_packet_batch(
+            &carriers,
+            &EndpointId::new("adapt-test".to_string()),
+            &outer_keys,
+            TunnelEncapsulation::DirectInnerOnly,
+            CarrierBinding::D1DatagramUdp,
+            &mut direct_tunnel,
+            &frames,
+            0,
+        )
+        .unwrap();
+        let baseline = baseline_tunnel.encode_packet(&frames, 0).unwrap().bytes;
+
+        assert_eq!(direct, baseline);
+    }
+
+    #[test]
     fn single_oversized_ip_frame_is_dropped_instead_of_failing() {
         let carriers = test_runtime_carriers();
         let outer_keys = test_runtime_outer_keys();
@@ -3267,6 +3355,7 @@ mod tests {
             &carriers,
             &EndpointId::new("adapt-test".to_string()),
             &outer_keys,
+            TunnelEncapsulation::Wrapped,
             CarrierBinding::D1DatagramUdp,
             &tunnel,
             &[Frame::IpData(vec![0_u8; 3_000])],

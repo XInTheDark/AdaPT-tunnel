@@ -101,16 +101,20 @@ impl PersonaEngine {
         let base_padding_bps = match inputs.policy_mode {
             PolicyMode::StealthFirst => 900,
             PolicyMode::Balanced => 600,
-            PolicyMode::SpeedFirst => 250,
+            PolicyMode::SpeedFirst => 0,
         };
-        let padding_budget_bps = base_padding_bps + rng.gen_range(0..150);
+        let padding_budget_bps = if matches!(inputs.policy_mode, PolicyMode::SpeedFirst) {
+            0
+        } else {
+            base_padding_bps + rng.gen_range(0..150)
+        };
         let burst_size_target = match inputs.policy_mode {
             PolicyMode::StealthFirst => rng.gen_range(1..=3),
             PolicyMode::Balanced => rng.gen_range(2..=5),
             PolicyMode::SpeedFirst => rng.gen_range(4..=8),
         };
         let keepalive_mode = if matches!(inputs.policy_mode, PolicyMode::SpeedFirst) {
-            KeepaliveMode::Adaptive
+            KeepaliveMode::SuppressWhenActive
         } else if rng.gen_bool(0.7) {
             KeepaliveMode::SuppressWhenActive
         } else {

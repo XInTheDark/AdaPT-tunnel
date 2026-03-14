@@ -9,6 +9,7 @@ use apt_types::{
 
 const POLICY_OBSERVATION_INTERVAL_SECS: u64 = 15;
 const QUIET_IMPAIRMENT_THRESHOLD_SECS: u64 = 45;
+const PROFILE_REFRESH_EVERY_OBSERVATIONS: u16 = 64;
 
 #[derive(Clone, Debug)]
 pub struct AdaptiveDatapath {
@@ -21,10 +22,12 @@ pub struct AdaptiveDatapath {
     remembered_profile: Option<RememberedProfile>,
     local_normality: Option<LocalNormalityProfile>,
     keepalive_sample_index: u64,
+    keepalive_interval_secs: u64,
     next_keepalive_due_secs: u64,
     last_policy_observation_secs: u64,
     last_send_millis: Option<u64>,
     last_recv_millis: Option<u64>,
+    observations_since_path_refresh: u16,
 }
 
 impl AdaptiveDatapath {
@@ -60,10 +63,12 @@ impl AdaptiveDatapath {
             remembered_profile,
             local_normality: Some(local_normality),
             keepalive_sample_index: 0,
+            keepalive_interval_secs: 0,
             next_keepalive_due_secs: now_secs,
             last_policy_observation_secs: now_secs,
             last_send_millis: None,
             last_recv_millis: None,
+            observations_since_path_refresh: 0,
         };
         state.reschedule_keepalive(now_secs);
         state
@@ -95,10 +100,12 @@ impl AdaptiveDatapath {
             remembered_profile: None,
             local_normality: None,
             keepalive_sample_index: 0,
+            keepalive_interval_secs: 0,
             next_keepalive_due_secs: now_secs,
             last_policy_observation_secs: now_secs,
             last_send_millis: None,
             last_recv_millis: None,
+            observations_since_path_refresh: 0,
         };
         state.reschedule_keepalive(now_secs);
         state
@@ -155,6 +162,9 @@ impl AdaptiveDatapath {
     }
 
     pub fn maybe_padding_frame(&self, payload_bytes: usize, keepalive_only: bool) -> Option<Frame> {
+        if matches!(self.controller.current_mode, PolicyMode::SpeedFirst) {
+            return None;
+        }
         let max_padding = payload_bytes
             .saturating_mul(usize::from(self.persona.scheduler.padding_budget_bps))
             / 10_000;
@@ -259,7 +269,7 @@ impl AdaptiveDatapath {
     }
 
     pub fn note_activity(&mut self, now_secs: u64) {
-        self.reschedule_keepalive(now_secs);
+        self.next_keepalive_due_secs = now_secs.saturating_add(self.keepalive_interval_secs);
     }
 
     fn regenerate_persona(&mut self) {
@@ -312,7 +322,12 @@ impl AdaptiveDatapath {
             },
             tunnel_traffic,
         });
-        self.path_profile = infer_path_profile(profile).unwrap_or(self.path_profile);
+        self.observations_since_path_refresh =
+            self.observations_since_path_refresh.saturating_add(1);
+        if self.observations_since_path_refresh >= PROFILE_REFRESH_EVERY_OBSERVATIONS {
+            self.path_profile = infer_path_profile(profile).unwrap_or(self.path_profile);
+            self.observations_since_path_refresh = 0;
+        }
     }
 
     fn reschedule_keepalive(&mut self, now_secs: u64) {
@@ -328,6 +343,7 @@ impl AdaptiveDatapath {
             self.keepalive_sample_index,
         );
         self.keepalive_sample_index = self.keepalive_sample_index.saturating_add(1);
+        self.keepalive_interval_secs = interval;
         self.next_keepalive_due_secs = now_secs.saturating_add(interval);
     }
 }
@@ -464,5 +480,23 @@ mod tests {
             let _ = adaptive.maybe_observe_stability(tick);
         }
         assert_eq!(adaptive.current_mode(), PolicyMode::Balanced);
+    }
+
+    #[test]
+    fn speed_first_mode_disables_cover_padding() {
+        let context = build_client_network_context("edge-a", "route-a");
+        let mut adaptive = AdaptiveDatapath::new_client(
+            CarrierBinding::D1DatagramUdp,
+            [23_u8; 32],
+            context,
+            None,
+            None,
+            PolicyMode::SpeedFirst,
+            true,
+            PathProfile::unknown(),
+            0,
+        );
+        assert!(adaptive.maybe_padding_frame(128, false).is_none());
+        assert_eq!(adaptive.build_keepalive_frames(96, 10), vec![Frame::Ping]);
     }
 }

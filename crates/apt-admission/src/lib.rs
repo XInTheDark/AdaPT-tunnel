@@ -185,6 +185,8 @@ pub struct C0 {
     pub carrier_bitmap: Vec<CarrierBinding>,
     /// Offered policy flags.
     pub policy_flags: PolicyFlags,
+    /// Requested policy mode.
+    pub policy_mode: PolicyMode,
     /// Coarse admission epoch slot.
     pub epoch_slot: u64,
     /// Per-attempt client nonce.
@@ -693,6 +695,34 @@ impl AdmissionServer {
         }
     }
 
+    fn choose_policy_mode(&self, requested: PolicyMode, allow_speed_first: bool) -> PolicyMode {
+        fn rank(mode: PolicyMode) -> u8 {
+            match mode {
+                PolicyMode::StealthFirst => 0,
+                PolicyMode::Balanced => 1,
+                PolicyMode::SpeedFirst => 2,
+            }
+        }
+
+        fn from_rank(rank: u8) -> PolicyMode {
+            match rank {
+                0 => PolicyMode::StealthFirst,
+                1 => PolicyMode::Balanced,
+                _ => PolicyMode::SpeedFirst,
+            }
+        }
+
+        let server_rank = rank(self.config.default_policy);
+        let requested_rank = rank(requested);
+        let client_rank = if allow_speed_first {
+            requested_rank
+        } else {
+            requested_rank.min(rank(PolicyMode::Balanced))
+        };
+
+        from_rank(server_rank.min(client_rank))
+    }
+
     fn validate_epoch_slot(&self, msg_slot: u64, now_slot: u64) -> Result<(), AdmissionError> {
         let delta = i128::from(msg_slot) - i128::from(now_slot);
         if delta.unsigned_abs() > ACCEPTABLE_SLOT_SKEW as u128 {
@@ -822,16 +852,8 @@ impl AdmissionServer {
             )?;
             let chosen_suite = self.choose_suite(&c0.suite_bitmap)?;
             let chosen_carrier = self.choose_carrier(&c0.carrier_bitmap, carrier.binding())?;
-            let chosen_policy = if matches!(self.config.default_policy, PolicyMode::StealthFirst)
-                || matches!(c0.policy_flags.allow_speed_first, false)
-            {
-                self.config.default_policy
-            } else {
-                c0.policy_flags
-                    .allow_speed_first
-                    .then_some(PolicyMode::Balanced)
-                    .unwrap_or(self.config.default_policy)
-            };
+            let chosen_policy =
+                self.choose_policy_mode(c0.policy_mode, c0.policy_flags.allow_speed_first);
 
             let resume_accepted = c0
                 .optional_resume_ticket
@@ -1146,6 +1168,7 @@ pub fn initiate_c0<C: CarrierProfile>(
         suite_bitmap: request.supported_suites.clone(),
         carrier_bitmap: request.supported_carriers.clone(),
         policy_flags: request.policy_flags,
+        policy_mode: request.policy_mode,
         epoch_slot: current_epoch_slot,
         client_nonce,
         path_profile: request.path_profile,
@@ -1465,5 +1488,73 @@ mod tests {
             response,
             ServerResponse::Drop(InvalidInputBehavior::Silence)
         ));
+    }
+
+    #[test]
+    fn speed_first_is_negotiated_when_both_sides_allow_it() {
+        let (mut server, credential, carrier) = test_server_setup();
+        server.config.default_policy = PolicyMode::SpeedFirst;
+
+        let endpoint = EndpointId::new("edge-test");
+        let now_secs = 1_700_000_000;
+        let mut request = ClientSessionRequest::conservative(endpoint, now_secs);
+        request.policy_mode = PolicyMode::SpeedFirst;
+        request.policy_flags.allow_speed_first = true;
+        let prepared_c0 = initiate_c0(credential, request, &carrier).unwrap();
+
+        let s1 = match server.handle_c0(
+            "127.0.0.1:1111",
+            &carrier,
+            &prepared_c0.packet,
+            512,
+            now_secs,
+        ) {
+            ServerResponse::Reply(reply) => reply,
+            ServerResponse::Drop(_) => panic!("expected reply"),
+        };
+
+        let prepared_c2 = prepared_c0.state.handle_s1(&s1, &carrier).unwrap();
+        let established = match server.handle_c2(
+            "127.0.0.1:1111",
+            &carrier,
+            &prepared_c2.packet,
+            now_secs + 1,
+        ) {
+            ServerResponse::Reply(reply) => reply,
+            ServerResponse::Drop(_) => panic!("expected reply"),
+        };
+
+        assert_eq!(established.session.policy_mode, PolicyMode::SpeedFirst);
+    }
+
+    #[test]
+    fn policy_negotiation_uses_the_more_conservative_side() {
+        let (mut server, _, _) = test_server_setup();
+
+        server.config.default_policy = PolicyMode::SpeedFirst;
+        assert_eq!(
+            server.choose_policy_mode(PolicyMode::Balanced, true),
+            PolicyMode::Balanced
+        );
+        assert_eq!(
+            server.choose_policy_mode(PolicyMode::StealthFirst, true),
+            PolicyMode::StealthFirst
+        );
+
+        server.config.default_policy = PolicyMode::Balanced;
+        assert_eq!(
+            server.choose_policy_mode(PolicyMode::SpeedFirst, true),
+            PolicyMode::Balanced
+        );
+        assert_eq!(
+            server.choose_policy_mode(PolicyMode::SpeedFirst, false),
+            PolicyMode::Balanced
+        );
+
+        server.config.default_policy = PolicyMode::StealthFirst;
+        assert_eq!(
+            server.choose_policy_mode(PolicyMode::SpeedFirst, true),
+            PolicyMode::StealthFirst
+        );
     }
 }
