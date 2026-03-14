@@ -43,7 +43,7 @@ ip addr show apt0
 ### On the client (macOS)
 
 ```bash
-ifconfig apt0 2>/dev/null || ifconfig | grep -A4 utun
+ifconfig | grep -A4 utun
 ```
 
 Expected:
@@ -67,11 +67,13 @@ Expected:
 If the server pushes `0.0.0.0/0` and NAT is enabled:
 
 ```bash
+route -n get 1.1.1.1
 curl https://ifconfig.me
 ```
 
 Expected:
 
+- on macOS, traffic to `1.1.1.1` should resolve to the `utun` interface when full-tunnel routing is active
 - the reported public IP is the **server’s** public IP, not the client’s original IP
 
 ## 5. Validate route preservation to the VPN server

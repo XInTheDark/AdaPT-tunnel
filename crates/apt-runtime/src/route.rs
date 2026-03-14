@@ -139,11 +139,31 @@ fn configure_client_network_macos(
     for route in routes {
         match route {
             IpNet::V4(route_v4) if route_v4.prefix_len() == 0 => {
-                run_command(
-                    "route",
-                    &["-n".into(), "add".into(), "default".into(), "-interface".into(), interface_name.into()],
-                )?;
-                guard.cleanup_commands.push(vec!["route".into(), "-n".into(), "delete".into(), "default".into()]);
+                for (network, prefix_len) in split_default_ipv4_routes() {
+                    let netmask = ipv4_netmask(prefix_len).to_string();
+                    run_command(
+                        "route",
+                        &[
+                            "-n".into(),
+                            "add".into(),
+                            "-net".into(),
+                            network.to_string(),
+                            "-netmask".into(),
+                            netmask.clone(),
+                            "-interface".into(),
+                            interface_name.into(),
+                        ],
+                    )?;
+                    guard.cleanup_commands.push(vec![
+                        "route".into(),
+                        "-n".into(),
+                        "delete".into(),
+                        "-net".into(),
+                        network.to_string(),
+                        "-netmask".into(),
+                        netmask,
+                    ]);
+                }
             }
             IpNet::V4(route_v4) => {
                 run_command(
@@ -364,6 +384,13 @@ fn is_default_route(route: &IpNet) -> bool {
     }
 }
 
+fn split_default_ipv4_routes() -> [(Ipv4Addr, u8); 2] {
+    [
+        (Ipv4Addr::new(0, 0, 0, 0), 1),
+        (Ipv4Addr::new(128, 0, 0, 0), 1),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,5 +404,12 @@ mod tests {
     fn subnet_conversion_is_correct() {
         let subnet = subnet_from(Ipv4Addr::new(10, 77, 0, 1), Ipv4Addr::new(255, 255, 255, 0));
         assert_eq!(subnet.to_string(), "10.77.0.0/24");
+    }
+
+    #[test]
+    fn default_route_is_split_into_two_half_routes() {
+        let halves = split_default_ipv4_routes();
+        assert_eq!(halves[0], (Ipv4Addr::new(0, 0, 0, 0), 1));
+        assert_eq!(halves[1], (Ipv4Addr::new(128, 0, 0, 0), 1));
     }
 }
