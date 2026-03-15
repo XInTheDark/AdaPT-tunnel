@@ -185,7 +185,6 @@ pub(super) enum Command {
         mode: Option<CliRuntimeMode>,
     },
     /// Operator utilities and maintenance helpers.
-    #[command(alias = "util")]
     Utils {
         #[command(subcommand)]
         command: UtilsCommand,
@@ -219,22 +218,6 @@ mod tests {
             } => {
                 assert_eq!(config, Some(PathBuf::from("/etc/adapt/server.toml")));
                 assert!(!yes);
-            }
-            other => panic!("unexpected command: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_util_alias_for_utils_command() {
-        let cli =
-            Cli::try_parse_from(["apt-edge", "util", "install-systemd-service", "--yes"]).unwrap();
-
-        match cli.command {
-            Command::Utils {
-                command: UtilsCommand::InstallSystemdService { config, yes },
-            } => {
-                assert_eq!(config, None);
-                assert!(yes);
             }
             other => panic!("unexpected command: {other:?}"),
         }
