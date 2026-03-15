@@ -12,29 +12,33 @@ impl AdmissionServer {
         now_secs: u64,
     ) -> ServerResponse<AdmissionPacket> {
         let result = (|| -> Result<AdmissionPacket, AdmissionError> {
-            if !self.config.allowed_carriers.contains(&carrier.binding()) {
+            let active_binding = carrier.binding();
+            if !self.config.allowed_carriers.contains(&active_binding) {
                 return Err(AdmissionError::Validation("carrier not allowed"));
             }
-            let (c0, resolved) = self.open_c0(packet, carrier.binding(), now_secs)?;
-            if c0.version != VERSION {
-                return Err(AdmissionError::Validation("unsupported version"));
+            let (ug1, resolved) = self.open_c0(packet, active_binding, now_secs)?;
+            if ug1.endpoint_id != self.config.endpoint_id {
+                return Err(AdmissionError::Validation("endpoint mismatch"));
             }
-            validate_auth_profile(c0.auth_profile, &resolved.identity)?;
+            if ug1.slot_binding.phase != UpgradeMessagePhase::Request {
+                return Err(AdmissionError::Validation("unexpected upgrade-slot phase"));
+            }
+            validate_auth_profile(ug1.auth_profile, &resolved.identity)?;
             self.validate_epoch_slot(
-                c0.epoch_slot,
+                ug1.slot_binding.epoch_slot,
                 epoch_slot(now_secs, self.config.defaults.epoch_slot_secs),
             )?;
             self.replay_check(
                 resolved.identity.clone(),
-                c0.client_nonce,
-                c0.epoch_slot,
+                ug1.client_nonce,
+                ug1.slot_binding.epoch_slot,
                 now_secs,
             )?;
-            let chosen_suite = self.choose_suite(&c0.suite_bitmap)?;
-            let chosen_carrier = self.choose_carrier(&c0.carrier_bitmap, carrier.binding())?;
-            let chosen_mode = self.choose_mode(c0.mode);
+            let chosen_suite = self.choose_suite(&ug1.supported_suites)?;
+            let chosen_carrier = self.choose_carrier(&ug1.supported_families, active_binding)?;
+            let chosen_mode = self.choose_mode(ug1.requested_mode);
 
-            let resume_accepted = c0
+            let resume_accepted = ug1
                 .optional_resume_ticket
                 .as_ref()
                 .and_then(|ticket| self.ticket_protector.open::<ResumeTicket>(ticket).ok())
@@ -43,17 +47,18 @@ impl AdmissionServer {
             let cookie_payload = CookiePayload {
                 source_id: source_id.to_string(),
                 endpoint_id: self.config.endpoint_id.clone(),
-                carrier: carrier.binding(),
-                client_nonce: c0.client_nonce,
-                epoch_slot: c0.epoch_slot,
+                carrier: active_binding,
+                slot_binding: ug1.slot_binding.clone(),
+                client_nonce: ug1.client_nonce,
+                epoch_slot: ug1.slot_binding.epoch_slot,
                 expires_at_secs: now_secs + self.config.defaults.cookie_lifetime_secs,
-                noise_msg1: c0.noise_msg1.clone(),
+                noise_msg1: ug1.noise_msg1.clone(),
                 chosen_suite,
                 chosen_carrier,
                 chosen_mode,
                 credential_label: resolved.label(),
                 lookup_hint: resolved.lookup_hint,
-                path_profile: c0.path_profile,
+                path_profile: ug1.path_profile,
                 resume_accepted,
             };
             let cookie_context = Self::build_cookie_context(&cookie_payload)?;
@@ -63,38 +68,41 @@ impl AdmissionServer {
 
             let mut noise = NoiseHandshake::new(NoiseHandshakeConfig {
                 role: SessionRole::Responder,
-                psk: derive_admission_key(&resolved.admission_key, c0.epoch_slot),
-                prologue: admission_associated_data(&self.config.endpoint_id, carrier.binding()),
+                psk: derive_admission_key(&resolved.admission_key, ug1.slot_binding.epoch_slot),
+                prologue: admission_associated_data(&self.config.endpoint_id, active_binding),
                 local_static_private: Some(self.server_static_private),
                 remote_static_public: None,
                 fixed_ephemeral_private: Some(fixed_ephemeral_private),
             })?;
-            noise.read_message(&c0.noise_msg1)?;
+            noise.read_message(&ug1.noise_msg1)?;
             let noise_msg2 = noise.write_message(&bincode::serialize(&NoiseResponderPayload {
                 server_contribution,
                 resume_accept: resume_accepted,
             })?)?;
 
             let cookie = self.cookie_protector.seal(&cookie_payload)?;
-            let s1 = S1 {
-                version: VERSION.to_string(),
+            let ug2 = Ug2 {
                 chosen_suite,
-                chosen_carrier,
+                chosen_family: chosen_carrier,
                 chosen_mode,
-                cookie_expiry: cookie_payload.expires_at_secs,
                 anti_amplification_cookie: cookie,
+                cookie_expiry: cookie_payload.expires_at_secs,
                 noise_msg2,
-                max_record_size: self.config.max_record_size,
-                idle_binding_hint_secs: self.config.idle_binding_hint_secs,
                 optional_resume_accept: resume_accepted,
-                optional_extensions: Vec::new(),
+                slot_binding: legacy_upgrade_slot_binding(
+                    &self.config.endpoint_id,
+                    active_binding,
+                    UpgradeMessagePhase::Response,
+                    "legacy-ug2",
+                    ug1.slot_binding.epoch_slot,
+                ),
                 padding: random_padding(12),
             };
-            let aad = admission_associated_data(&self.config.endpoint_id, carrier.binding());
+            let aad = admission_associated_data(&self.config.endpoint_id, active_binding);
             let envelope = SealedEnvelope::seal(
-                &derive_admission_key(&resolved.admission_key, c0.epoch_slot),
+                &derive_admission_key(&resolved.admission_key, ug1.slot_binding.epoch_slot),
                 &aad,
-                &s1,
+                &ug2,
             )?;
             let encoded_len = AdmissionPacket {
                 lookup_hint: None,
@@ -166,24 +174,30 @@ impl AdmissionServer {
         F: FnOnce(&EstablishedSession) -> Result<Vec<Vec<u8>>, AdmissionError>,
     {
         let result = (|| -> Result<EstablishedServerReply, AdmissionError> {
-            let (c2, resolved) = self.open_c2(packet, carrier.binding(), now_secs)?;
-            if c2.version != VERSION {
-                return Err(AdmissionError::Validation("unsupported version"));
+            let active_binding = carrier.binding();
+            let (ug3, resolved) = self.open_c2(packet, active_binding, now_secs)?;
+            if ug3.slot_binding.phase != UpgradeMessagePhase::Request {
+                return Err(AdmissionError::Validation("unexpected upgrade-slot phase"));
             }
-            if c2.selected_transport_ack != carrier.binding() {
+            if ug3.selected_family_ack != active_binding {
                 return Err(AdmissionError::Validation(
                     "unexpected selected transport ack",
                 ));
             }
 
             let cookie_payload: CookiePayload =
-                self.cookie_protector.open(&c2.anti_amplification_cookie)?;
+                self.cookie_protector.open(&ug3.anti_amplification_cookie)?;
             if cookie_payload.source_id != source_id
                 || cookie_payload.endpoint_id != self.config.endpoint_id
-                || cookie_payload.carrier != carrier.binding()
+                || cookie_payload.carrier != active_binding
                 || cookie_payload.expires_at_secs <= now_secs
             {
                 return Err(AdmissionError::Validation("cookie validation failed"));
+            }
+            if ug3.slot_binding.epoch_slot != cookie_payload.slot_binding.epoch_slot
+                || ug3.slot_binding.family_id != cookie_payload.slot_binding.family_id
+            {
+                return Err(AdmissionError::Validation("slot binding mismatch"));
             }
 
             let credential_label = resolved.label();
@@ -201,7 +215,7 @@ impl AdmissionServer {
             let mut noise = NoiseHandshake::new(NoiseHandshakeConfig {
                 role: SessionRole::Responder,
                 psk: admission_key,
-                prologue: admission_associated_data(&self.config.endpoint_id, carrier.binding()),
+                prologue: admission_associated_data(&self.config.endpoint_id, active_binding),
                 local_static_private: Some(self.server_static_private),
                 remote_static_public: None,
                 fixed_ephemeral_private: Some(fixed_ephemeral_private),
@@ -212,7 +226,7 @@ impl AdmissionServer {
                 resume_accept: cookie_payload.resume_accepted,
             })?;
             let _replayed_msg2 = noise.write_message(&responder_payload)?;
-            let client_payload_bytes = noise.read_message(&c2.noise_msg3)?;
+            let client_payload_bytes = noise.read_message(&ug3.noise_msg3)?;
             let client_payload: NoiseInitiatorPayload =
                 bincode::deserialize(&client_payload_bytes)?;
             validate_client_identity(&resolved.identity, client_payload.user_identity.as_deref())?;
@@ -254,20 +268,26 @@ impl AdmissionServer {
                 optional_extensions: Vec::new(),
             };
             let s3_extensions = extension_builder(&tentative_session)?;
-            let s3 = S3 {
-                version: VERSION.to_string(),
+            let ug4 = Ug4 {
                 session_id,
                 tunnel_mtu: self.config.tunnel_mtu,
                 rekey_limits: self.config.rekey_limits,
                 ticket_issue_flag: resume_ticket.is_some(),
                 optional_resume_ticket: resume_ticket.clone(),
+                slot_binding: legacy_upgrade_slot_binding(
+                    &self.config.endpoint_id,
+                    active_binding,
+                    UpgradeMessagePhase::Response,
+                    "legacy-ug4",
+                    cookie_payload.slot_binding.epoch_slot,
+                ),
                 optional_extensions: s3_extensions.clone(),
             };
             let confirmation = ServerConfirmationPacket {
                 envelope: SealedEnvelope::seal(
                     &secrets.send_ctrl,
-                    &admission_associated_data(&self.config.endpoint_id, carrier.binding()),
-                    &s3,
+                    &admission_associated_data(&self.config.endpoint_id, active_binding),
+                    &ug4,
                 )?,
             };
             let session = EstablishedSession {

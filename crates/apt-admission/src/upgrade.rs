@@ -73,3 +73,20 @@ pub struct Ug4 {
     pub slot_binding: UpgradeSlotBinding,
     pub optional_extensions: Vec<Vec<u8>>,
 }
+
+pub(crate) fn legacy_upgrade_slot_binding(
+    endpoint_id: &EndpointId,
+    carrier: CarrierBinding,
+    phase: UpgradeMessagePhase,
+    slot_id: &str,
+    epoch_slot: u64,
+) -> UpgradeSlotBinding {
+    UpgradeSlotBinding {
+        family_id: "legacy-admission".to_string(),
+        profile_version: VERSION.to_string(),
+        slot_id: slot_id.to_string(),
+        phase,
+        epoch_slot,
+        path_hint: format!("{}::{}", endpoint_id.as_str(), carrier.as_str()),
+    }
+}

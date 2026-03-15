@@ -328,7 +328,7 @@ impl AdmissionServer {
         packet: &AdmissionPacket,
         carrier: CarrierBinding,
         now_secs: u64,
-    ) -> Result<(C0, ResolvedCredential), AdmissionError> {
+    ) -> Result<(Ug1, ResolvedCredential), AdmissionError> {
         let now_slot = epoch_slot(now_secs, self.config.defaults.epoch_slot_secs);
         let aad = admission_associated_data(&self.config.endpoint_id, carrier);
         for resolved in self
@@ -336,8 +336,8 @@ impl AdmissionServer {
             .resolve_candidates(packet.lookup_hint, now_slot)
         {
             let admission_key = derive_admission_key(&resolved.admission_key, resolved.epoch_slot);
-            if let Ok(c0) = packet.envelope.open::<C0>(&admission_key, &aad) {
-                return Ok((c0, resolved));
+            if let Ok(ug1) = packet.envelope.open::<Ug1>(&admission_key, &aad) {
+                return Ok((ug1, resolved));
             }
         }
         Err(AdmissionError::Validation("unable to decrypt c0"))
@@ -348,7 +348,7 @@ impl AdmissionServer {
         packet: &AdmissionPacket,
         carrier: CarrierBinding,
         now_secs: u64,
-    ) -> Result<(C2, ResolvedCredential), AdmissionError> {
+    ) -> Result<(Ug3, ResolvedCredential), AdmissionError> {
         let now_slot = epoch_slot(now_secs, self.config.defaults.epoch_slot_secs);
         let aad = admission_associated_data(&self.config.endpoint_id, carrier);
         for resolved in self
@@ -356,8 +356,8 @@ impl AdmissionServer {
             .resolve_candidates(packet.lookup_hint, now_slot)
         {
             let admission_key = derive_admission_key(&resolved.admission_key, resolved.epoch_slot);
-            if let Ok(c2) = packet.envelope.open::<C2>(&admission_key, &aad) {
-                return Ok((c2, resolved));
+            if let Ok(ug3) = packet.envelope.open::<Ug3>(&admission_key, &aad) {
+                return Ok((ug3, resolved));
             }
         }
         Err(AdmissionError::Validation("unable to decrypt c2"))

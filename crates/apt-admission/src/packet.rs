@@ -224,6 +224,7 @@ pub(super) struct CookiePayload {
     pub source_id: String,
     pub endpoint_id: EndpointId,
     pub carrier: CarrierBinding,
+    pub slot_binding: UpgradeSlotBinding,
     pub client_nonce: ClientNonce,
     pub epoch_slot: u64,
     pub expires_at_secs: u64,

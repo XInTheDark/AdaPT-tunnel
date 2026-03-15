@@ -39,6 +39,7 @@ pub use self::{
     },
     upgrade::{Ug1, Ug2, Ug3, Ug4, UpgradeMessagePhase, UpgradeSlotBinding},
 };
+use self::upgrade::legacy_upgrade_slot_binding;
 
 const VERSION: &str = "APT/1-core";
 const ACCEPTABLE_SLOT_SKEW: i64 = 1;

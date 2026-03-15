@@ -71,16 +71,16 @@ impl ClientSessionRequest {
     }
 }
 
-/// Result of initiating `C0`.
+/// Result of initiating the first hidden-upgrade request.
 #[derive(Debug)]
 pub struct PreparedC0 {
-    /// Encrypted `C0` packet.
+    /// Encrypted first-stage packet wrapper.
     pub packet: AdmissionPacket,
-    /// State required to process `S1`.
+    /// State required to process the server's first hidden-upgrade reply.
     pub state: ClientPendingS1,
 }
 
-/// Client state waiting for `S1`.
+/// Client state waiting for the server's first hidden-upgrade reply.
 #[derive(Debug)]
 pub struct ClientPendingS1 {
     credential: ClientCredential,
@@ -97,16 +97,16 @@ pub struct ClientPendingS1 {
     c2_padding_len: usize,
 }
 
-/// Result of processing `S1` and emitting `C2`.
+/// Result of processing the first server reply and emitting the client confirmation.
 #[derive(Debug)]
 pub struct PreparedC2 {
-    /// Encrypted `C2` packet.
+    /// Encrypted client confirmation packet wrapper.
     pub packet: AdmissionPacket,
-    /// State required to process `S3`.
+    /// State required to process the final server seal.
     pub state: ClientPendingS3,
 }
 
-/// Client state waiting for `S3`.
+/// Client state waiting for the final server seal.
 #[derive(Debug)]
 pub struct ClientPendingS3 {
     endpoint_id: EndpointId,
@@ -125,7 +125,7 @@ fn chosen_credential_identity(credential: &ClientCredential) -> CredentialIdenti
     }
 }
 
-/// Initiates an admission attempt and emits `C0`.
+/// Initiates an admission attempt and emits the first hidden-upgrade request.
 pub fn initiate_c0<C: CarrierProfile>(
     credential: ClientCredential,
     request: ClientSessionRequest,
@@ -158,25 +158,30 @@ pub fn initiate_c0<C: CarrierProfile>(
     })?;
     let noise_msg1 = noise.write_message(&[])?;
     let client_nonce = ClientNonce::random();
-    let c0 = C0 {
-        version: VERSION.to_string(),
+    let ug1 = Ug1 {
+        endpoint_id: request.endpoint_id.clone(),
         auth_profile: credential.auth_profile,
-        suite_bitmap: request.supported_suites.clone(),
-        carrier_bitmap: request.supported_carriers.clone(),
-        policy_flags: request.policy_flags,
-        mode: request.mode,
-        epoch_slot: current_epoch_slot,
-        client_nonce,
+        credential_identity: chosen_credential_identity(&credential),
+        supported_suites: request.supported_suites.clone(),
+        supported_families: request.supported_carriers.clone(),
+        requested_mode: request.mode,
         path_profile: request.path_profile,
+        client_nonce,
         noise_msg1,
         optional_resume_ticket: request.resume_ticket.clone(),
-        optional_extensions: Vec::new(),
+        slot_binding: legacy_upgrade_slot_binding(
+            &request.endpoint_id,
+            carrier.binding(),
+            UpgradeMessagePhase::Request,
+            "legacy-ug1",
+            current_epoch_slot,
+        ),
         padding: random_padding(request.c0_padding_len),
     };
     let lookup_hint = credential
         .enable_lookup_hint
         .then(|| derive_lookup_hint(&credential.admission_key, current_epoch_slot));
-    let envelope = SealedEnvelope::seal(&per_epoch_admission_key, &aad, &c0)?;
+    let envelope = SealedEnvelope::seal(&per_epoch_admission_key, &aad, &ug1)?;
     Ok(PreparedC0 {
         packet: AdmissionPacket {
             lookup_hint,
@@ -200,26 +205,27 @@ pub fn initiate_c0<C: CarrierProfile>(
 }
 
 impl ClientPendingS1 {
-    /// Handles `S1`, produces `C2`, and returns state waiting for `S3`.
+    /// Handles the first server reply, produces the client confirmation, and
+    /// returns state waiting for the final server seal.
     pub fn handle_s1<C: CarrierProfile>(
         mut self,
         packet: &AdmissionPacket,
         carrier: &C,
     ) -> Result<PreparedC2, AdmissionError> {
         let aad = admission_associated_data(&self.endpoint_id, carrier.binding());
-        let s1: S1 = packet.envelope.open(&self.admission_key, &aad)?;
-        if s1.version != VERSION {
-            return Err(AdmissionError::Validation("unsupported version"));
-        }
-        if !self.supported_suites.contains(&s1.chosen_suite) {
+        let ug2: Ug2 = packet.envelope.open(&self.admission_key, &aad)?;
+        if !self.supported_suites.contains(&ug2.chosen_suite) {
             return Err(AdmissionError::Validation("server chose unsupported suite"));
         }
-        if !self.supported_carriers.contains(&s1.chosen_carrier) {
+        if !self.supported_carriers.contains(&ug2.chosen_family) {
             return Err(AdmissionError::Validation(
                 "server chose unsupported carrier",
             ));
         }
-        let responder_payload_bytes = self.noise.read_message(&s1.noise_msg2)?;
+        if ug2.slot_binding.phase != UpgradeMessagePhase::Response {
+            return Err(AdmissionError::Validation("unexpected upgrade-slot phase"));
+        }
+        let responder_payload_bytes = self.noise.read_message(&ug2.noise_msg2)?;
         let responder_payload: NoiseResponderPayload =
             bincode::deserialize(&responder_payload_bytes)?;
         let observed_server_static =
@@ -251,15 +257,20 @@ impl ClientPendingS1 {
             &handshake_hash,
         )?
         .for_role(SessionRole::Initiator);
-        let c2 = C2 {
-            version: VERSION.to_string(),
-            anti_amplification_cookie: s1.anti_amplification_cookie,
-            noise_msg3,
-            selected_transport_ack: s1.chosen_carrier,
-            optional_extensions: Vec::new(),
+        let ug3 = Ug3 {
+            selected_family_ack: ug2.chosen_family,
+            anti_amplification_cookie: ug2.anti_amplification_cookie.clone(),
+            noise_msg3: noise_msg3.clone(),
+            slot_binding: legacy_upgrade_slot_binding(
+                &self.endpoint_id,
+                carrier.binding(),
+                UpgradeMessagePhase::Request,
+                "legacy-ug3",
+                self.admission_epoch_slot,
+            ),
             padding: random_padding(self.c2_padding_len),
         };
-        let c2_envelope = SealedEnvelope::seal(&self.admission_key, &aad, &c2)?;
+        let c2_envelope = SealedEnvelope::seal(&self.admission_key, &aad, &ug3)?;
         let packet = AdmissionPacket {
             lookup_hint: self.credential.enable_lookup_hint.then(|| {
                 derive_lookup_hint(&self.credential.admission_key, self.admission_epoch_slot)
@@ -270,9 +281,9 @@ impl ClientPendingS1 {
             packet,
             state: ClientPendingS3 {
                 endpoint_id: self.endpoint_id,
-                chosen_carrier: s1.chosen_carrier,
-                chosen_suite: s1.chosen_suite,
-                _mode: s1.chosen_mode,
+                chosen_carrier: ug2.chosen_family,
+                chosen_suite: ug2.chosen_suite,
+                _mode: ug2.chosen_mode,
                 credential_identity: chosen_credential_identity(&self.credential),
                 secrets,
             },
@@ -288,31 +299,31 @@ impl ClientPendingS3 {
         &self.secrets.recv_ctrl
     }
 
-    /// Handles `S3` and finalizes the session.
+    /// Handles the final server seal and finalizes the session.
     pub fn handle_s3<C: CarrierProfile>(
         self,
         packet: &ServerConfirmationPacket,
         carrier: &C,
     ) -> Result<EstablishedSession, AdmissionError> {
         let aad = admission_associated_data(&self.endpoint_id, carrier.binding());
-        let s3: S3 = packet.envelope.open(&self.secrets.recv_ctrl, &aad)?;
-        if s3.version != VERSION {
-            return Err(AdmissionError::Validation("unsupported version"));
+        let ug4: Ug4 = packet.envelope.open(&self.secrets.recv_ctrl, &aad)?;
+        if ug4.slot_binding.phase != UpgradeMessagePhase::Response {
+            return Err(AdmissionError::Validation("unexpected upgrade-slot phase"));
         }
         Ok(EstablishedSession {
-            session_id: s3.session_id,
+            session_id: ug4.session_id,
             role: SessionRole::Initiator,
             chosen_carrier: self.chosen_carrier,
             chosen_suite: self.chosen_suite,
             mode: self._mode,
             credential_identity: self.credential_identity,
             secrets: self.secrets,
-            tunnel_mtu: s3.tunnel_mtu,
-            rekey_limits: s3.rekey_limits,
-            resume_ticket: s3.optional_resume_ticket,
+            tunnel_mtu: ug4.tunnel_mtu,
+            rekey_limits: ug4.rekey_limits,
+            resume_ticket: ug4.optional_resume_ticket,
             client_identity: None,
             client_static_public: None,
-            optional_extensions: s3.optional_extensions,
+            optional_extensions: ug4.optional_extensions,
         })
     }
 }

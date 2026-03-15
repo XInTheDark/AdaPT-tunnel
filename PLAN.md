@@ -32,11 +32,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** Early Phase B prep — harness fixtures + draft structured transport blocks
-- **Latency impact:** none on the live datapath; changes are schema/test/offline-analysis only
-- **Bandwidth impact:** none at runtime; fixture corpora only affect offline harness assets
-- **CPU impact:** negligible at runtime; tiny offline JSON fixture evaluation cost inside harness tests and future reports
-- **Notes:** `apt-harness` now supports manifest-driven sample fixture evaluation, and `apt-runtime` now exposes separate draft v2 client/server transport block types (`preferred_family`, structured `s1`/`d2`, `d1_policy`, deployment strength) without changing the live runtime schema yet
+- **Chunk:** Early Phase C hidden-upgrade state-machine migration
+- **Latency impact:** none on the live datapath; the current runtime compatibility wrapper remains in place
+- **Bandwidth impact:** none intended; the visible packet wrappers are unchanged even though the encrypted logical payloads now use `UG1`/`UG2`/`UG3`/`UG4`
+- **CPU impact:** negligible; extra slot-binding validation is small compared with the existing crypto/Noise work
+- **Notes:** `apt-admission` client/server flows now exchange transport-agnostic hidden-upgrade capsules inside the existing encrypted wrappers, cookie state carries slot binding, and tests exercise the new capsule model without requiring the old `C0`/`S1`/`C2`/`S3` envelope semantics
 
 ## Core v2 design rules
 
