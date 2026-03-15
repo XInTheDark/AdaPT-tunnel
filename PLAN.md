@@ -12,8 +12,8 @@
 
 ## Current milestone
 
-- **Milestone:** Phase C hidden-upgrade core — masked fallback tickets landed, packet-envelope reduction next
-- **Status:** Phase A hardening is complete; early Phase B/C/D prep is now in place with the live `D1` + optional `D2` baseline, manifest-driven harness fixtures, draft v2 structured transport config types, an initial `apt-origin` family-definition crate, transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, and masked fallback ticket issuance/opening bound to coarse network context while the next major focus becomes trimming the remaining legacy wrapper assumptions
+- **Milestone:** Phase B/D planning bridge — origin/runtime metadata is in place, H2 surface planning next
+- **Status:** Phase A hardening is complete; early Phase B/C/D prep is now in place with the live `D1` + optional `D2` baseline, manifest-driven harness fixtures, draft v2 structured transport config types, transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, masked fallback ticket issuance/opening bound to coarse network context, and an enriched `apt-origin` family-definition crate whose starter profiles now expose request graphs, slot metadata, concurrency envelopes, idle/convergence rules, shadow-lane policy, and config-resolved surface plans
 - **Canonical design docs:**
   - `SPEC_v2.md`
   - `docs/ARCHITECTURE_V2.md`
@@ -32,11 +32,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** Phase C masked fallback tickets bound to coarse network context
-- **Latency impact:** none intended on the live datapath; ticket sealing/opening happens only during admission and remains within the existing handshake budget
-- **Bandwidth impact:** negligible; the encrypted `UG1`/`UG4` payloads now carry a coarse public-route hint and masked fallback ticket token, but the visible wrapper format is unchanged
-- **CPU impact:** low; one extra token open/seal plus a small context-hash computation per ticketed admission attempt
-- **Notes:** `apt-crypto` now provides masked fallback ticket primitives, `apt-admission` issues and validates them against coarse network context (`PublicRouteHint` + `PathProfile` + carrier family), and the runtime passes/stores the opaque ticket without needing to expose or parse the old resumption-ticket payload
+- **Chunk:** Phase B/D origin-profile metadata and config surface-plan bridge
+- **Latency impact:** none on the live datapath; this slice is planning/data-model work only
+- **Bandwidth impact:** none
+- **CPU impact:** none at runtime today; only offline config/profile resolution work was added
+- **Notes:** `apt-origin` starter profiles now carry machine-readable request graphs, concurrency/timing envelopes, idle-convergence rules, shadow-lane policy, and feature weights, while the draft v2 transport config can now resolve `s1`/`d2` family blocks into concrete `apt-origin` surface plans for future H2/H3 surface crates
 
 ## Core v2 design rules
 
@@ -65,8 +65,8 @@
 | Runtime/module split | active | Finish separating remaining transport-owned runtime/helpers into surface-ready modules and remove remaining coupling between the live runtime baseline and future public-session families | No intentional runtime impact; lowers maintenance risk |
 | Empirical harness | active | Extend `apt-harness` beyond the initial passive/probe/retry report helpers into baseline corpora ingestion and runtime comparison fixtures; sample fixture manifests are the current sub-step | Offline-only analysis cost |
 | Hidden-upgrade core | active | `apt-admission` now has transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, slot bindings, and masked fallback tickets bound to network context; next step is reducing the remaining `AdmissionPacket` / `ServerConfirmationPacket` wrapper assumptions | Moderate implementation risk; core enabler |
-| Structured v2 transport config | active | Draft v2 public-session transport blocks and deployment metadata now exist behind a separate schema boundary; next step is wiring them into bundle/origin/surface planning without changing the live runtime path yet | Minor config churn |
-| Origin family definitions | active | `apt-origin` now carries initial API-sync and object/origin family skeletons plus legal request/response slot classes; next step is enriching them with cover-profile/runtime integration | No runtime impact yet |
+| Structured v2 transport config | active | Draft v2 public-session transport blocks and deployment metadata now resolve into `apt-origin` starter surface plans; next step is feeding those plans into future bundle/origin/surface orchestration without changing the live runtime path yet | Minor config churn |
+| Origin family definitions | active | `apt-origin` now carries API-sync and object/origin starter profiles with request graphs, legal upgrade slots, concurrency/timing envelopes, idle rules, and shadow-lane hints; next step is consuming them from an H2/H3 surface crate | No runtime impact yet |
 | First public-session carrier | pending | Ship the H2 API-sync family end-to-end with honest unauthenticated semantics and hidden-upgrade slots | Main v2 milestone |
 | Second public-session carrier | pending | Ship the H3 public-session sibling after H2 is stable | Major feature; higher protocol complexity |
 | Cover compiler + budget controller | pending | Add machine-readable cover profiles, session plans, and bounded indistinguishability budgets | Bounded CPU/latency overhead |
@@ -74,11 +74,11 @@
 ## Next tasks
 
 1. Split any remaining mixed transport/runtime code into surface-oriented modules before new v2 crates land.
-2. Extend the draft v2 transport/config types into bundle/origin-facing planning structures without changing the live runtime schema yet.
-3. Grow `apt-harness` from manifest-driven samples into richer baseline corpora ingestion and browser/AdaPT comparison fixtures.
-4. Reduce the remaining `apt-admission` dependence on legacy public-wire wrapper types after the `UG1`/`UG2`/`UG3`/`UG4` + masked-fallback rewrite.
-5. Extend the draft v2 transport/config types into bundle/origin-facing planning structures and `apt-origin` cover-profile/runtime metadata.
-6. Add `apt-surface-h2` for the H2 API-sync reference path, then follow with the H3 sibling and later cover compiler/budget work.
+2. Feed the new `apt-origin` starter profiles and resolved v2 surface plans into an initial `apt-surface-h2` crate for the H2 API-sync reference path.
+3. Reduce the remaining `apt-admission` dependence on legacy public-wire wrapper types after the `UG1`/`UG2`/`UG3`/`UG4` + masked-fallback rewrite.
+4. Grow `apt-harness` from manifest-driven samples into richer baseline corpora ingestion and browser/AdaPT comparison fixtures.
+5. Follow with the H3 sibling surface once the H2 reference path is stable.
+6. Then add cover compiler/budget work once both public-session baselines exist.
 
 ## Detailed implementation requirements for the next upcoming chunks
 

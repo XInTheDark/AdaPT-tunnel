@@ -11,6 +11,7 @@ apt-admission.workspace = true
 apt-carriers.workspace = true
 apt-client-control.workspace = true
 apt-crypto.workspace = true
+apt-origin.workspace = true
 apt-observability.workspace = true
 apt-persona.workspace = true
 apt-policy.workspace = true

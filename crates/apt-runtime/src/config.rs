@@ -38,9 +38,10 @@ pub use self::{
         PersistedNetworkProfile,
     },
     v2::{
-        V2ClientFamilyConfig, V2ClientTransportConfigDraft, V2D1FallbackPolicy,
-        V2DeploymentStrength, V2FamilyPreference, V2SchemaVersion, V2ServerSurfaceConfig,
-        V2ServerTransportConfigDraft, V2SurfaceTrustConfig,
+        V2ClientFamilyConfig, V2ClientSurfacePlan, V2ClientTransportConfigDraft,
+        V2D1FallbackPolicy, V2DeploymentStrength, V2FamilyPreference, V2OriginPlanError,
+        V2SchemaVersion, V2ServerSurfaceConfig, V2ServerSurfacePlan, V2ServerTransportConfigDraft,
+        V2SurfaceTrustConfig,
     },
 };
 

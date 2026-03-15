@@ -265,6 +265,7 @@ dependencies = [
  "apt-client-control",
  "apt-crypto",
  "apt-observability",
+ "apt-origin",
  "apt-persona",
  "apt-policy",
  "apt-tunnel",

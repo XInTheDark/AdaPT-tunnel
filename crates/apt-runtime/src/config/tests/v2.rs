@@ -1,4 +1,5 @@
 use super::*;
+use apt_origin::{OriginFamilyId, PublicSessionTransport, ShadowLaneKind};
 
 #[test]
 fn client_v2_transport_draft_parses_nested_family_blocks() {
@@ -99,5 +100,73 @@ pinned_certificate = "file:/etc/adapt/d2-cert.pem"
     assert_eq!(
         parsed.d2.as_ref().unwrap().deployment_strength,
         V2DeploymentStrength::Lab
+    );
+}
+
+#[test]
+fn v2_transport_draft_resolves_origin_surface_plans() {
+    let parsed: V2ClientTransportConfigDraft = toml::from_str(
+        r#"
+schema_version = "v2-draft"
+preferred_family = "auto"
+
+[s1]
+authority = "api.example.com"
+endpoint = "api.example.com:443"
+cover_family = "api-sync"
+profile_version = "2026.03"
+
+[s1.trust]
+server_name = "api.example.com"
+
+[d2]
+authority = "origin.example.com"
+endpoint = "origin.example.com:443"
+cover_family = "object-origin"
+profile_version = "2026.03"
+
+[d2.trust]
+server_name = "origin.example.com"
+"#,
+    )
+    .unwrap();
+
+    let plans = parsed.surface_plans().unwrap();
+    assert_eq!(plans.len(), 2);
+    assert_eq!(plans[0].transport, PublicSessionTransport::S1H2);
+    assert_eq!(plans[0].profile.family_id, OriginFamilyId::ApiSync);
+    assert_eq!(plans[1].transport, PublicSessionTransport::D2H3);
+    assert!(plans[1]
+        .profile
+        .supports_shadow_lane(ShadowLaneKind::H3Datagram));
+}
+
+#[test]
+fn v2_transport_draft_rejects_cover_family_transport_mismatch() {
+    let parsed: V2ClientTransportConfigDraft = toml::from_str(
+        r#"
+schema_version = "v2-draft"
+preferred_family = "s1"
+
+[s1]
+authority = "api.example.com"
+endpoint = "api.example.com:443"
+cover_family = "object-origin"
+profile_version = "2026.03"
+
+[s1.trust]
+server_name = "api.example.com"
+"#,
+    )
+    .unwrap();
+
+    let err = parsed.surface_plans().unwrap_err();
+    assert_eq!(
+        err,
+        V2OriginPlanError::TransportMismatch {
+            family: "object-origin".to_string(),
+            transport: PublicSessionTransport::D2H3,
+            expected: PublicSessionTransport::S1H2,
+        }
     );
 }
