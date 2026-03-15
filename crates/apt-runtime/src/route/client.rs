@@ -37,6 +37,11 @@ fn configure_client_network_linux(
     if routes.iter().any(is_default_route) {
         for server_ip in unique_server_ips(server_addrs) {
             let route = linux_route_to(server_ip)?;
+            let route_interface = route.interface_name.ok_or_else(|| {
+                RuntimeError::CommandFailed(
+                    "linux route lookup returned no interface for server exemption".to_string(),
+                )
+            })?;
             let mut args = Vec::new();
             if server_ip.is_ipv6() {
                 args.push("-6".to_string());
@@ -51,7 +56,7 @@ fn configure_client_network_linux(
                 args.push(gateway.to_string());
             }
             args.push("dev".to_string());
-            args.push(route.interface_name.clone());
+            args.push(route_interface);
             run_command("ip", &args)?;
 
             let mut cleanup = Vec::new();
