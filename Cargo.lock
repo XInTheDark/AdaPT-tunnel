@@ -291,6 +291,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "apt-surface-h2"
+version = "0.1.0"
+dependencies = [
+ "apt-admission",
+ "apt-crypto",
+ "apt-origin",
+ "apt-types",
+ "base64",
+ "bincode",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "apt-tunnel"
 version = "0.1.0"
 dependencies = [

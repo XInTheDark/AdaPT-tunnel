@@ -26,9 +26,9 @@ pub use config::{
     ResolvedClientConfig, ResolvedClientD2Config, ResolvedRemoteEndpoint, ResolvedServerConfig,
     ResolvedServerD2Config, RuntimeCarrierPreference, ServerConfig, ServerSessionExtension,
     SessionTransportParameters, V2ClientFamilyConfig, V2ClientSurfacePlan,
-    V2ClientTransportConfigDraft, V2D1FallbackPolicy, V2DeploymentStrength,
-    V2FamilyPreference, V2OriginPlanError, V2SchemaVersion, V2ServerSurfaceConfig,
-    V2ServerSurfacePlan, V2ServerTransportConfigDraft, V2SurfaceTrustConfig,
+    V2ClientTransportConfigDraft, V2D1FallbackPolicy, V2DeploymentStrength, V2FamilyPreference,
+    V2OriginPlanError, V2SchemaVersion, V2ServerSurfaceConfig, V2ServerSurfacePlan,
+    V2ServerTransportConfigDraft, V2SurfaceTrustConfig,
 };
 pub use error::RuntimeError;
 pub use keys::{

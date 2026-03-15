@@ -14,6 +14,7 @@ members = [
   "crates/apt-observability",
   "crates/apt-harness",
   "crates/apt-origin",
+  "crates/apt-surface-h2",
   "apps/apt-client",
   "apps/apt-clientd",
   "apps/apt-edge",
@@ -41,6 +42,7 @@ apt-policy = { path = "crates/apt-policy" }
 apt-observability = { path = "crates/apt-observability" }
 apt-harness = { path = "crates/apt-harness" }
 apt-origin = { path = "crates/apt-origin" }
+apt-surface-h2 = { path = "crates/apt-surface-h2" }
 
 base64 = "0.22"
 bincode = "1.3"

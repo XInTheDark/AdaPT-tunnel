@@ -12,8 +12,8 @@
 
 ## Current milestone
 
-- **Milestone:** Phase B/D planning bridge — origin/runtime metadata is in place, H2 surface planning next
-- **Status:** Phase A hardening is complete; early Phase B/C/D prep is now in place with the live `D1` + optional `D2` baseline, manifest-driven harness fixtures, draft v2 structured transport config types, transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, masked fallback ticket issuance/opening bound to coarse network context, and an enriched `apt-origin` family-definition crate whose starter profiles now expose request graphs, slot metadata, concurrency envelopes, idle/convergence rules, shadow-lane policy, and config-resolved surface plans
+- **Milestone:** Phase D bootstrap — API-sync H2 surface scaffold is in place, runtime integration next
+- **Status:** Phase A hardening is complete; early Phase B/C/D prep is now in place with the live `D1` + optional `D2` baseline, manifest-driven harness fixtures, draft v2 structured transport config types, transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, masked fallback ticket issuance/opening bound to coarse network context, enriched `apt-origin` starter profiles, config-resolved v2 surface plans, and a new `apt-surface-h2` crate that models honest API-sync request/response bodies plus legal JSON slot embedding/extraction for hidden-upgrade capsules
 - **Canonical design docs:**
   - `SPEC_v2.md`
   - `docs/ARCHITECTURE_V2.md`
@@ -32,11 +32,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** Phase B/D origin-profile metadata and config surface-plan bridge
-- **Latency impact:** none on the live datapath; this slice is planning/data-model work only
-- **Bandwidth impact:** none
-- **CPU impact:** none at runtime today; only offline config/profile resolution work was added
-- **Notes:** `apt-origin` starter profiles now carry machine-readable request graphs, concurrency/timing envelopes, idle-convergence rules, shadow-lane policy, and feature weights, while the draft v2 transport config can now resolve `s1`/`d2` family blocks into concrete `apt-origin` surface plans for future H2/H3 surface crates
+- **Chunk:** Phase D API-sync H2 surface scaffold
+- **Latency impact:** none on the live datapath yet; this slice adds surface-model helpers rather than live runtime wiring
+- **Bandwidth impact:** none yet; the helpers only define legal JSON slot placement for future H2 traffic
+- **CPU impact:** negligible; slot insertion/extraction is small JSON/base64 work that happens only when the future surface crate is exercised
+- **Notes:** `apt-surface-h2` now exists with honest API-sync request/response models and legal JSON slot embedding/extraction that can carry `UG1`/`UG2`-style capsules without depending on the old public-wire packet wrappers
 
 ## Core v2 design rules
 
@@ -66,15 +66,15 @@
 | Empirical harness | active | Extend `apt-harness` beyond the initial passive/probe/retry report helpers into baseline corpora ingestion and runtime comparison fixtures; sample fixture manifests are the current sub-step | Offline-only analysis cost |
 | Hidden-upgrade core | active | `apt-admission` now has transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, slot bindings, and masked fallback tickets bound to network context; next step is reducing the remaining `AdmissionPacket` / `ServerConfirmationPacket` wrapper assumptions | Moderate implementation risk; core enabler |
 | Structured v2 transport config | active | Draft v2 public-session transport blocks and deployment metadata now resolve into `apt-origin` starter surface plans; next step is feeding those plans into future bundle/origin/surface orchestration without changing the live runtime path yet | Minor config churn |
-| Origin family definitions | active | `apt-origin` now carries API-sync and object/origin starter profiles with request graphs, legal upgrade slots, concurrency/timing envelopes, idle rules, and shadow-lane hints; next step is consuming them from an H2/H3 surface crate | No runtime impact yet |
-| First public-session carrier | pending | Ship the H2 API-sync family end-to-end with honest unauthenticated semantics and hidden-upgrade slots | Main v2 milestone |
+| Origin family definitions | active | `apt-origin` now carries API-sync and object/origin starter profiles with request graphs, legal upgrade slots, concurrency/timing envelopes, idle rules, and shadow-lane hints; `apt-surface-h2` is the first consumer | No runtime impact yet |
+| First public-session carrier | active | `apt-surface-h2` now provides the initial API-sync surface/body/slot scaffold; next step is wiring it into runtime/admission flow so real H2 sessions can carry hidden-upgrade traffic | Main v2 milestone |
 | Second public-session carrier | pending | Ship the H3 public-session sibling after H2 is stable | Major feature; higher protocol complexity |
 | Cover compiler + budget controller | pending | Add machine-readable cover profiles, session plans, and bounded indistinguishability budgets | Bounded CPU/latency overhead |
 
 ## Next tasks
 
 1. Split any remaining mixed transport/runtime code into surface-oriented modules before new v2 crates land.
-2. Feed the new `apt-origin` starter profiles and resolved v2 surface plans into an initial `apt-surface-h2` crate for the H2 API-sync reference path.
+2. Wire `apt-surface-h2` into a runtime-facing admission/session path so real H2 API-sync messages can carry `UG1`/`UG2`/`UG3`/`UG4`.
 3. Reduce the remaining `apt-admission` dependence on legacy public-wire wrapper types after the `UG1`/`UG2`/`UG3`/`UG4` + masked-fallback rewrite.
 4. Grow `apt-harness` from manifest-driven samples into richer baseline corpora ingestion and browser/AdaPT comparison fixtures.
 5. Follow with the H3 sibling surface once the H2 reference path is stable.
