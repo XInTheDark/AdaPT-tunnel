@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::PersistedIdleOutcomeSummary;
 
 impl AdaptiveDatapath {
     pub fn note_successful_session(&mut self) {
@@ -57,14 +58,16 @@ impl AdaptiveDatapath {
     pub fn maybe_observe_quiet_impairment(
         &mut self,
         now_secs: u64,
-        last_recv_secs: u64,
+        _last_send_secs: u64,
+        _last_recv_secs: u64,
     ) -> Option<PolicyMode> {
-        if now_secs.saturating_sub(last_recv_secs) < QUIET_IMPAIRMENT_THRESHOLD_SECS {
+        if !self.keepalive.should_treat_as_idle_impairment(now_secs) {
             return None;
         }
         if let Some(profile) = &mut self.local_normality {
             profile.note_carrier_idle_timeout(self.chosen_carrier);
         }
+        self.note_idle_impairment(now_secs);
         self.apply_signal(PathSignalEvent::RttInflation, now_secs)
     }
 
@@ -87,6 +90,28 @@ impl AdaptiveDatapath {
                 self.allow_speed_first_by_policy && profile.is_bootstrapped();
         } else {
             self.controller.allow_speed_first = self.allow_speed_first_by_policy;
+        }
+        match signal {
+            PathSignalEvent::ImmediateReset => {
+                self.keepalive.note_idle_impairment(
+                    now_secs,
+                    self.persona.scheduler.keepalive_mode,
+                    PersistedIdleOutcomeSummary::Impaired,
+                );
+            }
+            PathSignalEvent::NatRebinding => {
+                self.keepalive.note_idle_impairment(
+                    now_secs,
+                    self.persona.scheduler.keepalive_mode,
+                    PersistedIdleOutcomeSummary::Rebinding,
+                );
+            }
+            PathSignalEvent::HandshakeBlackhole
+            | PathSignalEvent::SizeSpecificLoss
+            | PathSignalEvent::MtuBlackhole
+            | PathSignalEvent::FallbackFailure
+            | PathSignalEvent::RttInflation
+            | PathSignalEvent::StableDelivery => {}
         }
         let previous = self.controller.current_mode;
         let current = self.controller.observe_signal(signal);

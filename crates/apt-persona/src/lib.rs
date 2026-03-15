@@ -174,26 +174,6 @@ impl PersonaEngine {
             standby_health_check_secs: rng.gen_range(15..=45),
         }
     }
-
-    /// Samples a jittered keepalive interval while respecting the safe range from the spec.
-    #[must_use]
-    pub fn sample_keepalive_interval(
-        inputs: &PersonaInputs,
-        estimated_binding_secs: Option<u64>,
-        sample_index: u64,
-    ) -> u64 {
-        let mut hasher = Sha256::new();
-        hasher.update(inputs.persona_seed);
-        hasher.update(sample_index.to_be_bytes());
-        let seed: [u8; 32] = hasher.finalize().into();
-        let mut rng = ChaCha8Rng::from_seed(seed);
-        let base = estimated_binding_secs
-            .map(|secs| secs.saturating_mul(55) / 100)
-            .unwrap_or(25)
-            .clamp(15, 120);
-        let jitter = rng.gen_range(80..=120);
-        base.saturating_mul(jitter) / 100
-    }
 }
 
 #[cfg(test)]
@@ -224,14 +204,5 @@ mod tests {
         let a = PersonaEngine::generate(&input);
         let b = PersonaEngine::generate(&input);
         assert_eq!(a, b);
-    }
-
-    #[test]
-    fn keepalive_sampling_stays_within_bounds() {
-        let input = inputs(9);
-        for index in 0..50 {
-            let sample = PersonaEngine::sample_keepalive_interval(&input, Some(80), index);
-            assert!((15..=120).contains(&sample));
-        }
     }
 }

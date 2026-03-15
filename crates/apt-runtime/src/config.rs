@@ -32,7 +32,10 @@ pub use self::{
         AuthorizedPeerConfig, ResolvedAuthorizedPeer, ResolvedServerConfig, ResolvedServerD2Config,
         ServerConfig, ServerSessionExtension, SessionTransportParameters,
     },
-    state::{ClientPersistentState, PersistedNetworkProfile},
+    state::{
+        ClientPersistentState, PersistedIdleOutcomeSummary, PersistedKeepaliveLearningState,
+        PersistedNetworkProfile,
+    },
 };
 
 const DEFAULT_UDP_RECV_BUFFER_BYTES: usize = 4 * 1024 * 1024;

@@ -45,15 +45,12 @@ impl AdaptiveDatapath {
                 midpoint.saturating_sub(payload_bytes)
             })
             .unwrap_or_default();
-        let minimum_cover = if keepalive_only
-            && matches!(
-                self.persona.scheduler.keepalive_mode,
-                KeepaliveMode::SparseCover
-            ) {
-            24
-        } else {
-            0
-        };
+        let minimum_cover =
+            if keepalive_only && matches!(self.keepalive_mode(), KeepaliveMode::SparseCover) {
+                24
+            } else {
+                0
+            };
         let padding_len = target_padding.min(max_padding).max(minimum_cover);
         (padding_len >= 8).then(|| Frame::Padding(vec![0_u8; padding_len]))
     }

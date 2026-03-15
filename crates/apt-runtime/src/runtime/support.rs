@@ -171,16 +171,12 @@ pub(super) fn persist_client_learning(
     let Some(normality) = adaptive.local_normality_profile() else {
         return;
     };
-    let keepalive_learning = persistent_state
-        .active_network_profile()
-        .map(|profile| profile.keepalive_learning.clone())
-        .unwrap_or_default();
     persistent_state.upsert_active_network_profile(PersistedNetworkProfile {
         context: normality.context.clone(),
         normality,
         remembered_profile: adaptive.remembered_profile(),
         last_mode: adaptive.current_mode().into(),
-        keepalive_learning,
+        keepalive_learning: adaptive.keepalive_learning_state(),
         last_seen_unix_secs: now_secs(),
     });
 }

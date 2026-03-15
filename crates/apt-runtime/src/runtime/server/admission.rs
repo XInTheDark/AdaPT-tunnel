@@ -289,8 +289,12 @@ fn install_server_session(
     let adaptive = AdaptiveDatapath::new_server(
         session.chosen_carrier,
         session.secrets.persona_seed,
-        session.policy_mode,
-        config.session_policy.allow_speed_first,
+        AdaptiveRuntimeConfig {
+            initial_mode: session.policy_mode,
+            operator_mode: config.mode,
+            allow_speed_first_by_policy: config.session_policy.allow_speed_first,
+            keepalive_base_interval_secs: config.keepalive_secs,
+        },
         admission_path_profile(None),
         now_secs(),
     );

@@ -3,7 +3,7 @@ use apt_policy::{inferred_path_profile, LocalNormalityProfile, PolicyController}
 use apt_tunnel::Frame;
 use apt_types::{
     CarrierBinding, ConnectionLongevityClass, GatewayFingerprint, KeepaliveMode, LinkType,
-    LocalNetworkContext, NetworkMetadataObservation, PathClass, PathProfile, PathSignalEvent,
+    LocalNetworkContext, Mode, NetworkMetadataObservation, PathClass, PathProfile, PathSignalEvent,
     PolicyMode, PublicRouteHint,
 };
 
@@ -24,5 +24,5 @@ pub(crate) use context::{
     build_client_network_context, canonicalize_local_network_context,
     discover_client_network_context, local_network_profile_key,
 };
-pub(crate) use datapath::AdaptiveDatapath;
+pub(crate) use datapath::{AdaptiveDatapath, AdaptiveRuntimeConfig};
 pub(crate) use normality::admission_path_profile;

@@ -13,9 +13,8 @@
 ## Current milestone
 
 - **Milestone:** Phase 3 adaptive/persona/local-normality rewrite
-- **Status:** chunk 2 shipped, plus a runtime hot-path CPU hardening checkpoint, plus the bounded histogram local-normality rewrite
+- **Status:** multi-profile persistence/context discovery, runtime hot-path CPU hardening, bounded histogram local-normality, and adaptive keepalive learning are now shipped
 - **Primary remaining goal:** finish the spec-credible adaptive runtime by:
-  - making adaptive keepalive a real persisted runtime path
   - wiring persona outputs into live scheduler/runtime behavior so numeric `mode` scales continuously rather than behaving like a renamed enum
   - upgrading the controller to consume richer signals and apply bounded `mode` adjustments
 - **Performance intent:**
@@ -25,11 +24,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** bounded histogram local-normality model rewrite
-- **Latency impact:** negligible
-- **Bandwidth impact:** none
-- **CPU impact:** negligible steady-state cost; still within the `<1%` target envelope for the model itself
-- **Notes:** local-normality now uses persisted bounded histograms/counters instead of raw sample deques, applies explicit per-session clipping budgets, tracks per-carrier success/failure/rebinding/idle-timeout evidence, derives richer path/MTU/RTT/loss/NAT/permissiveness summaries, and refreshes remembered carrier/permissiveness hints from learned profile evidence
+- **Chunk:** adaptive keepalive learning
+- **Latency impact:** none
+- **Bandwidth impact:** neutral-to-lower on active and permissive paths; explicit keepalives are now suppressed on recent non-keepalive activity and non-zero modes can stretch toward learned idle intervals
+- **CPU impact:** negligible
+- **Notes:** runtime keepalives now use a dedicated adaptive controller instead of persona-sampled placeholder intervals, persist learned per-profile idle interval state, reuse learned targets across reconnects, learn only from idle-specific outcomes, and make non-zero `mode` values use a real `Adaptive`/`SparseCover` path while `mode=0` stays base-interval `SuppressWhenActive`
 
 ## Numeric mode model
 
@@ -66,50 +65,19 @@ The Phase 3 end state remains **`mode`-only** across operator-facing config, CLI
 | Chunk | Status | Scope | Estimated impact |
 |---|---|---|---|
 | Planning/docs maintenance | active | Keep `PLAN.md` current after each shipped chunk; keep assumptions, scope, status, and expected performance notes aligned with the live code | No runtime impact |
-| Adaptive keepalive learning | pending | Persist learned idle interval state and make adaptive keepalive a real runtime path | No latency impact; bandwidth neutral-to-lower on permissive paths; negligible CPU |
 | Persona/scheduler runtime wiring + soft packing | pending | Consume persona outputs live, derive shaping behavior continuously from numeric `mode`, and add soft MTU-aware packing behavior | `mode=0`: `~0` latency / `~0` padding / `~0-1%` CPU; `mode≈50`: `+0-3 ms` interactive / `+0-10 ms` bulk / `+0-2%` bandwidth / `+0-2%` CPU; `mode=100`: `+0-10 ms` interactive / `+0-40 ms` bulk / `+2-8%` steady bandwidth with up to `15-20%` during probation / `+1-5%` CPU |
 | Policy/controller follow-up | pending | Feed richer signals into the controller, remember per-profile carrier preference/permissiveness, and apply bounded numeric `mode` increases/decreases | Negligible runtime overhead |
 | QA/perf validation | pending | Real-traffic checks at `mode=0`, `mode=50`, and `mode=100`, plus workspace/integration coverage for adaptive behavior | Validation-only cost |
 
 ## Next tasks
 
-1. Add the dedicated adaptive keepalive learning controller and persist its learned interval/confidence state inside each stored network profile.
-2. Rework persona generation and runtime scheduling so pacing, padding, keepalive style, soft packing, and idle-resume behavior scale continuously from numeric `mode` instead of coarse anchor buckets.
-3. Expand the controller to consume richer delivery/impairment/rebinding/idle-timeout signals and to adjust `mode` conservatively with remembered per-profile preferences.
-4. Run workspace tests plus mode-by-mode smoke/perf checks, with special attention to CPU under `mode=0`, then update this file again with the next shipped chunk and impact note.
+1. Rework persona generation and runtime scheduling so pacing, padding, keepalive style, soft packing, and idle-resume behavior scale continuously from numeric `mode` instead of coarse anchor buckets.
+2. Expand the controller to consume richer delivery/impairment/rebinding/idle-timeout signals and to adjust `mode` conservatively with remembered per-profile preferences.
+3. Run workspace tests plus mode-by-mode smoke/perf checks, with special attention to CPU under `mode=0`, then update this file again with the next shipped chunk and impact note.
 
 ## Detailed implementation requirements for remaining chunks
 
-### 1) Adaptive keepalive: make adaptive real
-
-Implement a dedicated adaptive keepalive controller and persist it per network profile.
-
-Persisted keepalive-learning state must include:
-
-- current target interval
-- last idle outcome summary
-- bounded confidence / learning counters
-
-Mode semantics must scale with numeric `mode` rather than selecting from a renamed preset enum.
-
-- at `mode=0`: `SuppressWhenActive` only; no cover; no deliberate stretching beyond the configured base interval; suppress explicit keepalives while recent traffic exists
-- around `mode=50`: use `Adaptive`; suppress when active, otherwise schedule jittered keepalives from the learned target
-- at high `mode` values approaching `100`: use the same learned interval engine as `Adaptive`, but permit `SparseCover` when the active persona/path classification says cover is appropriate
-- as `mode` rises, adaptive stretching beyond the base interval, jitter width, and cover eligibility should increase monotonically within the hard caps below
-- do not treat `0`, `50`, and `100` as hard-only operating buckets
-
-Exact interval update rules:
-
-- initialize from configured base interval, default `25s`
-- on successful idle survival at or above the current target, increase target by `10%`, clamped to configured max
-- on idle-related impairment/rebinding/quiet-timeout, decrease target by `30%` or at least `5s`, clamped to configured min
-- jitter:
-  - Adaptive: `85%–115%`
-  - SparseCover: `80%–110%`
-  - SuppressWhenActive: configured base interval only
-- keepalive learning updates only from idle-related signals, never from busy periods
-
-### 2) Persona / scheduler runtime rewrite
+### 1) Persona / scheduler runtime rewrite
 
 Keep persona generation deterministic per session, but make the important outputs live in the runtime.
 
@@ -149,7 +117,7 @@ Hard performance caps:
 - stealth end (`mode≈100`): up to `10 ms` interactive, up to `40 ms` bulk
 - never exceed the repo's existing global scheduler latency budgets
 
-### 3) Policy / controller follow-up
+### 2) Policy / controller follow-up
 
 Keep the controller explicit and rule-based.
 
@@ -178,7 +146,7 @@ Carrier ordering must be:
 4. conservative binding order
 5. always filtered by actually enabled carriers
 
-### 4) QA / perf validation
+### 3) QA / perf validation
 
 Run lightweight real-traffic QA for all three anchor points (`mode=0`, `mode=50`, `mode=100`):
 

@@ -74,10 +74,11 @@ pub(super) async fn run_tick(
                 observability,
             );
         }
-        if let Some(mode) = session
-            .adaptive
-            .maybe_observe_quiet_impairment(now, session.primary_path.last_recv_secs)
-        {
+        if let Some(mode) = session.adaptive.maybe_observe_quiet_impairment(
+            now,
+            session.primary_path.last_send_secs,
+            session.primary_path.last_recv_secs,
+        ) {
             record_event(
                 telemetry,
                 &AptEvent::ModeChanged {
@@ -125,11 +126,8 @@ pub(super) async fn run_tick(
             }
         }
         let mut frames = session.tunnel.collect_due_control_frames(now);
-        if session
-            .adaptive
-            .keepalive_due(now, session.primary_path.last_send_secs)
-        {
-            frames.extend(session.adaptive.build_keepalive_frames(64, now));
+        if session.adaptive.keepalive_due(now) {
+            frames.extend(session.adaptive.build_keepalive_frames(64));
         }
         match session.tunnel.rekey_status(now) {
             RekeyStatus::SoftLimitReached => {
@@ -166,7 +164,11 @@ pub(super) async fn run_tick(
             session
                 .adaptive
                 .record_outbound(payload_bytes, burst_len, now_millis());
-            session.adaptive.note_activity(now);
+            if frames.iter().any(|frame| matches!(frame, Frame::Ping)) {
+                session.adaptive.note_keepalive_sent(now);
+            } else {
+                session.adaptive.note_activity(now);
+            }
         }
     }
     for session_id in expired {

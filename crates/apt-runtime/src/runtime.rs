@@ -1,7 +1,7 @@
 use crate::{
     adaptive::{
         admission_path_profile, build_client_network_context, discover_client_network_context,
-        AdaptiveDatapath,
+        AdaptiveDatapath, AdaptiveRuntimeConfig,
     },
     config::{
         ClientPersistentState, PersistedNetworkProfile, ResolvedAuthorizedPeer,

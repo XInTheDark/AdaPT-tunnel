@@ -34,13 +34,20 @@ pub(super) async fn run_client_session_loop(
         persistent_state
             .active_network_profile()
             .and_then(|profile| profile.remembered_profile.clone()),
-        config.session_policy.initial_mode,
-        config.session_policy.allow_speed_first,
+        AdaptiveRuntimeConfig {
+            initial_mode: config.session_policy.initial_mode,
+            operator_mode: config.mode,
+            allow_speed_first_by_policy: config.session_policy.allow_speed_first,
+            keepalive_base_interval_secs: config.keepalive_secs,
+        },
         admission_path_profile(
             persistent_state
                 .active_network_profile()
                 .map(|profile| &profile.normality),
         ),
+        persistent_state
+            .active_network_profile()
+            .map(|profile| profile.keepalive_learning.clone()),
         now_secs(),
     );
     adaptive.note_successful_session();
@@ -300,6 +307,7 @@ pub(super) async fn run_client_session_loop(
                 }
                 if let Some(mode) = adaptive.maybe_observe_quiet_impairment(
                     now,
+                    paths.get(&active_path_id).map_or(now, |path| path.last_send_secs),
                     paths.get(&active_path_id).map_or(now, |path| path.last_recv_secs),
                 ) {
                     migration_pressure = migration_pressure.saturating_add(1);
@@ -438,10 +446,8 @@ pub(super) async fn run_client_session_loop(
                     );
                 }
                 let mut frames = tunnel.collect_due_control_frames(now);
-                if let Some(active_path) = paths.get(&active_path_id) {
-                    if adaptive.keepalive_due(now, active_path.last_send_secs) {
-                        frames.extend(adaptive.build_keepalive_frames(64, now));
-                    }
+                if paths.contains_key(&active_path_id) && adaptive.keepalive_due(now) {
+                    frames.extend(adaptive.build_keepalive_frames(64));
                 }
                 match tunnel.rekey_status(now) {
                     RekeyStatus::SoftLimitReached => {
@@ -477,7 +483,11 @@ pub(super) async fn run_client_session_loop(
                         active_path.last_send_secs = now;
                     }
                     adaptive.record_outbound(payload_bytes, burst_len, now_millis());
-                    adaptive.note_activity(now);
+                    if frames.iter().any(|frame| matches!(frame, Frame::Ping)) {
+                        adaptive.note_keepalive_sent(now);
+                    } else {
+                        adaptive.note_activity(now);
+                    }
                 }
             }
             _ = tokio::signal::ctrl_c() => {
