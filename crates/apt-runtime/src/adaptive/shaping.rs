@@ -140,6 +140,7 @@ impl AdaptiveDatapath {
 
     pub fn pacing_delay_ms(
         &self,
+        binding: CarrierBinding,
         frames: &[Frame],
         batch_count: usize,
         batch_index: usize,
@@ -147,6 +148,10 @@ impl AdaptiveDatapath {
     ) -> u16 {
         let mode = self.behavior_mode();
         if mode == Mode::SPEED || !frames.iter().any(|frame| matches!(frame, Frame::IpData(_))) {
+            return 0;
+        }
+        let in_idle_resume = self.in_idle_resume_window(now_millis);
+        if binding.is_datagram() && !in_idle_resume {
             return 0;
         }
         let (payload_bytes, ip_frames) = frame_metrics(frames);
@@ -159,7 +164,6 @@ impl AdaptiveDatapath {
         if total_cap == 0 {
             return 0;
         }
-        let in_idle_resume = self.in_idle_resume_window(now_millis);
         let total_delay = match self.persona.scheduler.pacing_family {
             PacingFamily::Opportunistic => {
                 if in_idle_resume && mode.value() >= 60 {

@@ -11,7 +11,6 @@ impl PersonaEngine {
         let effective_mode = effective_mode_value(inputs);
         let mut seed_material = Vec::new();
         seed_material.extend_from_slice(&inputs.persona_seed);
-        seed_material.push(inputs.mode.value());
         seed_material.push(inputs.chosen_carrier.code());
         seed_material.push(inputs.path_profile.path as u8);
         seed_material.push(inputs.path_profile.mtu as u8);

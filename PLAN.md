@@ -13,7 +13,7 @@
 ## Current milestone
 
 - **Milestone:** Phase 3 adaptive/persona/local-normality rewrite
-- **Status:** multi-profile persistence/context discovery, runtime hot-path CPU hardening, bounded histogram local-normality, adaptive keepalive learning, continuous numeric-mode persona/scheduler shaping, the mode-only controller/admission negotiation rewrite, and the temporary client-bundle import workflow are now shipped
+- **Status:** multi-profile persistence/context discovery, runtime hot-path CPU hardening, bounded histogram local-normality, adaptive keepalive learning, continuous numeric-mode persona/scheduler shaping, the mode-only controller/admission negotiation rewrite, the temporary client-bundle import workflow, and a follow-up datagram pacing regression fix are now shipped
 - **Primary remaining goal:** finish the spec-credible adaptive runtime by:
   - validating real-traffic behavior and CPU/latency envelopes at the three reference points
 - **Performance intent:**
@@ -23,11 +23,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** temporary client-bundle import workflow
-- **Latency impact:** no tunnel dataplane impact; import is an operator/bootstrap-time helper only
-- **Bandwidth impact:** one extra encrypted bundle transfer during provisioning/import only; no steady-state tunnel bandwidth change
-- **CPU impact:** negligible; short-lived bundle encryption and one-shot TCP serving/import are trivial compared with live tunnel work
-- **Notes:** `apt-edge add-client` now writes the local `.aptbundle` as before but also starts a short-lived one-shot import helper by default, prints a temporary `apt-client import --server ... --key ...` command, and still preserves manual bundle-copy fallback; bundle import protection lives in a focused shared `apt-bundle` module so secret-bearing bundle contents are not served in plaintext
+- **Chunk:** datagram pacing regression fix
+- **Latency impact:** removes unintended steady per-packet pacing delay on datagram carriers outside idle-resume windows, restoring practical latency/throughput behavior for mid/high numeric modes on `D1`/`D2`
+- **Bandwidth impact:** no meaningful change; shaping/padding behavior is otherwise unchanged
+- **CPU impact:** slightly lower on datagram-heavy sessions because the runtime no longer schedules avoidable sleep/wake pacing work on every packet
+- **Notes:** the follow-up fix keeps deliberate pacing on stream-oriented batching where it is practical, skips steady per-packet pacing on datagram carriers, and stops reseeding persona randomness from the raw numeric mode so adjacent mode values do not re-roll the session into a drastically different pacing family
 
 ## Numeric mode model
 
@@ -71,8 +71,8 @@ The Phase 3 end state remains **`mode`-only** across operator-facing config, CLI
 ## Next tasks
 
 1. Smoke-test the new temporary bundle import flow end-to-end (`apt-edge add-client` → printed import command → `apt-client import` → `apt-client up`) and verify the manual bundle-copy fallback still works when desired.
-2. Run workspace tests plus mode-by-mode smoke/perf checks, with special attention to CPU under `mode=0`, then update this file again with the next shipped chunk and impact note.
-3. Record lightweight real-traffic QA results for latency/throughput/CPU at `mode=0`, `mode=50`, and `mode=100`, and confirm that the shipped numeric controller behavior stays within the intended envelopes.
+2. Run workspace tests plus mode-by-mode smoke/perf checks, with special attention to datagram-path throughput/latency around mid/high modes and CPU under `mode=0`, then update this file again with the next shipped chunk and impact note.
+3. Record lightweight real-traffic QA results for latency/throughput/CPU at `mode=0`, `mode=50`, and `mode=100`, and confirm that the shipped numeric controller behavior stays within the intended envelopes without the old mid-mode pacing cliff.
 
 ## Detailed implementation requirements for remaining chunks
 

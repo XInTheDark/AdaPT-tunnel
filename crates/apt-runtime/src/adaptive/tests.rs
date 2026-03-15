@@ -301,8 +301,13 @@ fn pacing_delay_respects_mode_caps() {
         0,
     );
     balanced.persona.scheduler.pacing_family = apt_types::PacingFamily::Smooth;
-    let interactive_delay =
-        balanced.pacing_delay_ms(&[Frame::IpData(vec![0_u8; 200])], 1, 0, 1_000);
+    let interactive_delay = balanced.pacing_delay_ms(
+        CarrierBinding::S1EncryptedStream,
+        &[Frame::IpData(vec![0_u8; 200])],
+        1,
+        0,
+        1_000,
+    );
     assert!(interactive_delay <= 3);
 
     let stealth_context = build_client_network_context("edge-a", "route-a");
@@ -319,6 +324,7 @@ fn pacing_delay_respects_mode_caps() {
     );
     stealth.persona.scheduler.pacing_family = apt_types::PacingFamily::Smooth;
     let bulk_delay = stealth.pacing_delay_ms(
+        CarrierBinding::S1EncryptedStream,
         &[
             Frame::IpData(vec![0_u8; 1_200]),
             Frame::IpData(vec![0_u8; 1_200]),
@@ -329,4 +335,31 @@ fn pacing_delay_respects_mode_caps() {
     );
     assert!(bulk_delay <= 40);
     assert!(bulk_delay > 0);
+}
+
+#[test]
+fn datagram_paths_skip_steady_per_packet_pacing() {
+    let context = build_client_network_context("edge-a", "route-a");
+    let mut adaptive = AdaptiveDatapath::new_client(
+        CarrierBinding::D1DatagramUdp,
+        [67_u8; 32],
+        context,
+        Some(bootstrapped_profile(build_client_network_context(
+            "edge-a", "route-a",
+        ))),
+        None,
+        runtime_config(Mode::STEALTH),
+        PathProfile::unknown(),
+        None,
+        0,
+    );
+    adaptive.persona.scheduler.pacing_family = apt_types::PacingFamily::Smooth;
+    let delay = adaptive.pacing_delay_ms(
+        CarrierBinding::D1DatagramUdp,
+        &[Frame::IpData(vec![0_u8; 1_200])],
+        1,
+        0,
+        1_000,
+    );
+    assert_eq!(delay, 0);
 }

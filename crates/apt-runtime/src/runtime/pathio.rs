@@ -21,7 +21,7 @@ pub(super) async fn send_frames_on_client_path(
         frames,
         now,
     ) {
-        maybe_apply_pacing_delay(adaptive, frames, 1, 0, now).await;
+        maybe_apply_pacing_delay(adaptive, path.binding, frames, 1, 0, now).await;
         return queue_path_payload(&path.sender, outer);
     }
     let batches = plan_outbound_tunnel_batches(
@@ -36,7 +36,7 @@ pub(super) async fn send_frames_on_client_path(
     )?;
     let batch_count = batches.len();
     for (index, batch) in batches.into_iter().enumerate() {
-        maybe_apply_pacing_delay(adaptive, &batch, batch_count, index, now).await;
+        maybe_apply_pacing_delay(adaptive, path.binding, &batch, batch_count, index, now).await;
         let outer = encode_client_tunnel_packet_batch(
             carriers,
             endpoint_id,
@@ -110,7 +110,7 @@ pub(super) async fn send_frames_to_path_handle(
         now,
     ) {
         if let Some(adaptive) = adaptive {
-            maybe_apply_pacing_delay(adaptive, frames, 1, 0, now).await;
+            maybe_apply_pacing_delay(adaptive, binding, frames, 1, 0, now).await;
         }
         return send_outer_to_path(udp_socket, d2_peers, stream_peers, path, outer).await;
     }
@@ -127,7 +127,7 @@ pub(super) async fn send_frames_to_path_handle(
     let batch_count = batches.len();
     for (index, batch) in batches.into_iter().enumerate() {
         if let Some(adaptive) = adaptive {
-            maybe_apply_pacing_delay(adaptive, &batch, batch_count, index, now).await;
+            maybe_apply_pacing_delay(adaptive, binding, &batch, batch_count, index, now).await;
         }
         let outer = encode_server_tunnel_packet_batch(
             carriers,
@@ -146,12 +146,14 @@ pub(super) async fn send_frames_to_path_handle(
 
 async fn maybe_apply_pacing_delay(
     adaptive: &AdaptiveDatapath,
+    binding: CarrierBinding,
     frames: &[Frame],
     batch_count: usize,
     batch_index: usize,
     now_secs: u64,
 ) {
     let delay_ms = adaptive.pacing_delay_ms(
+        binding,
         frames,
         batch_count,
         batch_index,
