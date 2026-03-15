@@ -230,6 +230,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "apt-origin"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "apt-persona"
 version = "0.1.0"
 dependencies = [

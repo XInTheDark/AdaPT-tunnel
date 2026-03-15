@@ -13,6 +13,7 @@ members = [
   "crates/apt-policy",
   "crates/apt-observability",
   "crates/apt-harness",
+  "crates/apt-origin",
   "apps/apt-client",
   "apps/apt-clientd",
   "apps/apt-edge",
@@ -39,6 +40,7 @@ apt-persona = { path = "crates/apt-persona" }
 apt-policy = { path = "crates/apt-policy" }
 apt-observability = { path = "crates/apt-observability" }
 apt-harness = { path = "crates/apt-harness" }
+apt-origin = { path = "crates/apt-origin" }
 
 base64 = "0.22"
 bincode = "1.3"
