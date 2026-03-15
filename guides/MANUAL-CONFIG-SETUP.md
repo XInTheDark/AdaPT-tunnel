@@ -53,9 +53,6 @@ Key points:
 - `d2_public_endpoint` — optional client-facing `D2` endpoint, usually `host:443`
 - `d2_certificate` — optional server certificate for `D2`; supports `file:/path`, inline PEM, or base64-encoded DER
 - `d2_private_key` — optional server private key for `D2`; supports `file:/path`, inline PEM, or base64-encoded DER/key data
-- `stream_bind` — optional TCP listen address for the `S1` fallback carrier
-- `stream_public_endpoint` — optional client-facing `S1` endpoint, usually `host:443`
-- `stream_decoy_surface` — whether invalid unauthenticated stream input gets a decoy-like HTTP surface
 - `mode` — numeric runtime mode (`0` = speed, `50` = balanced, `100` = stealth)
 - `endpoint_id` — deployment identifier
 - the core 32-byte APT keys support either inline hex or `file:/path`
@@ -79,16 +76,14 @@ Key points:
 - `enable_d2_fallback` — enables conservative `D1 -> D2` fallback when `d2_server_addr` and `d2_server_certificate` are present
 - `d2_server_addr` — optional `D2` QUIC endpoint, usually `host:443`
 - `d2_server_certificate` — pinned `D2` server certificate; supports `file:/path`, inline PEM, or base64-encoded DER
-- `stream_server_addr` — optional TCP `S1` endpoint for fallback, usually `host:443`
 - `mode` — numeric runtime mode (`0` = speed, `50` = balanced, `100` = stealth)
-- `preferred_carrier` — `d1`, `d2`, `s1`, or `auto`
+- `preferred_carrier` — `auto`, `d1`, or `d2`
 - `endpoint_id` — must match the server
 - `auth_profile` — `shared-deployment` or `per-user`
 - `admission_key` — either the shared deployment key or the user's dedicated admission key
 - `server_static_public_key` — server public key
 - `client_static_private_key` — client's stable static private key
 - `client_identity` is required for `auth_profile = "per-user"`
-- `enable_s1_fallback` — enables conservative UDP-to-stream fallback when `stream_server_addr` is present
 - `allow_session_migration` — enables authenticated path revalidation and standby promotion logic
 - `standby_health_check_secs` — override for standby probe cadence; `0` keeps the persona-selected sparse cadence
 - `use_server_pushed_routes = true` is usually the easiest choice
@@ -133,7 +128,7 @@ Use `~/.adapt-tunnel/client.override.toml` for client-local changes that should 
 Optional one-shot overrides:
 
 - `--mode 0..100`
-- `--carrier auto|d1|d2|s1`
+- `--carrier auto|d1|d2`
 
 To run a bundle from a non-default location:
 
@@ -149,7 +144,6 @@ Useful override fields include:
 - `enable_d2_fallback`
 - `d2_server_addr`
 - `d2_server_certificate`
-- `stream_server_addr`
 - `mode`
 - `preferred_carrier`
 - `bind`
@@ -157,7 +151,6 @@ Useful override fields include:
 - `routes`
 - `use_server_pushed_routes`
 - `session_policy`
-- `enable_s1_fallback`
 - `allow_session_migration`
 - `standby_health_check_secs`
 - `keepalive_secs`

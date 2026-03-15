@@ -1,4 +1,3 @@
-```
 # Phase 4 V2 Public-Session Stealth Rewrite Plan
 
 ## Purpose
@@ -13,30 +12,31 @@
 
 ## Current milestone
 
-- **Milestone:** Phase 4 v2 public-session stealth rewrite
-- **Status:** Phase A hardening landed; owned CLI/bundle/client UX no longer exposes the legacy `S1` stream fallback surface, `D1` is demoted behind public-session families in normal attempt ordering, fake decoy responses are removed from the runtime, and the rewrite is moving into runtime/model split plus hidden-upgrade implementation
+- **Milestone:** Phase B/C bridge — runtime/model refactor prep with hidden-upgrade core landing next
+- **Status:** Phase A hardening is complete; the live runtime defaults to `auto`, prefers configured `D2`, keeps `D1` as the opaque fallback, removes the live legacy `S1` implementation, and now includes an initial empirical harness crate for passive/probe/retry reporting as Phase B/C prep continues
 - **Canonical design docs:**
   - `SPEC_v2.md`
   - `docs/ARCHITECTURE_V2.md`
   - `docs/V2_ROADMAP.md`
-- **Primary remaining goal:** replace transport-centric camouflage with a public-session stealth architecture that keeps the secure inner core but makes the outer session behave like a real public service
+- **Primary remaining goal:** replace the remaining transport-owned outer model with transport-agnostic hidden-upgrade logic plus real public-session surfaces
 - **Implementation ordering:**
-  - Stage 1: hardening + honesty baseline
-  - Stage 2A: first public-session carrier baseline
-  - Stage 2B: second public-session carrier baseline
-  - Stage 3: cover compiler, masked fallback tickets, and indistinguishability-budget control
+  - Phase B: runtime/config/model refactor prep
+  - Phase C: hidden-upgrade core
+  - Phase D: first public-session carrier (`S1`/H2 API-sync)
+  - Phase E: second public-session carrier (`D2`/H3 object/origin)
+  - Phase F/G/H: cover compiler, budgets, remembered-safe fallbacks, harness closure
 - **Performance intent:**
-  - low-stealth / permissive operation should remain within the same practical order of magnitude as the corresponding public session baseline
-  - higher-stealth modes may reduce throughput and increase latency, but must do so through explicit bounded budgets rather than accidental regressions
-  - no phase should ship a new carrier with worse probe handling than the honest public service it is borrowing
+  - default operation should stay within the same practical order of magnitude as `D1`/`D2` today while the public-session carriers come online
+  - throughput reductions in later stealth modes must come from explicit budget policy, not accidental regressions
+  - no future carrier should regress probe handling below the currently-shipped hardened baseline
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** Legacy `S1` user/config surface removal in owned client/operator layers
-- **Latency impact:** negligible; bundle/client carrier normalization happens only at config load/encode time
-- **Bandwidth impact:** none on successful sessions; legacy bundles stop advertising stream-fallback endpoints
-- **CPU impact:** negligible; one-time config sanitization replaces runtime branching on removed UX knobs
-- **Notes:** `apt-edge init` no longer offers legacy stream fallback flags, generated client bundles default to `auto` without `S1` fallback settings, client UX no longer offers `S1` as a selectable carrier, and bundle decode/override paths coerce legacy `S1` preferences back to `auto` for compatibility
+- **Chunk:** Phase A honesty + hardening baseline
+- **Latency impact:** neutral to slightly positive on default paths by removing legacy `S1` from automatic selection and preferring configured `D2`
+- **Bandwidth impact:** neutral on the live datapath; the new harness crate adds offline-only analysis data
+- **CPU impact:** negligible at runtime; small additional offline analysis cost inside harness reports/tests
+- **Notes:** the live legacy `S1` carrier implementation is gone; bundle/config upgrades sanitize legacy `S1` preference back to `auto`, legacy bundle decode keeps only compatibility fields needed to import older bundles, the shipped baseline is now described honestly as `D1` + optional `D2`, and the harness crate provides the first passive/probe/retry report surface for later empirical gates
 
 ## Core v2 design rules
 
@@ -55,52 +55,50 @@
 - AdaPT v2 is not an anonymity system.
 - AdaPT v2 is not expected to defeat a global adversary doing perfect long-window end-to-end correlation.
 - Self-contained same-host lab deployments may exist for convenience, but they must be documented as weaker camouflage than origin-backed deployments.
-- Legacy `S1` stream-fallback UX is being removed rather than preserved behind new operator-facing flags; any remaining symbolic `S1` meaning is reserved for future public-session families.
+- The current `D1`/`D2` runtime remains the temporary migration/testing baseline until the first public-session family lands.
 
 ## Active / pending workstreams
 
 | Chunk | Status | Scope | Expected impact |
 |---|---|---|---|
 | Planning/docs maintenance | active | Keep `PLAN.md`, `SPEC_v2.md`, and `docs/ARCHITECTURE_V2.md` aligned with live code and shipped scope | No runtime impact |
-| Stage 1 hardening | shipped | Legacy `S1` user/config surfaces are removed from owned operator/client layers, normal attempt ordering demotes `D1`, generic failure replaces fake stream decoys, and first-record pre-auth deadlines are enforced on exposed legacy stream/H3 paths | Reduced attack surface; minor configuration churn |
-| Empirical harness | active | Add passive capture, active probe, retry-pattern, and timing/burst regression jobs for AdaPT and browser H2/H3 baselines | Validation-only cost; essential gate |
-| Runtime/module split | active | Break oversized runtime/edge transport code into surface-focused modules before landing public-session carriers | No intentional runtime impact; reduces maintenance risk |
-| Hidden-upgrade core | active | Refactor `apt-admission` so it owns logical hidden-upgrade capsules/tickets rather than a public-wire handshake format | Moderate implementation risk; core enabler |
-| First public-session carrier | pending | Ship the first honest public-session stealth carrier, recommended initial target: H2 API-sync carrier | Main v2 milestone; practical stealth uplift |
-| Second public-session carrier | pending | Ship the H3 public-session sibling carrier after the first baseline is stable | Major feature; higher protocol complexity |
-| Cover compiler and budget controller | pending | Add trace-compiled cover profiles, secret-seeded cover plans, masked fallback tickets, and indistinguishability budgets | High novelty; bounded runtime overhead |
+| Runtime/module split | active | Finish separating remaining transport-owned runtime/helpers into surface-ready modules and eliminate stale legacy `S1` assumptions from shared codepaths | No intentional runtime impact; lowers maintenance risk |
+| Empirical harness | active | Extend `apt-harness` beyond the initial passive/probe/retry report helpers into baseline corpora ingestion and runtime comparison fixtures | Offline-only analysis cost |
+| Hidden-upgrade core | pending | Refactor `apt-admission` so it owns logical hidden-upgrade capsules/tickets rather than a public-wire packet envelope | Moderate implementation risk; core enabler |
+| Structured v2 transport config | pending | Add versioned public-session transport blocks and deployment metadata without reviving legacy stream fields on the primary schema | Minor config churn |
+| First public-session carrier | pending | Ship the H2 API-sync family end-to-end with honest unauthenticated semantics and hidden-upgrade slots | Main v2 milestone |
+| Second public-session carrier | pending | Ship the H3 public-session sibling after H2 is stable | Major feature; higher protocol complexity |
+| Cover compiler + budget controller | pending | Add machine-readable cover profiles, session plans, and bounded indistinguishability budgets | Bounded CPU/latency overhead |
 
 ## Next tasks
 
-1. Split the existing runtime transport and handshake code into surface-oriented modules so v2 work does not grow existing god files.
-2. Draft and implement the transport-agnostic hidden-upgrade capsule API in `apt-admission`, including masked fallback-ticket primitives.
-3. Add structured v2 transport blocks and bundle/config schema types for public-session families plus explicit `D1` fallback policy.
-4. Land `apt-origin` + `apt-surface-h2` for the first H2 API-sync family and drive an end-to-end hidden-upgrade flow through legal request/response slots.
-5. Add the first version of the empirical harness covering passive wire image, retry ladders, active probes, and timing/burst regression against browser H2/H3 captures.
-6. Land the H3 sibling carrier, then the cover compiler + budget controller, and only then remembered-safe shadow-lane policy.
+1. Split any remaining mixed transport/runtime code into surface-oriented modules before new v2 crates land.
+2. Introduce the first structured v2 transport/config types for public-session families and deployment strength metadata.
+3. Extend `apt-harness` from the initial report helpers into baseline-trace ingestion plus browser/AdaPT comparison fixtures.
+4. Rework `apt-admission` around transport-agnostic hidden-upgrade capsules (`UG1`/`UG2`/`UG3`/`UG4`) and masked fallback tickets.
+5. Add `apt-origin` + `apt-surface-h2` and land the H2 API-sync reference path with harness-facing trace output.
+6. Follow with the H3 sibling, then cover compiler/budget work once both public-session baselines exist.
 
-## Detailed implementation requirements for the first upcoming chunks
+## Detailed implementation requirements for the next upcoming chunks
 
-### Stage 1 hardening acceptance
+### Phase B acceptance
 
-- Server does not advertise, start, or bundle legacy `S1`, and owned operator/client layers do not expose legacy `S1` configuration knobs.
-- Client default selection is `auto`, not hardcoded `D1`.
-- Normal attempt order is: explicit operator pin if set, then remembered network preference, then the first configured public-session family, then `D1` only as remembered-safe or explicit fallback.
-- No shipped runtime path emits hardcoded fake HTTP decoy strings.
-- Every exposed pre-auth path has deadlines and bounded resource allocation.
+- No touched runtime transport/config file grows into a new god file.
+- Shared runtime helpers stop assuming a live legacy `S1` datapath exists.
+- Public-session crates can be added without pushing more transport-specific logic back into `apt-runtime`.
+- Structured v2 transport draft types exist behind a clearly versioned schema boundary.
 
-### Empirical harness acceptance
+### Phase C acceptance
 
-- The harness captures and stores browser H2 and H3 baseline traces.
-- The harness captures current AdaPT `D1` and any remaining legacy carriers as a "known weaker baseline" for improvement tracking.
-- The harness exercises active probes and records whether the response matches honest public-service behaviour, silence, or a distinctive protocol failure.
-- No future stealth-facing phase is considered complete without a harness delta report.
+- Hidden-upgrade logic can be exercised in tests without any dependency on a public-wire `AdmissionPacket`.
+- The same hidden-upgrade core can be embedded in both H2 and H3 surfaces.
+- Slot/context binding is explicit in the cryptographic helpers and replay model.
+- Masked fallback tickets are issued/opened independently of the old resumption-ticket wire envelope.
 
-### First public-session carrier acceptance
+### Phase D acceptance
 
-- A strict end-to-end hidden upgrade succeeds inside a real public-service session.
+- A strict end-to-end hidden upgrade succeeds inside a real public-service H2 API-sync session.
 - An unauthenticated client can still use the public service normally.
 - Invalid or probing clients see ordinary public-service semantics rather than AdaPT-specific failures.
 - No AdaPT-specific header, length prefix, or explicit carrier negotiation is exposed on the public wire.
 - The client and server derive the same cover plan without negotiating that plan explicitly on the wire.
-```

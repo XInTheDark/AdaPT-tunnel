@@ -83,12 +83,8 @@ fn default_state_path() -> PathBuf {
     PathBuf::from(DEFAULT_STATE_PATH)
 }
 
-fn default_enable_s1_fallback() -> bool {
-    true
-}
-
 fn default_enable_d2_fallback() -> bool {
-    false
+    true
 }
 
 fn default_allow_session_migration() -> bool {
@@ -100,7 +96,7 @@ fn default_standby_health_check_secs() -> u64 {
 }
 
 fn default_preferred_carrier() -> RuntimeCarrierPreference {
-    RuntimeCarrierPreference::D1
+    RuntimeCarrierPreference::Auto
 }
 
 fn default_auth_profile() -> AuthProfile {
@@ -110,8 +106,8 @@ fn default_auth_profile() -> AuthProfile {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum RuntimeCarrierPreference {
-    Auto,
     #[default]
+    Auto,
     D1,
     D2,
     S1,
@@ -124,7 +120,15 @@ impl RuntimeCarrierPreference {
             Self::Auto => None,
             Self::D1 => Some(CarrierBinding::D1DatagramUdp),
             Self::D2 => Some(CarrierBinding::D2EncryptedDatagram),
-            Self::S1 => Some(CarrierBinding::S1EncryptedStream),
+            Self::S1 => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn normalize_legacy(self) -> Self {
+        match self {
+            Self::S1 => Self::Auto,
+            _ => self,
         }
     }
 }

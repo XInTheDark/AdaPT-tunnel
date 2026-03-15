@@ -43,16 +43,6 @@ pub(super) async fn perform_client_handshake(
                 )
                 .await
             }
-            CarrierBinding::S1EncryptedStream => {
-                attempt_client_handshake_s1(
-                    config,
-                    persistent_state,
-                    carriers.s1(),
-                    resume_ticket.clone(),
-                    &order,
-                )
-                .await
-            }
             _ => continue,
         };
         match attempt {
@@ -277,90 +267,6 @@ async fn attempt_client_handshake_d2(
     Err(RuntimeError::Timeout("admission handshake"))
 }
 
-async fn attempt_client_handshake_s1(
-    config: &ResolvedClientConfig,
-    persistent_state: &ClientPersistentState,
-    carrier: &S1Carrier,
-    resume_ticket: Option<SealedEnvelope>,
-    supported_carriers: &[CarrierBinding],
-) -> Result<HandshakeSuccess, RuntimeError> {
-    let Some(server_addr) = config.stream_server_addr else {
-        return Err(RuntimeError::InvalidConfig(
-            "stream fallback is enabled but no stream_server_addr is configured".to_string(),
-        ));
-    };
-    for _ in 0..config.handshake_retries {
-        let mut stream = timeout(
-            Duration::from_secs(config.handshake_timeout_secs),
-            TcpStream::connect(server_addr),
-        )
-        .await
-        .map_err(|_| RuntimeError::Timeout("stream connection"))??;
-        let _ = stream.set_nodelay(true);
-        let now = now_secs();
-        let current_epoch_slot = now / DEFAULT_ADMISSION_EPOCH_SLOT_SECS;
-        let outer_key = derive_s1_admission_outer_key(&config.admission_key, current_epoch_slot)?;
-        let credential = client_credential(config);
-        let request = client_session_request(
-            config,
-            persistent_state,
-            CarrierBinding::S1EncryptedStream,
-            supported_carriers,
-            resume_ticket.clone(),
-            now,
-        );
-        let prepared_c0 = initiate_c0(credential, request, carrier)?;
-        let c0_payload =
-            encode_admission_stream_payload(&config.endpoint_id, &outer_key, &prepared_c0.packet)?;
-        write_s1_payload(&mut stream, carrier, &c0_payload).await?;
-
-        let s1_payload = match timeout(
-            Duration::from_secs(config.handshake_timeout_secs),
-            read_s1_payload(&mut stream, carrier),
-        )
-        .await
-        {
-            Ok(Ok(payload)) => payload,
-            Ok(Err(error)) => return Err(error.into()),
-            Err(_) => continue,
-        };
-        let s1 = match decode_client_stream_admission_packet(config, &s1_payload, now_secs()) {
-            Some(packet) => packet,
-            None => continue,
-        };
-        let prepared_c2 = prepared_c0.state.handle_s1(&s1, carrier)?;
-        let c2_payload =
-            encode_admission_stream_payload(&config.endpoint_id, &outer_key, &prepared_c2.packet)?;
-        write_s1_payload(&mut stream, carrier, &c2_payload).await?;
-
-        let confirmation_outer_key =
-            derive_s1_confirmation_outer_key(prepared_c2.state.confirmation_recv_ctrl_key())?;
-        let s3_payload = match timeout(
-            Duration::from_secs(config.handshake_timeout_secs),
-            read_s1_payload(&mut stream, carrier),
-        )
-        .await
-        {
-            Ok(Ok(payload)) => payload,
-            Ok(Err(error)) => return Err(error.into()),
-            Err(_) => continue,
-        };
-        let s3: ServerConfirmationPacket = decode_confirmation_stream_payload(
-            &config.endpoint_id,
-            &confirmation_outer_key,
-            &s3_payload,
-        )?;
-        let session = prepared_c2.state.handle_s3(&s3, carrier)?;
-        return Ok(HandshakeSuccess {
-            binding: CarrierBinding::S1EncryptedStream,
-            established: session,
-            transport: HandshakeTransport::Stream(stream),
-        });
-    }
-
-    Err(RuntimeError::Timeout("admission handshake"))
-}
-
 pub(super) fn decode_client_admission_packet(
     config: &ResolvedClientConfig,
     carrier: &D1Carrier,
@@ -373,20 +279,6 @@ pub(super) fn decode_client_admission_packet(
             let outer_key =
                 derive_d1_admission_outer_key(&config.admission_key, epoch_slot).ok()?;
             decode_admission_datagram(carrier, &config.endpoint_id, &outer_key, datagram).ok()
-        })
-}
-
-pub(super) fn decode_client_stream_admission_packet(
-    config: &ResolvedClientConfig,
-    payload: &[u8],
-    now_secs: u64,
-) -> Option<AdmissionPacket> {
-    candidate_epoch_slots(now_secs)
-        .into_iter()
-        .find_map(|epoch_slot| {
-            let outer_key =
-                derive_s1_admission_outer_key(&config.admission_key, epoch_slot).ok()?;
-            decode_admission_stream_payload(&config.endpoint_id, &outer_key, payload).ok()
         })
 }
 
@@ -426,27 +318,6 @@ pub(super) fn decode_server_admission_packet(
                         datagram,
                     )
                     .ok()?;
-                    Some(DecodedServerAdmissionPacket { packet, outer_key })
-                })
-        })
-}
-
-pub(super) fn decode_server_stream_admission_packet(
-    config: &ResolvedServerConfig,
-    payload: &[u8],
-    now_secs: u64,
-) -> Option<DecodedServerAdmissionPacket> {
-    server_admission_keys(config)
-        .into_iter()
-        .find_map(|admission_key| {
-            candidate_epoch_slots(now_secs)
-                .into_iter()
-                .find_map(|epoch_slot| {
-                    let outer_key =
-                        derive_s1_admission_outer_key(&admission_key, epoch_slot).ok()?;
-                    let packet =
-                        decode_admission_stream_payload(&config.endpoint_id, &outer_key, payload)
-                            .ok()?;
                     Some(DecodedServerAdmissionPacket { packet, outer_key })
                 })
         })
@@ -508,9 +379,6 @@ pub(super) fn admission_config(
             .allowed_carriers
             .push(CarrierBinding::D2EncryptedDatagram);
     }
-    admission
-        .allowed_carriers
-        .push(CarrierBinding::S1EncryptedStream);
     admission.default_mode = config.mode;
     admission.max_record_size = carriers.d1().max_record_size();
     admission.tunnel_mtu = effective_tunnel_mtu;

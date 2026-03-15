@@ -30,12 +30,6 @@ pub struct ServerConfig {
     pub d2_certificate: Option<String>,
     #[serde(default)]
     pub d2_private_key: Option<String>,
-    #[serde(default)]
-    pub stream_bind: Option<SocketAddr>,
-    #[serde(default)]
-    pub stream_public_endpoint: Option<String>,
-    #[serde(default)]
-    pub stream_decoy_surface: bool,
     pub endpoint_id: String,
     pub admission_key: String,
     pub server_static_private_key: String,
@@ -134,12 +128,6 @@ impl ServerConfig {
             public_endpoint: self.public_endpoint.clone(),
             mode: self.mode,
             d2: resolve_server_d2_config(self)?,
-            stream_bind: self.stream_bind.or(Some(self.bind)),
-            stream_public_endpoint: self
-                .stream_public_endpoint
-                .clone()
-                .or_else(|| Some(self.public_endpoint.clone())),
-            stream_decoy_surface: self.stream_decoy_surface,
             endpoint_id: EndpointId::new(self.endpoint_id.clone()),
             admission_key: load_key32(&self.admission_key)?,
             server_static_private_key: load_key32(&self.server_static_private_key)?,
@@ -222,9 +210,6 @@ pub struct ResolvedServerConfig {
     pub public_endpoint: String,
     pub mode: Mode,
     pub d2: Option<ResolvedServerD2Config>,
-    pub stream_bind: Option<SocketAddr>,
-    pub stream_public_endpoint: Option<String>,
-    pub stream_decoy_surface: bool,
     pub endpoint_id: EndpointId,
     pub admission_key: [u8; 32],
     pub server_static_private_key: [u8; 32],

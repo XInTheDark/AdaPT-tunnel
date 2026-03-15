@@ -5,6 +5,8 @@ use crate::quic::{
 };
 use bytes::Bytes;
 
+const PRE_AUTH_D2_FIRST_DATAGRAM_TIMEOUT_SECS: u64 = 5;
+
 pub(super) async fn open_client_d2_connection(
     config: &ResolvedClientConfig,
     timeout_secs: u64,
@@ -153,7 +155,31 @@ pub(super) fn spawn_server_d2_listener(
                             return;
                         }
 
+                        let mut awaiting_first_datagram = true;
                         loop {
+                            let datagram_read = async {
+                                if awaiting_first_datagram {
+                                    match timeout(
+                                        Duration::from_secs(
+                                            PRE_AUTH_D2_FIRST_DATAGRAM_TIMEOUT_SECS,
+                                        ),
+                                        connection.read_datagram(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(result) => result
+                                            .map_err(|error| RuntimeError::Quic(error.to_string())),
+                                        Err(_) => {
+                                            Err(RuntimeError::Timeout("d2 first pre-auth datagram"))
+                                        }
+                                    }
+                                } else {
+                                    connection
+                                        .read_datagram()
+                                        .await
+                                        .map_err(|error| RuntimeError::Quic(error.to_string()))
+                                }
+                            };
                             tokio::select! {
                                 maybe_bytes = send_rx.recv() => {
                                     match maybe_bytes {
@@ -169,9 +195,10 @@ pub(super) fn spawn_server_d2_listener(
                                         None => break,
                                     }
                                 }
-                                inbound = connection.read_datagram() => {
+                                inbound = datagram_read => {
                                     match inbound {
                                         Ok(bytes) => {
+                                            awaiting_first_datagram = false;
                                             if tx_connection
                                                 .send(ServerTransportEvent::D2Datagram {
                                                     conn_id,

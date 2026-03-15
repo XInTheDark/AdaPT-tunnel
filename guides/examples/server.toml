@@ -6,10 +6,7 @@ d2_bind = "0.0.0.0:443"
 d2_public_endpoint = "203.0.113.10:443"
 d2_certificate = "file:/etc/adapt/d2-certificate.pem"
 d2_private_key = "file:/etc/adapt/d2-private-key.pem"
-stream_bind = "0.0.0.0:443"
-stream_public_endpoint = "203.0.113.10:443"
 mode = 100
-stream_decoy_surface = true
 endpoint_id = "adapt-prod"
 
 # Secret material can be provided inline as 64 hex characters or via `file:/path/to/key`.
@@ -38,7 +35,7 @@ nat_ipv4 = true
 push_routes = ["0.0.0.0/0"]
 push_dns = ["1.1.1.1", "1.0.0.1"]
 
-# Enable authenticated path revalidation plus the optional D2 and S1 fallback listeners.
+# Enable authenticated path revalidation plus the optional D2 listener.
 allow_session_migration = true
 keepalive_secs = 25
 session_idle_timeout_secs = 180

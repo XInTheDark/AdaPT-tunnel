@@ -8,7 +8,7 @@ It uses the user-friendly CLI flow instead of hand-editing every file first.
 
 - server: Linux
 - client: Linux or macOS
-- transport: `D1` over UDP, optional `D2` over QUIC datagrams, and optional `S1` TCP stream fallback
+- transport: `D1` over UDP with optional `D2` over QUIC datagrams
 - auth model: shared-deployment or per-user admission keys; the guided flow now defaults to per-user
 
 ## 1. Get the binaries
@@ -111,12 +111,6 @@ The command walks you through the main values, then creates:
 - optional `D2` certificate/key files when you enable `D2`
 - optional `/etc/systemd/system/apt-edge.service` when you enable startup during `apt-edge init`, or later via `apt-edge utils install-systemd-service`
 
-If you keep the stream fallback enabled, the resulting config also carries:
-
-- `stream_bind` for the server-side `S1` listener, typically `0.0.0.0:443`
-- `stream_public_endpoint` for the client-facing `S1` endpoint, typically `host:443`
-- `stream_decoy_surface = true` so unauthenticated stream input gets a decoy-like HTTP surface instead of an APT-specific error
-
 If you enable the `D2` QUIC-datagram carrier, the resulting config also carries:
 
 - `d2_bind` for the server-side QUIC listener, typically `0.0.0.0:443`
@@ -141,9 +135,6 @@ You can also run it non-interactively, for example:
   --enable-d2 \
   --d2-bind 0.0.0.0:443 \
   --d2-public-endpoint vpn.example.com:443 \
-  --stream-bind 0.0.0.0:443 \
-  --stream-public-endpoint vpn.example.com:443 \
-  --stream-decoy-surface \
   --endpoint-id adapt-prod \
   --egress-interface eth0 \
   --tunnel-subnet 10.77.0.0/24 \
@@ -220,7 +211,7 @@ Useful one-shot overrides:
 - `--mode 50` — balanced midpoint
 - `--mode 0` — fastest / lowest-shaping anchor
 
-When `d2_bind` and/or `stream_bind` are configured, the server listens on the UDP `D1` address plus the optional `D2` QUIC and `S1` fallback addresses.
+When `d2_bind` is configured, the server listens on the UDP `D1` address plus the optional `D2` QUIC address.
 
 The server must run with privileges sufficient to:
 
@@ -269,9 +260,9 @@ Useful one-shot overrides:
 
 - `--mode 0..100` — temporary numeric mode override (`0` = speed, `50` = balanced, `100` = stealth)
 - `apt-client test --mode <value>` runs the same numeric mode through the built-in QA checks and disconnects automatically when finished
-- `--carrier auto|d1|d2|s1` — temporary carrier preference override
+- `--carrier auto|d1|d2` — temporary carrier preference override
 
-The generated bundle keeps `D1` as the normal first choice. When `D2` and/or `S1` are present, the conservative automatic order is `D1 -> D2 -> S1`.
+The generated bundle now uses `preferred_carrier = "auto"`. When `D2` is present, the automatic order is `D2 -> D1`.
 
 On macOS, the embedded client config leaves `interface_name` unset unless you intentionally rebuild a bundle that targets a specific `utunX` interface.
 When the session comes up, the client logs the assigned tunnel IP/interface, applies pushed DNS servers automatically where the local platform supports it, and the server logs the accepted session.

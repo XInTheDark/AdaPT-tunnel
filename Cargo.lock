@@ -211,6 +211,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "apt-harness"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "apt-observability"
 version = "0.1.0"
 dependencies = [

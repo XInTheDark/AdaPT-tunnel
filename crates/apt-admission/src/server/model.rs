@@ -157,7 +157,6 @@ impl AdmissionConfig {
             allowed_carriers: vec![
                 CarrierBinding::D1DatagramUdp,
                 CarrierBinding::D2EncryptedDatagram,
-                CarrierBinding::S1EncryptedStream,
             ],
             default_mode: Mode::STEALTH,
             defaults: AdmissionDefaults::default(),

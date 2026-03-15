@@ -142,9 +142,6 @@ fn configured_public_route_hint(config: &ResolvedClientConfig) -> PublicRouteHin
             canonical_socket_addr(d2.endpoint.addr)
         ));
     }
-    if let Some(stream_addr) = config.stream_server_addr {
-        endpoints.push(format!("s1:{}", canonical_socket_addr(stream_addr)));
-    }
     endpoints.sort();
     endpoints.dedup();
     PublicRouteHint(endpoints.join("|"))

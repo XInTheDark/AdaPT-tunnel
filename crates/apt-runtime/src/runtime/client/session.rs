@@ -21,7 +21,6 @@ pub(super) async fn run_client_session_loop(
         &config.endpoint_id,
         derive_d1_tunnel_outer_keys(&handshake.established.secrets)?,
         derive_d2_tunnel_outer_keys(&handshake.established.secrets)?,
-        derive_s1_tunnel_outer_keys(&handshake.established.secrets)?,
     )?;
     let mut adaptive = AdaptiveDatapath::new_client(
         handshake.established.chosen_carrier,

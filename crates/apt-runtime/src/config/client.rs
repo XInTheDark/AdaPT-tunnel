@@ -32,10 +32,6 @@ pub struct ClientConfig {
     pub d2_server_certificate: Option<String>,
     #[serde(default)]
     pub session_policy: SessionPolicy,
-    #[serde(default = "default_enable_s1_fallback")]
-    pub enable_s1_fallback: bool,
-    #[serde(default)]
-    pub stream_server_addr: Option<String>,
     #[serde(default = "default_allow_session_migration")]
     pub allow_session_migration: bool,
     #[serde(default = "default_standby_health_check_secs")]
@@ -64,6 +60,7 @@ impl ClientConfig {
             source,
         })?;
         let mut config: Self = toml::from_str(&raw)?;
+        config.preferred_carrier = config.preferred_carrier.normalize_legacy();
         maybe_upgrade_toml_file(path, &raw, &config)?;
         let base = path.parent().unwrap_or_else(|| Path::new("."));
         if config.state_path.is_relative() {
@@ -101,7 +98,7 @@ impl ClientConfig {
         Ok(ResolvedClientConfig {
             server_addr: resolve_socket_addr(&self.server_addr)?,
             mode: self.mode,
-            preferred_carrier: self.preferred_carrier,
+            preferred_carrier: self.preferred_carrier.normalize_legacy(),
             strict_preferred_carrier: false,
             auth_profile: self.auth_profile,
             endpoint_id: EndpointId::new(self.endpoint_id.clone()),
@@ -116,12 +113,6 @@ impl ClientConfig {
             enable_d2_fallback: self.enable_d2_fallback,
             d2: resolve_client_d2_config(self)?,
             session_policy: self.session_policy.clone(),
-            enable_s1_fallback: self.enable_s1_fallback,
-            stream_server_addr: self
-                .stream_server_addr
-                .as_deref()
-                .map(resolve_socket_addr)
-                .transpose()?,
             allow_session_migration: self.allow_session_migration,
             standby_health_check_secs: self.standby_health_check_secs,
             keepalive_secs: self.keepalive_secs,
@@ -167,8 +158,6 @@ pub struct ResolvedClientConfig {
     pub enable_d2_fallback: bool,
     pub d2: Option<ResolvedClientD2Config>,
     pub session_policy: SessionPolicy,
-    pub enable_s1_fallback: bool,
-    pub stream_server_addr: Option<SocketAddr>,
     pub allow_session_migration: bool,
     pub standby_health_check_secs: u64,
     pub keepalive_secs: u64,

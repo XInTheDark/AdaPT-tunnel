@@ -14,17 +14,13 @@ use crate::{
     status::{ClientStatus, RuntimeStatus, ServerStatus},
     tun::{spawn_tun_worker, TunHandle, TunInterfaceConfig},
     wire::{
-        decode_admission_d2_datagram, decode_admission_datagram, decode_admission_stream_payload,
-        decode_confirmation_d2_datagram, decode_confirmation_datagram,
-        decode_confirmation_stream_payload, derive_d1_admission_outer_key,
+        decode_admission_d2_datagram, decode_admission_datagram, decode_confirmation_d2_datagram,
+        decode_confirmation_datagram, derive_d1_admission_outer_key,
         derive_d1_confirmation_outer_key, derive_d1_tunnel_outer_keys,
         derive_d2_admission_outer_key, derive_d2_confirmation_outer_key,
-        derive_d2_tunnel_outer_keys, derive_s1_admission_outer_key,
-        derive_s1_confirmation_outer_key, derive_s1_tunnel_outer_keys,
-        encode_admission_d2_datagram, encode_admission_datagram, encode_admission_stream_payload,
-        encode_confirmation_d2_datagram, encode_confirmation_datagram,
-        encode_confirmation_stream_payload, CachedTunnelOuterCrypto, D1OuterKeys, D2OuterKeys,
-        S1OuterKeys,
+        derive_d2_tunnel_outer_keys, encode_admission_d2_datagram, encode_admission_datagram,
+        encode_confirmation_d2_datagram, encode_confirmation_datagram, CachedTunnelOuterCrypto,
+        D1OuterKeys, D2OuterKeys,
     },
 };
 use apt_admission::{
@@ -32,7 +28,7 @@ use apt_admission::{
     AdmissionServerSecrets, ClientCredential, ClientSessionRequest, CredentialStore,
     EstablishedSession, PerUserCredential, ServerConfirmationPacket, ServerResponse,
 };
-use apt_carriers::{CarrierError, CarrierProfile, D1Carrier, D2Carrier, S1Carrier};
+use apt_carriers::{CarrierError, CarrierProfile, D1Carrier, D2Carrier};
 use apt_crypto::{SealedEnvelope, SessionSecretsForRole, StaticKeypair};
 use apt_observability::{record_event, AptEvent, ObservabilityConfig, TelemetrySnapshot};
 use apt_tunnel::{Frame, RekeyStatus, TunnelSession};
@@ -45,14 +41,12 @@ use serde::{Deserialize, Serialize};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     collections::HashMap,
-    io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::{Duration, SystemTime},
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream, UdpSocket},
+    net::UdpSocket,
     sync::mpsc,
     time::{interval, timeout},
 };
@@ -76,7 +70,6 @@ use self::{d2::*, handshake::*, packets::*, pathio::*, scheduler::*, support::*,
 const DATAGRAM_BUFFER_SIZE: usize = 65_535;
 const PATH_VALIDATION_TIMEOUT_SECS: u64 = 10;
 const PATH_VALIDATION_RETRY_SECS: u64 = 2;
-const STREAM_DECOY_BODY: &str = "<html><body><h1>It works</h1></body></html>";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientRuntimeResult {
@@ -94,14 +87,12 @@ pub struct ServerRuntimeResult {
 enum PathHandle {
     Datagram(SocketAddr),
     D2(u64),
-    Stream(u64),
 }
 
 #[derive(Clone, Debug)]
 struct RuntimeOuterKeys {
     d1: CachedTunnelOuterCrypto,
     d2: CachedTunnelOuterCrypto,
-    s1: CachedTunnelOuterCrypto,
 }
 
 impl RuntimeOuterKeys {
@@ -109,7 +100,6 @@ impl RuntimeOuterKeys {
         endpoint_id: &EndpointId,
         d1: D1OuterKeys,
         d2: D2OuterKeys,
-        s1: S1OuterKeys,
     ) -> Result<Self, RuntimeError> {
         Ok(Self {
             d1: CachedTunnelOuterCrypto::new(
@@ -124,12 +114,6 @@ impl RuntimeOuterKeys {
                 d2.send,
                 d2.recv,
             )?,
-            s1: CachedTunnelOuterCrypto::new(
-                endpoint_id,
-                CarrierBinding::S1EncryptedStream,
-                s1.send,
-                s1.recv,
-            )?,
         })
     }
 
@@ -137,7 +121,6 @@ impl RuntimeOuterKeys {
         match binding {
             CarrierBinding::D1DatagramUdp => Ok(&self.d1),
             CarrierBinding::D2EncryptedDatagram => Ok(&self.d2),
-            CarrierBinding::S1EncryptedStream => Ok(&self.s1),
             _ => Err(RuntimeError::InvalidConfig(format!(
                 "unsupported runtime carrier {binding:?}"
             ))),
@@ -148,7 +131,6 @@ impl RuntimeOuterKeys {
         match binding {
             CarrierBinding::D1DatagramUdp => Ok(&self.d1),
             CarrierBinding::D2EncryptedDatagram => Ok(&self.d2),
-            CarrierBinding::S1EncryptedStream => Ok(&self.s1),
             _ => Err(RuntimeError::InvalidConfig(format!(
                 "unsupported runtime carrier {binding:?}"
             ))),
@@ -180,16 +162,9 @@ impl TunnelEncapsulation {
 }
 
 #[derive(Clone, Debug)]
-enum StreamWrite {
-    CarrierPayload(Vec<u8>),
-    Raw(Vec<u8>),
-}
-
-#[derive(Clone, Debug)]
 enum PathSender {
     Datagram(mpsc::UnboundedSender<Vec<u8>>),
     D2(mpsc::UnboundedSender<Vec<u8>>),
-    Stream(mpsc::UnboundedSender<StreamWrite>),
 }
 
 #[derive(Debug)]
@@ -216,7 +191,6 @@ enum HandshakeTransport {
         endpoint: quinn::Endpoint,
         connection: quinn::Connection,
     },
-    Stream(TcpStream),
 }
 
 #[derive(Debug)]
@@ -258,12 +232,6 @@ struct ServerSessionState {
 }
 
 #[derive(Clone, Debug)]
-struct ServerStreamPeer {
-    peer_addr: SocketAddr,
-    sender: mpsc::UnboundedSender<StreamWrite>,
-}
-
-#[derive(Clone, Debug)]
 struct ServerD2Peer {
     peer_addr: SocketAddr,
     sender: mpsc::UnboundedSender<Vec<u8>>,
@@ -286,19 +254,6 @@ enum ServerTransportEvent {
     },
     D2Closed {
         conn_id: u64,
-    },
-    StreamOpened {
-        conn_id: u64,
-        peer_addr: SocketAddr,
-        sender: mpsc::UnboundedSender<StreamWrite>,
-    },
-    StreamRecord {
-        conn_id: u64,
-        bytes: Vec<u8>,
-    },
-    StreamClosed {
-        conn_id: u64,
-        malformed: bool,
     },
 }
 

@@ -139,22 +139,6 @@ pub(crate) fn decode_tunnel_d2_datagram_cached(
     Ok(aead.open_payload_bytes(aad, datagram)?)
 }
 
-pub(crate) fn encode_tunnel_stream_payload_cached(
-    aead: &OpaqueAead,
-    aad: &[u8],
-    packet_bytes: &[u8],
-) -> Result<Vec<u8>, RuntimeError> {
-    Ok(aead.seal_payload_bytes(aad, packet_bytes)?)
-}
-
-pub(crate) fn decode_tunnel_stream_payload_cached(
-    aead: &OpaqueAead,
-    aad: &[u8],
-    payload: &[u8],
-) -> Result<Vec<u8>, RuntimeError> {
-    Ok(aead.open_payload_bytes(aad, payload)?)
-}
-
 fn validate_record_size(len: usize, max_record_size: u16) -> Result<(), RuntimeError> {
     if len > usize::from(max_record_size) {
         return Err(RuntimeError::Carrier(CarrierError::Oversize));

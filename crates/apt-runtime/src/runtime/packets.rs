@@ -141,16 +141,6 @@ fn encode_server_tunnel_packet(
             let (aead, aad) = crypto.send_parts();
             crate::wire::encode_tunnel_d2_datagram_cached(carrier, aead, aad, &packet_bytes)
         }
-        CarrierBinding::S1EncryptedStream => {
-            let crypto = outer_keys.send_for(binding)?;
-            let (aead, aad) = crypto.send_parts();
-            let payload =
-                crate::wire::encode_tunnel_stream_payload_cached(aead, aad, &packet_bytes)?;
-            if payload.len() > carriers.s1().max_record_size() as usize {
-                return Err(RuntimeError::Carrier(CarrierError::Oversize));
-            }
-            Ok(payload)
-        }
         _ => Err(RuntimeError::InvalidConfig(
             "unsupported runtime carrier".to_string(),
         )),
@@ -214,14 +204,6 @@ pub(super) fn decode_server_tunnel_packet_direct(
             let (aead, aad) = crypto.recv_parts();
             crate::wire::decode_tunnel_d2_datagram_cached(carrier, aead, aad, bytes)
         }
-        CarrierBinding::S1EncryptedStream => {
-            if bytes.is_empty() || bytes.len() > carriers.s1().max_record_size() as usize {
-                return Err(RuntimeError::Carrier(CarrierError::MalformedRecord));
-            }
-            let crypto = outer_keys.recv_for(binding)?;
-            let (aead, aad) = crypto.recv_parts();
-            crate::wire::decode_tunnel_stream_payload_cached(aead, aad, bytes)
-        }
         _ => Err(RuntimeError::InvalidConfig(
             "unsupported runtime carrier".to_string(),
         )),
@@ -236,24 +218,18 @@ fn runtime_d2_carrier(tunnel_mtu: u16) -> D2Carrier {
     D2Carrier::new(crate::quic::D2_DEFAULT_RECORD_SIZE, tunnel_mtu)
 }
 
-fn runtime_s1_carrier(tunnel_mtu: u16, decoy_surface: bool) -> S1Carrier {
-    S1Carrier::new(16_384, tunnel_mtu, decoy_surface)
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(super) struct RuntimeCarriers {
     d1: D1Carrier,
     d2: Option<D2Carrier>,
-    s1: S1Carrier,
 }
 
 impl RuntimeCarriers {
-    pub(super) fn new(tunnel_mtu: u16, decoy_surface: bool, enable_d2: bool) -> Self {
+    pub(super) fn new(tunnel_mtu: u16, enable_d2: bool) -> Self {
         Self {
             d1: runtime_d1_carrier(tunnel_mtu),
             d2: enable_d2
                 .then(|| runtime_d2_carrier(tunnel_mtu.min(crate::quic::D2_DEFAULT_TUNNEL_MTU))),
-            s1: runtime_s1_carrier(tunnel_mtu, decoy_surface),
         }
     }
 
@@ -263,10 +239,6 @@ impl RuntimeCarriers {
 
     pub(super) fn d2(&self) -> Option<&D2Carrier> {
         self.d2.as_ref()
-    }
-
-    pub(super) fn s1(&self) -> &S1Carrier {
-        &self.s1
     }
 }
 
@@ -294,10 +266,6 @@ fn effective_d1_tunnel_mtu(endpoint_id: &apt_types::EndpointId, carrier: &D1Carr
             send: [0x55; 32],
             recv: [0x66; 32],
         },
-        S1OuterKeys {
-            send: [0x33; 32],
-            recv: [0x44; 32],
-        },
     )
     .expect("fixed test keys should produce cached outer state");
     let template_session = TunnelSession::new(
@@ -324,7 +292,6 @@ fn effective_d1_tunnel_mtu(endpoint_id: &apt_types::EndpointId, carrier: &D1Carr
             &RuntimeCarriers {
                 d1: *carrier,
                 d2: Some(runtime_d2_carrier(crate::quic::D2_DEFAULT_TUNNEL_MTU)),
-                s1: runtime_s1_carrier(carrier.tunnel_mtu(), false),
             },
             endpoint_id,
             &outer_keys,
@@ -353,10 +320,6 @@ fn effective_d2_tunnel_mtu(endpoint_id: &apt_types::EndpointId, carrier: &D2Carr
             send: [0x55; 32],
             recv: [0x66; 32],
         },
-        S1OuterKeys {
-            send: [0x33; 32],
-            recv: [0x44; 32],
-        },
     )
     .expect("fixed test keys should produce cached outer state");
     let template_session = TunnelSession::new(
@@ -383,7 +346,6 @@ fn effective_d2_tunnel_mtu(endpoint_id: &apt_types::EndpointId, carrier: &D2Carr
             &RuntimeCarriers {
                 d1: runtime_d1_carrier(1_380),
                 d2: Some(*carrier),
-                s1: runtime_s1_carrier(carrier.tunnel_mtu(), false),
             },
             endpoint_id,
             &outer_keys,

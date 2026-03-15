@@ -5,14 +5,15 @@ use crate::config::{
 };
 use apt_admission::{initiate_c0, ClientCredential, ClientSessionRequest};
 use apt_carriers::D1Carrier;
-use apt_types::{AuthProfile, EndpointId, Mode, RekeyLimits};
+use apt_types::{AuthProfile, EndpointId, Mode, PathProfile, RekeyLimits};
 use std::{
+    collections::HashMap,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::PathBuf,
 };
 
 fn test_runtime_carriers() -> RuntimeCarriers {
-    RuntimeCarriers::new(1_380, false, false)
+    RuntimeCarriers::new(1_380, false)
 }
 
 fn test_runtime_outer_keys() -> RuntimeOuterKeys {
@@ -25,10 +26,6 @@ fn test_runtime_outer_keys() -> RuntimeOuterKeys {
         D2OuterKeys {
             send: [0x55; 32],
             recv: [0x66; 32],
-        },
-        S1OuterKeys {
-            send: [0x33; 32],
-            recv: [0x44; 32],
         },
     )
     .unwrap()
@@ -57,7 +54,7 @@ fn test_client_config() -> ResolvedClientConfig {
     ResolvedClientConfig {
         server_addr: "198.51.100.10:51820".parse::<SocketAddr>().unwrap(),
         mode: Mode::STEALTH,
-        preferred_carrier: RuntimeCarrierPreference::D1,
+        preferred_carrier: RuntimeCarrierPreference::Auto,
         strict_preferred_carrier: false,
         auth_profile: apt_types::AuthProfile::SharedDeployment,
         endpoint_id: EndpointId::new("adapt-test".to_string()),
@@ -72,8 +69,6 @@ fn test_client_config() -> ResolvedClientConfig {
         enable_d2_fallback: false,
         d2: None,
         session_policy: apt_types::SessionPolicy::default(),
-        enable_s1_fallback: true,
-        stream_server_addr: Some("198.51.100.10:443".parse::<SocketAddr>().unwrap()),
         allow_session_migration: true,
         standby_health_check_secs: 0,
         keepalive_secs: 25,
@@ -92,9 +87,6 @@ fn test_server_config() -> ResolvedServerConfig {
         public_endpoint: "198.51.100.10:51820".to_string(),
         mode: Mode::STEALTH,
         d2: None,
-        stream_bind: Some("0.0.0.0:443".parse::<SocketAddr>().unwrap()),
-        stream_public_endpoint: Some("198.51.100.10:443".to_string()),
-        stream_decoy_surface: false,
         endpoint_id: EndpointId::new("adapt-test".to_string()),
         admission_key: [0x11; 32],
         server_static_private_key: [0x44; 32],
@@ -129,6 +121,15 @@ fn test_server_config() -> ResolvedServerConfig {
             tunnel_ipv4: Ipv4Addr::new(10, 77, 0, 2),
             tunnel_ipv6: Some("fd77:77::2".parse().unwrap()),
         }],
+    }
+}
+
+fn test_adaptive_runtime_config() -> AdaptiveRuntimeConfig {
+    AdaptiveRuntimeConfig {
+        negotiated_mode: Mode::STEALTH,
+        persisted_mode: None,
+        preferred_carrier: None,
+        keepalive_base_interval_secs: 25,
     }
 }
 
@@ -172,11 +173,33 @@ fn standby_probe_schedule_is_jittered() {
 
 #[test]
 fn effective_d1_tunnel_mtu_stays_within_runtime_bounds() {
-    let carriers = RuntimeCarriers::new(1_380, false, false);
+    let carriers = RuntimeCarriers::new(1_380, false);
     let effective =
         effective_runtime_tunnel_mtu(1_380, &EndpointId::new("adapt-test".to_string()), &carriers);
     assert!(effective <= 1_380);
     assert!(effective >= 1_200);
+}
+
+#[test]
+fn automatic_order_prefers_d2_then_d1_and_skips_legacy_s1() {
+    let mut config = test_client_config();
+    config.enable_d2_fallback = true;
+    config.d2 = Some(ResolvedClientD2Config {
+        endpoint: ResolvedRemoteEndpoint {
+            original: "198.51.100.10:443".to_string(),
+            addr: "198.51.100.10:443".parse().unwrap(),
+            server_name: "198.51.100.10".to_string(),
+        },
+        server_certificate_der: vec![0xAA; 32],
+    });
+    let order = client_carrier_attempt_order(&config, &ClientPersistentState::default()).unwrap();
+    assert_eq!(
+        order,
+        vec![
+            CarrierBinding::D2EncryptedDatagram,
+            CarrierBinding::D1DatagramUdp
+        ]
+    );
 }
 
 #[test]
@@ -197,25 +220,72 @@ fn strict_d2_override_uses_only_d2() {
 }
 
 #[test]
-fn strict_s1_override_uses_only_s1() {
+fn strict_s1_override_normalizes_to_current_nonlegacy_order() {
     let mut config = test_client_config();
+    config.enable_d2_fallback = true;
+    config.d2 = Some(ResolvedClientD2Config {
+        endpoint: ResolvedRemoteEndpoint {
+            original: "198.51.100.10:443".to_string(),
+            addr: "198.51.100.10:443".parse().unwrap(),
+            server_name: "198.51.100.10".to_string(),
+        },
+        server_certificate_der: vec![0xAA; 32],
+    });
     config.preferred_carrier = RuntimeCarrierPreference::S1;
     config.strict_preferred_carrier = true;
     let order = client_carrier_attempt_order(&config, &ClientPersistentState::default()).unwrap();
-    assert_eq!(order, vec![CarrierBinding::S1EncryptedStream]);
+    assert_eq!(
+        order,
+        vec![
+            CarrierBinding::D2EncryptedDatagram,
+            CarrierBinding::D1DatagramUdp
+        ]
+    );
 }
 
 #[test]
-fn strict_s1_override_without_stream_endpoint_errors() {
+fn standby_candidates_skip_nonruntime_future_carriers() {
     let mut config = test_client_config();
-    config.preferred_carrier = RuntimeCarrierPreference::S1;
-    config.strict_preferred_carrier = true;
-    config.stream_server_addr = None;
-    let error =
-        client_carrier_attempt_order(&config, &ClientPersistentState::default()).unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("stream_server_addr is not configured"));
+    config.enable_d2_fallback = true;
+    config.d2 = Some(ResolvedClientD2Config {
+        endpoint: ResolvedRemoteEndpoint {
+            original: "198.51.100.10:443".to_string(),
+            addr: "198.51.100.10:443".parse().unwrap(),
+            server_name: "198.51.100.10".to_string(),
+        },
+        server_certificate_der: vec![0xAA; 32],
+    });
+    let context = crate::adaptive::build_client_network_context("adapt-test", "route-a");
+    let adaptive = AdaptiveDatapath::new_client(
+        CarrierBinding::D1DatagramUdp,
+        [0xAB; 32],
+        context,
+        None,
+        None,
+        AdaptiveRuntimeConfig {
+            preferred_carrier: Some(CarrierBinding::S1EncryptedStream),
+            ..test_adaptive_runtime_config()
+        },
+        PathProfile::unknown(),
+        None,
+        0,
+    );
+    let paths = HashMap::from([(
+        1_u64,
+        ClientPathState {
+            id: 1,
+            binding: CarrierBinding::D1DatagramUdp,
+            sender: PathSender::Datagram(mpsc::unbounded_channel::<Vec<u8>>().0),
+            validated: true,
+            pending_probe_challenge: None,
+            last_send_secs: 0,
+            last_recv_secs: 0,
+        },
+    )]);
+    assert_eq!(
+        next_standby_candidate(&config, &adaptive, &paths, 1),
+        Some(CarrierBinding::D2EncryptedDatagram)
+    );
 }
 
 #[test]

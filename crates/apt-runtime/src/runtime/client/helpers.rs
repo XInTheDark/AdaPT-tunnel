@@ -107,7 +107,7 @@ pub(super) fn runtime_carrier(preference: RuntimeCarrierPreference) -> ClientCar
         RuntimeCarrierPreference::Auto => ClientCarrier::Auto,
         RuntimeCarrierPreference::D1 => ClientCarrier::D1,
         RuntimeCarrierPreference::D2 => ClientCarrier::D2,
-        RuntimeCarrierPreference::S1 => ClientCarrier::S1,
+        RuntimeCarrierPreference::S1 => ClientCarrier::Auto,
     }
 }
 

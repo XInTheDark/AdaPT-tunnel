@@ -15,10 +15,10 @@ Implemented today:
 - cryptographic helpers and Noise `XXpsk2` session establishment
 - admission handshake (`C0 -> S1 -> C2 -> S3`)
 - encrypted inner tunnel packet core with replay protection and rekey support
-- carrier helpers and live runtime paths for `D1` datagram, `D2` QUIC-datagram, and `S1` encrypted-stream transport
+- carrier helpers and live runtime paths for `D1` datagram and `D2` QUIC-datagram transport
 - first-cut persona, policy, and observability layers
-- combined server daemon runtime over `D1`, optional `D2`, and optional `S1` (`apt-edge start`)
-- client runtime with conservative `D1 -> D2 -> S1` fallback when the optional carriers are configured (`apt-client up`)
+- combined server daemon runtime over `D1` plus optional `D2` (`apt-edge start`)
+- client runtime with `auto` preference, `D2`-first fallback when configured, and `D1` as the opaque fallback path (`apt-client up`)
 - targeted client-side QA bring-up with tunnel ping, DNS/public-egress checks, and a download throughput probe (`apt-client test`)
 - guided server initialization (`apt-edge init`)
 - guided D2 enablement / certificate generation for existing deployments (`apt-edge utils enable-d2`)
@@ -206,9 +206,6 @@ Useful options:
 - `--tunnel-subnet` — tunnel subnet, for example `10.77.0.0/24`
 - `--tunnel-subnet6` — optional IPv6 tunnel subnet, for example `fd77:77::/64`
 - `--interface-name` — server TUN name
-- `--stream-bind` — TCP listen address for the `S1` fallback carrier
-- `--stream-public-endpoint` — client-reachable `S1` endpoint, usually `host:443`
-- `--stream-decoy-surface` — whether invalid unauthenticated stream input should get a decoy-like HTTP surface
 - `--enable-d2` — enable the `D2` QUIC-datagram carrier and generate a pinned server certificate
 - `--d2-bind` — UDP listen address for the `D2` QUIC carrier
 - `--d2-public-endpoint` — client-reachable `D2` endpoint, usually `host:443`
@@ -307,7 +304,7 @@ Useful options:
 
 - `--bundle` — path to the single-file client bundle
 - `--mode 0..100` — one-shot numeric mode override (`0` = speed, `50` = balanced, `100` = stealth)
-- `--carrier auto|d1|d2|s1` — one-shot preferred-carrier override
+- `--carrier auto|d1|d2` — one-shot preferred-carrier override
 
 If omitted, the client first checks `~/.adapt-tunnel/client.aptbundle`, then the current-directory dev fallbacks. It also auto-creates a blank optional override TOML next to the selected bundle so local client-only settings can be edited without changing the bundle itself.
 
@@ -320,7 +317,7 @@ Useful options:
 
 - `--bundle` — path to the single-file client bundle
 - `--mode 0..100` — one-shot numeric mode override for the QA run
-- `--carrier auto|d1|d2|s1` — one-shot preferred-carrier override for the QA run
+- `--carrier auto|d1|d2` — one-shot preferred-carrier override for the QA run
 - `--connect-timeout-secs` — fail if the tunnel does not come up in time
 - `--ping-count` — number of ICMP probes per tunnel ping check
 - `--dns-host` — hostname used for the DNS resolution check
@@ -401,9 +398,9 @@ Current limitations include:
 - server runtime target is Linux
 - client runtime target is Linux/macOS
 - DNS automation is best-effort rather than universal: Linux currently uses `resolvectl`, and macOS temporarily overrides the primary network service DNS while the tunnel is up
-- the live carrier set is now `D1`, optional `D2`, and optional `S1`; `H1` remains future work
+- the live carrier set is now `D1` plus optional `D2`; the v2 `S1`/H2 and `D2`/H3 public-session families are still roadmap work
 - IPv6 tunnel addressing, routing, and Linux server forwarding/NAT are supported when the host IPv6 stack is enabled; guided `apt-edge init` now leaves IPv6 off unless you opt in
-- the stream fallback carrier is a practical generic TCP stream runtime in this repo; it is not yet a polished outer-TLS impersonation layer
+- the public-session stealth surfaces from `SPEC_v2.md` are not landed yet; today’s runtime remains the hardened migration baseline rather than the final outer-session design
 - config auto-upgrade rewrites parsed TOML with new defaulted fields, so comments/formatting in older configs may be normalized on startup
 
 ## Validation status

@@ -53,16 +53,9 @@ pub(super) fn client_carrier_attempt_order(
                     ))
                 }
             }
-            crate::config::RuntimeCarrierPreference::S1 => {
-                if config.stream_server_addr.is_some() {
-                    Ok(vec![CarrierBinding::S1EncryptedStream])
-                } else {
-                    Err(RuntimeError::InvalidConfig(
-                        "S1 was requested explicitly, but stream_server_addr is not configured"
-                            .to_string(),
-                    ))
-                }
-            }
+            crate::config::RuntimeCarrierPreference::S1 => Ok(
+                carrier_attempt_order_without_strict_override(config, persistent_state),
+            ),
         };
     }
 
@@ -76,13 +69,12 @@ fn carrier_attempt_order_without_strict_override(
     config: &ResolvedClientConfig,
     persistent_state: &ClientPersistentState,
 ) -> Vec<CarrierBinding> {
-    let mut available = vec![CarrierBinding::D1DatagramUdp];
+    let mut public_session_families = Vec::new();
     if config.enable_d2_fallback && config.d2.is_some() {
-        available.push(CarrierBinding::D2EncryptedDatagram);
+        public_session_families.push(CarrierBinding::D2EncryptedDatagram);
     }
-    if config.enable_s1_fallback && config.stream_server_addr.is_some() {
-        available.push(CarrierBinding::S1EncryptedStream);
-    }
+    let mut available = public_session_families.clone();
+    available.push(CarrierBinding::D1DatagramUdp);
     let explicit = config.preferred_carrier.binding();
     let remembered = persistent_state
         .active_network_profile()
@@ -100,14 +92,15 @@ fn carrier_attempt_order_without_strict_override(
             order.push(binding);
         }
     }
-    for binding in [
-        CarrierBinding::D1DatagramUdp,
-        CarrierBinding::D2EncryptedDatagram,
-        CarrierBinding::S1EncryptedStream,
-    ] {
+    for binding in public_session_families {
         if available.contains(&binding) && !order.contains(&binding) {
             order.push(binding);
         }
+    }
+    if available.contains(&CarrierBinding::D1DatagramUdp)
+        && !order.contains(&CarrierBinding::D1DatagramUdp)
+    {
+        order.push(CarrierBinding::D1DatagramUdp);
     }
     order
 }
@@ -120,13 +113,21 @@ pub(super) fn next_standby_candidate(
 ) -> Option<CarrierBinding> {
     let active_binding = paths.get(&active_path_id)?.binding;
     adaptive.fallback_order().into_iter().find(|binding| {
-        *binding != active_binding
+        runtime_supports_client_binding(config, *binding)
+            && !matches!(binding, CarrierBinding::H1RequestResponse)
+            && *binding != active_binding
             && (*binding != CarrierBinding::D2EncryptedDatagram
                 || (config.enable_d2_fallback && config.d2.is_some()))
-            && (*binding != CarrierBinding::S1EncryptedStream
-                || (config.enable_s1_fallback && config.stream_server_addr.is_some()))
             && !paths.values().any(|path| path.binding == *binding)
     })
+}
+
+fn runtime_supports_client_binding(config: &ResolvedClientConfig, binding: CarrierBinding) -> bool {
+    match binding {
+        CarrierBinding::D1DatagramUdp => true,
+        CarrierBinding::D2EncryptedDatagram => config.enable_d2_fallback && config.d2.is_some(),
+        CarrierBinding::S1EncryptedStream | CarrierBinding::H1RequestResponse => false,
+    }
 }
 
 pub(super) fn schedule_next_standby_probe(
@@ -154,11 +155,6 @@ pub(super) fn client_route_exempt_endpoints(config: &ResolvedClientConfig) -> Ve
     if let Some(d2) = &config.d2 {
         if !endpoints.contains(&d2.endpoint.addr) {
             endpoints.push(d2.endpoint.addr);
-        }
-    }
-    if let Some(stream_addr) = config.stream_server_addr {
-        if !endpoints.contains(&stream_addr) {
-            endpoints.push(stream_addr);
         }
     }
     endpoints

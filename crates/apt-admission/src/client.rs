@@ -56,7 +56,6 @@ impl ClientSessionRequest {
             supported_carriers: vec![
                 CarrierBinding::D1DatagramUdp,
                 CarrierBinding::D2EncryptedDatagram,
-                CarrierBinding::S1EncryptedStream,
             ],
             supported_suites: vec![CipherSuite::NoiseXxPsk2X25519ChaChaPolyBlake2s],
             mode: Mode::STEALTH,

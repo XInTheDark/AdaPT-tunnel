@@ -4,7 +4,6 @@ use super::*;
 pub(super) async fn handle_tun_packet(
     udp_socket: &Arc<UdpSocket>,
     d2_peers: &HashMap<u64, ServerD2Peer>,
-    stream_peers: &HashMap<u64, ServerStreamPeer>,
     carriers: &RuntimeCarriers,
     config: &ResolvedServerConfig,
     tun_rx: &mut mpsc::Receiver<Vec<u8>>,
@@ -26,7 +25,6 @@ pub(super) async fn handle_tun_packet(
                 send_frames_to_server_path(
                     udp_socket,
                     d2_peers,
-                    stream_peers,
                     carriers,
                     &config.endpoint_id,
                     session,
@@ -72,7 +70,6 @@ pub(super) async fn handle_tun_packet(
 pub(super) async fn run_tick(
     udp_socket: &Arc<UdpSocket>,
     d2_peers: &HashMap<u64, ServerD2Peer>,
-    stream_peers: &HashMap<u64, ServerStreamPeer>,
     carriers: &RuntimeCarriers,
     config: &ResolvedServerConfig,
     sessions: &mut HashMap<SessionId, ServerSessionState>,
@@ -130,7 +127,6 @@ pub(super) async fn run_tick(
                 let _ = send_frames_to_path_handle(
                     udp_socket,
                     d2_peers,
-                    stream_peers,
                     carriers,
                     &config.endpoint_id,
                     &session.outer_keys,
@@ -176,7 +172,6 @@ pub(super) async fn run_tick(
             send_frames_to_server_path(
                 udp_socket,
                 d2_peers,
-                stream_peers,
                 carriers,
                 &config.endpoint_id,
                 session,

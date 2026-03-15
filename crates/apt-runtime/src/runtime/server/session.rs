@@ -4,7 +4,6 @@ use super::*;
 pub(super) async fn process_known_server_path(
     udp_socket: &UdpSocket,
     d2_peers: &HashMap<u64, ServerD2Peer>,
-    stream_peers: &HashMap<u64, ServerStreamPeer>,
     carriers: &RuntimeCarriers,
     config: &ResolvedServerConfig,
     tun_tx: &mpsc::Sender<Vec<u8>>,
@@ -30,7 +29,6 @@ pub(super) async fn process_known_server_path(
     handle_server_decoded_packet(
         udp_socket,
         d2_peers,
-        stream_peers,
         carriers,
         &config.endpoint_id,
         tun_tx,
@@ -49,7 +47,6 @@ pub(super) async fn process_known_server_path(
 pub(super) async fn process_migrated_server_path(
     udp_socket: &UdpSocket,
     d2_peers: &HashMap<u64, ServerD2Peer>,
-    stream_peers: &HashMap<u64, ServerStreamPeer>,
     carriers: &RuntimeCarriers,
     config: &ResolvedServerConfig,
     tun_tx: &mpsc::Sender<Vec<u8>>,
@@ -68,7 +65,6 @@ pub(super) async fn process_migrated_server_path(
     handle_server_decoded_packet(
         udp_socket,
         d2_peers,
-        stream_peers,
         carriers,
         &config.endpoint_id,
         tun_tx,
@@ -87,7 +83,6 @@ pub(super) async fn process_migrated_server_path(
 async fn handle_server_decoded_packet(
     udp_socket: &UdpSocket,
     d2_peers: &HashMap<u64, ServerD2Peer>,
-    stream_peers: &HashMap<u64, ServerStreamPeer>,
     carriers: &RuntimeCarriers,
     endpoint_id: &apt_types::EndpointId,
     tun_tx: &mpsc::Sender<Vec<u8>>,
@@ -218,7 +213,6 @@ async fn handle_server_decoded_packet(
         if let Err(error) = send_frames_to_server_path(
             udp_socket,
             d2_peers,
-            stream_peers,
             carriers,
             endpoint_id,
             session,
@@ -249,11 +243,9 @@ pub(super) fn handle_server_path_loss(
     session: &mut ServerSessionState,
     path: PathHandle,
     path_to_session: &mut HashMap<PathHandle, SessionId>,
-    stream_peers: &HashMap<u64, ServerStreamPeer>,
     telemetry: &mut TelemetrySnapshot,
     observability: &ObservabilityConfig,
 ) {
-    let _ = stream_peers;
     path_to_session.remove(&path);
     if session.primary_path.handle == path {
         if let Some(standby) = session.standby_path.take() {

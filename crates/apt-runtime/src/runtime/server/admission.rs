@@ -83,85 +83,6 @@ pub(super) async fn handle_server_admission_datagram(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn handle_server_admission_stream(
-    stream_peers: &HashMap<u64, ServerStreamPeer>,
-    admission: &mut AdmissionServer,
-    config: &ResolvedServerConfig,
-    carriers: &RuntimeCarriers,
-    effective_tunnel_mtu: u16,
-    conn_id: u64,
-    decoded: DecodedServerAdmissionPacket,
-    sessions: &mut HashMap<SessionId, ServerSessionState>,
-    path_to_session: &mut HashMap<PathHandle, SessionId>,
-    sessions_by_tunnel_ip: &mut HashMap<IpAddr, SessionId>,
-    telemetry: &mut TelemetrySnapshot,
-    observability: &ObservabilityConfig,
-) -> Result<bool, RuntimeError> {
-    let Some(peer) = stream_peers.get(&conn_id) else {
-        return Ok(false);
-    };
-    match admission.handle_c0(
-        &peer.peer_addr.to_string(),
-        carriers.s1(),
-        &decoded.packet,
-        0,
-        now_secs(),
-    ) {
-        ServerResponse::Reply(reply) => {
-            let payload =
-                encode_admission_stream_payload(&config.endpoint_id, &decoded.outer_key, &reply)?;
-            queue_path_payload(&PathSender::Stream(peer.sender.clone()), payload)?;
-            return Ok(true);
-        }
-        ServerResponse::Drop(_) => {}
-    }
-
-    let server_reply = match admission.handle_c2_with_extension_builder(
-        &peer.peer_addr.to_string(),
-        carriers.s1(),
-        &decoded.packet,
-        now_secs(),
-        |session| {
-            let authorized = authorize_established_session(config, session)
-                .map_err(|_| AdmissionError::Validation("unauthorized peer"))?;
-            Ok(vec![bincode::serialize(
-                &ServerSessionExtension::TunnelParameters(assign_transport_parameters(
-                    config,
-                    authorized,
-                    effective_tunnel_mtu,
-                )),
-            )?])
-        },
-    ) {
-        ServerResponse::Reply(reply) => reply,
-        ServerResponse::Drop(_) => return Ok(false),
-    };
-
-    let authorized = authorize_established_session(config, &server_reply.session)?;
-    let confirmation_outer_key =
-        derive_s1_confirmation_outer_key(&server_reply.session.secrets.send_ctrl)?;
-    let payload = encode_confirmation_stream_payload(
-        &config.endpoint_id,
-        &confirmation_outer_key,
-        &server_reply.packet,
-    )?;
-    queue_path_payload(&PathSender::Stream(peer.sender.clone()), payload)?;
-
-    install_server_session(
-        config,
-        sessions,
-        path_to_session,
-        sessions_by_tunnel_ip,
-        telemetry,
-        observability,
-        server_reply.session,
-        authorized,
-        PathHandle::Stream(conn_id),
-        CarrierBinding::S1EncryptedStream,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_server_admission_d2(
     d2_peers: &HashMap<u64, ServerD2Peer>,
     admission: &mut AdmissionServer,
@@ -318,7 +239,6 @@ fn install_server_session(
                 &config.endpoint_id,
                 derive_d1_tunnel_outer_keys(&session.secrets)?,
                 derive_d2_tunnel_outer_keys(&session.secrets)?,
-                derive_s1_tunnel_outer_keys(&session.secrets)?,
             )?,
             encapsulation: TunnelEncapsulation::for_mode(session.mode),
             primary_path,

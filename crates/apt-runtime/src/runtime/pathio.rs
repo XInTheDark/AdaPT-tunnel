@@ -56,7 +56,6 @@ pub(super) async fn send_frames_on_client_path(
 pub(super) async fn send_frames_to_server_path(
     udp_socket: &UdpSocket,
     d2_peers: &HashMap<u64, ServerD2Peer>,
-    stream_peers: &HashMap<u64, ServerStreamPeer>,
     carriers: &RuntimeCarriers,
     endpoint_id: &apt_types::EndpointId,
     session: &mut ServerSessionState,
@@ -68,7 +67,6 @@ pub(super) async fn send_frames_to_server_path(
     send_frames_to_path_handle(
         udp_socket,
         d2_peers,
-        stream_peers,
         carriers,
         endpoint_id,
         &session.outer_keys,
@@ -87,7 +85,6 @@ pub(super) async fn send_frames_to_server_path(
 pub(super) async fn send_frames_to_path_handle(
     udp_socket: &UdpSocket,
     d2_peers: &HashMap<u64, ServerD2Peer>,
-    stream_peers: &HashMap<u64, ServerStreamPeer>,
     carriers: &RuntimeCarriers,
     endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
@@ -112,7 +109,7 @@ pub(super) async fn send_frames_to_path_handle(
         if let Some(adaptive) = adaptive {
             maybe_apply_pacing_delay(adaptive, binding, frames, 1, 0, now).await;
         }
-        return send_outer_to_path(udp_socket, d2_peers, stream_peers, path, outer).await;
+        return send_outer_to_path(udp_socket, d2_peers, path, outer).await;
     }
     let batches = plan_outbound_tunnel_batches(
         carriers,
@@ -139,7 +136,7 @@ pub(super) async fn send_frames_to_path_handle(
             &batch,
             now,
         )?;
-        send_outer_to_path(udp_socket, d2_peers, stream_peers, path, outer).await?;
+        send_outer_to_path(udp_socket, d2_peers, path, outer).await?;
     }
     Ok(())
 }
@@ -167,7 +164,6 @@ async fn maybe_apply_pacing_delay(
 async fn send_outer_to_path(
     udp_socket: &UdpSocket,
     d2_peers: &HashMap<u64, ServerD2Peer>,
-    stream_peers: &HashMap<u64, ServerStreamPeer>,
     path: &PathHandle,
     outer: Vec<u8>,
 ) -> Result<(), RuntimeError> {
@@ -182,14 +178,6 @@ async fn send_outer_to_path(
                 ));
             };
             queue_path_payload(&PathSender::D2(peer.sender.clone()), outer)?;
-        }
-        PathHandle::Stream(conn_id) => {
-            let Some(peer) = stream_peers.get(conn_id) else {
-                return Err(RuntimeError::InvalidConfig(
-                    "missing stream peer sender".to_string(),
-                ));
-            };
-            queue_path_payload(&PathSender::Stream(peer.sender.clone()), outer)?;
         }
     }
     Ok(())
@@ -206,9 +194,6 @@ pub(super) fn queue_path_payload(
         PathSender::D2(tx) => tx
             .send(payload)
             .map_err(|_| RuntimeError::InvalidConfig("D2 path closed".to_string())),
-        PathSender::Stream(tx) => tx
-            .send(StreamWrite::CarrierPayload(payload))
-            .map_err(|_| RuntimeError::InvalidConfig("stream path closed".to_string())),
     }
 }
 
@@ -219,10 +204,8 @@ pub(super) fn is_path_sender_unavailable(error: &RuntimeError) -> bool {
             if matches!(
                 message.as_str(),
                 "missing D2 peer sender"
-                    | "missing stream peer sender"
                     | "datagram path closed"
                     | "D2 path closed"
-                    | "stream path closed"
             )
     )
 }
@@ -238,12 +221,6 @@ mod tests {
         )));
         assert!(is_path_sender_unavailable(&RuntimeError::InvalidConfig(
             "D2 path closed".to_string(),
-        )));
-        assert!(is_path_sender_unavailable(&RuntimeError::InvalidConfig(
-            "missing stream peer sender".to_string(),
-        )));
-        assert!(is_path_sender_unavailable(&RuntimeError::InvalidConfig(
-            "stream path closed".to_string(),
         )));
 
         assert!(!is_path_sender_unavailable(&RuntimeError::InvalidConfig(

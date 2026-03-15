@@ -17,7 +17,7 @@ pub(super) async fn run_client(
 ) -> Result<ClientRuntimeResult, RuntimeError> {
     let observability = ObservabilityConfig::default();
     let mut telemetry = TelemetrySnapshot::new("apt-client");
-    let carriers = RuntimeCarriers::new(1_380, false, config.d2.is_some());
+    let carriers = RuntimeCarriers::new(1_380, config.d2.is_some());
     hooks.emit(ClientRuntimeEvent::Starting {
         server: config.server_addr.to_string(),
         requested_mode: config.mode.value(),
