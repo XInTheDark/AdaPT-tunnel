@@ -1,12 +1,13 @@
 use crate::{
     deserialize_value, random_bytes, serialize_value, CryptoError, AEAD_KEY_LEN, COOKIE_NONCE_LEN,
 };
-use apt_types::{CarrierBinding, OpaqueMessage, PathProfile};
+use apt_types::{CarrierBinding, OpaqueMessage, PathProfile, PublicRouteHint};
 use chacha20poly1305::{
     aead::{Aead, KeyInit, Payload},
     XChaCha20Poly1305,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fmt;
 
 /// Cached XChaCha20-Poly1305 outer cipher for repeated opaque-record operations.
@@ -177,7 +178,7 @@ impl SealedEnvelope {
     }
 }
 
-/// Generic stateless protector for cookies and resumption tickets.
+/// Generic stateless protector for cookies and sealed ticket-style tokens.
 #[derive(Clone, Debug)]
 pub struct TokenProtector {
     key: [u8; AEAD_KEY_LEN],
@@ -192,12 +193,71 @@ impl TokenProtector {
 
     /// Seals any serializable payload into an opaque token.
     pub fn seal<T: Serialize>(&self, value: &T) -> Result<SealedEnvelope, CryptoError> {
-        SealedEnvelope::seal(&self.key, &[], value)
+        self.seal_with_aad(&[], value)
     }
 
     /// Opens an opaque token into a typed payload.
     pub fn open<T: DeserializeOwned>(&self, envelope: &SealedEnvelope) -> Result<T, CryptoError> {
-        envelope.open(&self.key, &[])
+        self.open_with_aad(envelope, &[])
+    }
+
+    /// Seals any serializable payload into an opaque token bound to caller-supplied AAD.
+    pub fn seal_with_aad<T: Serialize>(
+        &self,
+        associated_data: &[u8],
+        value: &T,
+    ) -> Result<SealedEnvelope, CryptoError> {
+        SealedEnvelope::seal(&self.key, associated_data, value)
+    }
+
+    /// Opens an opaque token into a typed payload bound to caller-supplied AAD.
+    pub fn open_with_aad<T: DeserializeOwned>(
+        &self,
+        envelope: &SealedEnvelope,
+        associated_data: &[u8],
+    ) -> Result<T, CryptoError> {
+        envelope.open(&self.key, associated_data)
+    }
+
+    /// Seals a masked fallback ticket for the supplied coarse network context.
+    pub fn seal_masked_fallback_ticket(
+        &self,
+        context: &MaskedFallbackContext,
+        expires_at_secs: u64,
+        preferred_family: CarrierBinding,
+        evidence: MaskedFallbackEvidence,
+        allow_shadow_lane: bool,
+    ) -> Result<SealedEnvelope, CryptoError> {
+        let ticket = MaskedFallbackTicket {
+            server_id: context.server_id.clone(),
+            expires_at_secs,
+            network_context_hash: context.network_context_hash()?,
+            preferred_family,
+            evidence,
+            allow_shadow_lane,
+        };
+        self.seal_with_aad(&context.ticket_associated_data()?, &ticket)
+    }
+
+    /// Opens a masked fallback ticket for the supplied coarse network context.
+    pub fn open_masked_fallback_ticket(
+        &self,
+        envelope: &SealedEnvelope,
+        context: &MaskedFallbackContext,
+    ) -> Result<MaskedFallbackTicket, CryptoError> {
+        let ticket: MaskedFallbackTicket =
+            self.open_with_aad(envelope, &context.ticket_associated_data()?)?;
+        if ticket.network_context_hash != context.network_context_hash()? {
+            return Err(CryptoError::InvalidInput(
+                "masked fallback ticket context mismatch",
+            ));
+        }
+        if ticket.server_id != context.server_id {
+            return Err(CryptoError::InvalidInput(
+                "masked fallback ticket server mismatch",
+            ));
+        }
+        Ok(ticket)
     }
 }
 
@@ -216,6 +276,65 @@ pub struct ResumeTicket {
     pub last_path_profile: PathProfile,
     /// Secret binding to the prior session.
     pub resume_secret: [u8; 32],
+}
+
+/// Coarse network context bound into a masked fallback ticket.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MaskedFallbackContext {
+    /// Deployment-local server identifier.
+    pub server_id: String,
+    /// Coarse public-route label for the current network.
+    pub public_route: PublicRouteHint,
+    /// Coarse path profile observed for the route.
+    pub path_profile: PathProfile,
+}
+
+impl MaskedFallbackContext {
+    /// Returns the coarse network-context hash stored inside the sealed ticket.
+    pub fn network_context_hash(&self) -> Result<[u8; 32], CryptoError> {
+        let encoded = serialize_value(self)?;
+        let mut hasher = Sha256::new();
+        hasher.update(b"adapt-masked-fallback-context-v1\n");
+        hasher.update(&encoded);
+        let digest = hasher.finalize();
+        let mut out = [0_u8; 32];
+        out.copy_from_slice(&digest);
+        Ok(out)
+    }
+
+    /// Returns associated data used while sealing/opening masked fallback tickets.
+    pub fn ticket_associated_data(&self) -> Result<Vec<u8>, CryptoError> {
+        let mut aad = b"adapt-masked-fallback-ticket-v1\n".to_vec();
+        aad.extend_from_slice(&serialize_value(self)?);
+        Ok(aad)
+    }
+}
+
+/// Confidence/evidence level encoded into a masked fallback ticket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MaskedFallbackEvidence {
+    /// Minimal evidence: the route worked once.
+    ObservedSafe,
+    /// Stronger evidence: the route looked stable while succeeding.
+    ObservedStable,
+}
+
+/// Opaque remembered-safe fallback ticket carried across hidden-upgrade attempts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MaskedFallbackTicket {
+    /// Deployment-local server identifier that minted the ticket.
+    pub server_id: String,
+    /// Absolute UNIX timestamp after which the ticket is invalid.
+    pub expires_at_secs: u64,
+    /// Coarse bound network-context hash.
+    pub network_context_hash: [u8; 32],
+    /// Likely-good public-session family for the remembered context.
+    pub preferred_family: CarrierBinding,
+    /// Confidence level associated with the observation.
+    pub evidence: MaskedFallbackEvidence,
+    /// Whether remembered-safe shadow lanes were permitted for the route.
+    pub allow_shadow_lane: bool,
 }
 
 /// Encrypts raw bytes into an opaque XChaCha20-Poly1305 message.

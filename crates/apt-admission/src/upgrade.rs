@@ -30,10 +30,11 @@ pub struct Ug1 {
     pub supported_suites: Vec<CipherSuite>,
     pub supported_families: Vec<CarrierBinding>,
     pub requested_mode: Mode,
+    pub public_route_hint: PublicRouteHint,
     pub path_profile: PathProfile,
     pub client_nonce: ClientNonce,
     pub noise_msg1: Vec<u8>,
-    pub optional_resume_ticket: Option<SealedEnvelope>,
+    pub optional_masked_fallback_ticket: Option<SealedEnvelope>,
     pub slot_binding: UpgradeSlotBinding,
     pub padding: Vec<u8>,
 }
@@ -47,7 +48,7 @@ pub struct Ug2 {
     pub anti_amplification_cookie: SealedEnvelope,
     pub cookie_expiry: u64,
     pub noise_msg2: Vec<u8>,
-    pub optional_resume_accept: bool,
+    pub optional_masked_fallback_accept: bool,
     pub slot_binding: UpgradeSlotBinding,
     pub padding: Vec<u8>,
 }
@@ -69,7 +70,7 @@ pub struct Ug4 {
     pub tunnel_mtu: u16,
     pub rekey_limits: RekeyLimits,
     pub ticket_issue_flag: bool,
-    pub optional_resume_ticket: Option<SealedEnvelope>,
+    pub optional_masked_fallback_ticket: Option<SealedEnvelope>,
     pub slot_binding: UpgradeSlotBinding,
     pub optional_extensions: Vec<Vec<u8>>,
 }

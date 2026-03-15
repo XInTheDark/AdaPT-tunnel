@@ -210,7 +210,7 @@ pub struct S3 {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct NoiseResponderPayload {
     pub server_contribution: [u8; 32],
-    pub resume_accept: bool,
+    pub masked_fallback_ticket_accept: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,6 +234,7 @@ pub(super) struct CookiePayload {
     pub chosen_mode: Mode,
     pub credential_label: String,
     pub lookup_hint: Option<[u8; 8]>,
+    pub public_route_hint: PublicRouteHint,
     pub path_profile: PathProfile,
-    pub resume_accepted: bool,
+    pub masked_fallback_ticket_accepted: bool,
 }

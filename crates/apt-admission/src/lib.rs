@@ -7,12 +7,13 @@ use apt_carriers::{CarrierProfile, InvalidInputBehavior};
 use apt_crypto::{
     admission_associated_data, derive_admission_key, derive_lookup_hint,
     derive_server_contribution, derive_session_secrets, derive_stateless_private_key,
-    generate_static_keypair, NoiseHandshake, NoiseHandshakeConfig, RawSplitKeys, ResumeTicket,
-    SealedEnvelope, SessionSecretsForRole, StaticKeypair, TokenProtector,
+    generate_static_keypair, MaskedFallbackContext, MaskedFallbackEvidence, NoiseHandshake,
+    NoiseHandshakeConfig, RawSplitKeys, SealedEnvelope, SessionSecretsForRole, StaticKeypair,
+    TokenProtector,
 };
 use apt_types::{
     AdmissionDefaults, AuthProfile, CarrierBinding, CipherSuite, ClientNonce, CredentialIdentity,
-    EndpointId, Mode, PathProfile, RekeyLimits, SessionId, SessionRole,
+    EndpointId, Mode, PathProfile, PublicRouteHint, RekeyLimits, SessionId, SessionRole,
 };
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,7 @@ mod upgrade;
 #[cfg(test)]
 mod tests;
 
+use self::upgrade::legacy_upgrade_slot_binding;
 pub use self::{
     client::{
         initiate_c0, ClientCredential, ClientPendingS1, ClientPendingS3, ClientSessionRequest,
@@ -39,7 +41,6 @@ pub use self::{
     },
     upgrade::{Ug1, Ug2, Ug3, Ug4, UpgradeMessagePhase, UpgradeSlotBinding},
 };
-use self::upgrade::legacy_upgrade_slot_binding;
 
 const VERSION: &str = "APT/1-core";
 const ACCEPTABLE_SLOT_SKEW: i64 = 1;

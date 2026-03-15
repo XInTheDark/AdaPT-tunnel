@@ -340,10 +340,11 @@ fn transport_agnostic_ug_capsules_round_trip_without_public_packet_envelope() {
             CarrierBinding::D2EncryptedDatagram,
         ],
         requested_mode: Mode::STEALTH,
+        public_route_hint: PublicRouteHint("d2:edge.example:443".to_string()),
         path_profile: PathProfile::unknown(),
         client_nonce: ClientNonce::random(),
         noise_msg1: vec![1, 2, 3],
-        optional_resume_ticket: None,
+        optional_masked_fallback_ticket: None,
         slot_binding: test_slot_binding(),
         padding: vec![9; 12],
     };
@@ -357,7 +358,7 @@ fn transport_agnostic_ug_capsules_round_trip_without_public_packet_envelope() {
         },
         cookie_expiry: 123,
         noise_msg2: vec![4, 5, 6],
-        optional_resume_accept: true,
+        optional_masked_fallback_accept: true,
         slot_binding: test_slot_binding(),
         padding: vec![7; 8],
     };
@@ -376,7 +377,7 @@ fn transport_agnostic_ug_capsules_round_trip_without_public_packet_envelope() {
         tunnel_mtu: 1380,
         rekey_limits: RekeyLimits::default(),
         ticket_issue_flag: true,
-        optional_resume_ticket: Some(SealedEnvelope {
+        optional_masked_fallback_ticket: Some(SealedEnvelope {
             nonce: [0x66; 24],
             ciphertext: vec![0x77; 24],
         }),
@@ -393,4 +394,81 @@ fn transport_agnostic_ug_capsules_round_trip_without_public_packet_envelope() {
     assert_eq!(decoded_ug2, ug2);
     assert_eq!(decoded_ug3, ug3);
     assert_eq!(decoded_ug4, ug4);
+}
+
+#[test]
+fn masked_fallback_ticket_is_issued_and_only_reused_on_matching_route() {
+    let (mut server, credential, carrier) = test_server_setup();
+    let endpoint = EndpointId::new("edge-test");
+    let now_secs = 1_700_000_000;
+
+    let mut first_request = ClientSessionRequest::conservative(endpoint.clone(), now_secs);
+    first_request.public_route_hint = PublicRouteHint("d1:198.51.100.10:51820".to_string());
+    let prepared_c0 = initiate_c0(credential.clone(), first_request, &carrier).unwrap();
+    let s1 = match server.handle_c0(
+        "127.0.0.1:1111",
+        &carrier,
+        &prepared_c0.packet,
+        512,
+        now_secs,
+    ) {
+        ServerResponse::Reply(reply) => reply,
+        ServerResponse::Drop(_) => panic!("expected reply"),
+    };
+    let prepared_c2 = prepared_c0.state.handle_s1(&s1, &carrier).unwrap();
+    let established = match server.handle_c2(
+        "127.0.0.1:1111",
+        &carrier,
+        &prepared_c2.packet,
+        now_secs + 1,
+    ) {
+        ServerResponse::Reply(reply) => reply,
+        ServerResponse::Drop(_) => panic!("expected reply"),
+    };
+    let masked_fallback_ticket = established
+        .session
+        .masked_fallback_ticket
+        .clone()
+        .expect("ticket should be issued");
+
+    let mut matching_request = ClientSessionRequest::conservative(endpoint.clone(), now_secs + 10);
+    matching_request.public_route_hint = PublicRouteHint("d1:198.51.100.10:51820".to_string());
+    matching_request.masked_fallback_ticket = Some(masked_fallback_ticket.clone());
+    let prepared_matching = initiate_c0(credential.clone(), matching_request, &carrier).unwrap();
+    let matching_s1 = match server.handle_c0(
+        "127.0.0.1:1111",
+        &carrier,
+        &prepared_matching.packet,
+        512,
+        now_secs + 10,
+    ) {
+        ServerResponse::Reply(reply) => reply,
+        ServerResponse::Drop(_) => panic!("expected reply"),
+    };
+    let aad = admission_associated_data(&endpoint, carrier.binding());
+    let epoch_slot = (now_secs + 10) / AdmissionDefaults::default().epoch_slot_secs;
+    let matching_key = derive_admission_key(&credential.admission_key, epoch_slot);
+    let matching_ug2: Ug2 = matching_s1.envelope.open(&matching_key, &aad).unwrap();
+    assert!(matching_ug2.optional_masked_fallback_accept);
+
+    let mut mismatched_request =
+        ClientSessionRequest::conservative(endpoint.clone(), now_secs + 20);
+    mismatched_request.public_route_hint = PublicRouteHint("d1:203.0.113.44:51820".to_string());
+    mismatched_request.masked_fallback_ticket = Some(masked_fallback_ticket);
+    let prepared_mismatched =
+        initiate_c0(credential.clone(), mismatched_request, &carrier).unwrap();
+    let mismatched_s1 = match server.handle_c0(
+        "127.0.0.1:1111",
+        &carrier,
+        &prepared_mismatched.packet,
+        512,
+        now_secs + 20,
+    ) {
+        ServerResponse::Reply(reply) => reply,
+        ServerResponse::Drop(_) => panic!("expected reply"),
+    };
+    let epoch_slot = (now_secs + 20) / AdmissionDefaults::default().epoch_slot_secs;
+    let mismatched_key = derive_admission_key(&credential.admission_key, epoch_slot);
+    let mismatched_ug2: Ug2 = mismatched_s1.envelope.open(&mismatched_key, &aad).unwrap();
+    assert!(!mismatched_ug2.optional_masked_fallback_accept);
 }

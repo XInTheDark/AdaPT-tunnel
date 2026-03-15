@@ -38,11 +38,20 @@ impl AdmissionServer {
             let chosen_carrier = self.choose_carrier(&ug1.supported_families, active_binding)?;
             let chosen_mode = self.choose_mode(ug1.requested_mode);
 
-            let resume_accepted = ug1
-                .optional_resume_ticket
+            let masked_fallback_ticket_accepted = ug1
+                .optional_masked_fallback_ticket
                 .as_ref()
-                .and_then(|ticket| self.ticket_protector.open::<ResumeTicket>(ticket).ok())
-                .is_some_and(|ticket| ticket.expires_at_secs > now_secs);
+                .and_then(|ticket| {
+                    self.open_masked_fallback_ticket(
+                        ticket,
+                        active_binding,
+                        &ug1.public_route_hint,
+                        ug1.path_profile,
+                        now_secs,
+                    )
+                    .ok()
+                })
+                .unwrap_or(false);
 
             let cookie_payload = CookiePayload {
                 source_id: source_id.to_string(),
@@ -58,8 +67,9 @@ impl AdmissionServer {
                 chosen_mode,
                 credential_label: resolved.label(),
                 lookup_hint: resolved.lookup_hint,
+                public_route_hint: ug1.public_route_hint,
                 path_profile: ug1.path_profile,
-                resume_accepted,
+                masked_fallback_ticket_accepted,
             };
             let cookie_context = Self::build_cookie_context(&cookie_payload)?;
             let fixed_ephemeral_private =
@@ -77,7 +87,7 @@ impl AdmissionServer {
             noise.read_message(&ug1.noise_msg1)?;
             let noise_msg2 = noise.write_message(&bincode::serialize(&NoiseResponderPayload {
                 server_contribution,
-                resume_accept: resume_accepted,
+                masked_fallback_ticket_accept: masked_fallback_ticket_accepted,
             })?)?;
 
             let cookie = self.cookie_protector.seal(&cookie_payload)?;
@@ -88,7 +98,7 @@ impl AdmissionServer {
                 anti_amplification_cookie: cookie,
                 cookie_expiry: cookie_payload.expires_at_secs,
                 noise_msg2,
-                optional_resume_accept: resume_accepted,
+                optional_masked_fallback_accept: masked_fallback_ticket_accepted,
                 slot_binding: legacy_upgrade_slot_binding(
                     &self.config.endpoint_id,
                     active_binding,
@@ -223,7 +233,7 @@ impl AdmissionServer {
             noise.read_message(&cookie_payload.noise_msg1)?;
             let responder_payload = bincode::serialize(&NoiseResponderPayload {
                 server_contribution,
-                resume_accept: cookie_payload.resume_accepted,
+                masked_fallback_ticket_accept: cookie_payload.masked_fallback_ticket_accepted,
             })?;
             let _replayed_msg2 = noise.write_message(&responder_payload)?;
             let client_payload_bytes = noise.read_message(&ug3.noise_msg3)?;
@@ -245,11 +255,10 @@ impl AdmissionServer {
             .for_role(SessionRole::Responder);
 
             let session_id = SessionId::random();
-            let resume_ticket = self.issue_ticket(
-                &resolved.identity,
+            let masked_fallback_ticket = self.issue_masked_fallback_ticket(
                 cookie_payload.chosen_carrier,
+                &cookie_payload.public_route_hint,
                 cookie_payload.path_profile,
-                secrets.resume_secret,
                 now_secs,
             )?;
             let tentative_session = EstablishedSession {
@@ -262,7 +271,7 @@ impl AdmissionServer {
                 secrets,
                 tunnel_mtu: self.config.tunnel_mtu,
                 rekey_limits: self.config.rekey_limits,
-                resume_ticket: resume_ticket.clone(),
+                masked_fallback_ticket: masked_fallback_ticket.clone(),
                 client_identity: client_payload.user_identity.clone(),
                 client_static_public,
                 optional_extensions: Vec::new(),
@@ -272,8 +281,8 @@ impl AdmissionServer {
                 session_id,
                 tunnel_mtu: self.config.tunnel_mtu,
                 rekey_limits: self.config.rekey_limits,
-                ticket_issue_flag: resume_ticket.is_some(),
-                optional_resume_ticket: resume_ticket.clone(),
+                ticket_issue_flag: masked_fallback_ticket.is_some(),
+                optional_masked_fallback_ticket: masked_fallback_ticket.clone(),
                 slot_binding: legacy_upgrade_slot_binding(
                     &self.config.endpoint_id,
                     active_binding,
@@ -300,7 +309,7 @@ impl AdmissionServer {
                 secrets,
                 tunnel_mtu: self.config.tunnel_mtu,
                 rekey_limits: self.config.rekey_limits,
-                resume_ticket,
+                masked_fallback_ticket,
                 client_identity: client_payload.user_identity,
                 client_static_public,
                 optional_extensions: s3_extensions,

@@ -7,7 +7,7 @@ pub(super) async fn perform_client_handshake(
     telemetry: &mut TelemetrySnapshot,
     observability: &ObservabilityConfig,
 ) -> Result<HandshakeSuccess, RuntimeError> {
-    let resume_ticket = persistent_state
+    let masked_fallback_ticket = persistent_state
         .resume_ticket
         .as_ref()
         .map(|bytes| bincode::deserialize::<SealedEnvelope>(bytes))
@@ -22,7 +22,7 @@ pub(super) async fn perform_client_handshake(
                     config,
                     persistent_state,
                     carriers.d1(),
-                    resume_ticket.clone(),
+                    masked_fallback_ticket.clone(),
                     &order,
                 )
                 .await
@@ -38,7 +38,7 @@ pub(super) async fn perform_client_handshake(
                     config,
                     persistent_state,
                     carrier,
-                    resume_ticket.clone(),
+                    masked_fallback_ticket.clone(),
                     &order,
                 )
                 .await
@@ -49,7 +49,7 @@ pub(super) async fn perform_client_handshake(
             Ok(success) => {
                 persistent_state.resume_ticket = success
                     .established
-                    .resume_ticket
+                    .masked_fallback_ticket
                     .as_ref()
                     .map(bincode::serialize)
                     .transpose()?;
@@ -84,7 +84,7 @@ async fn attempt_client_handshake_d1(
     config: &ResolvedClientConfig,
     persistent_state: &ClientPersistentState,
     carrier: &D1Carrier,
-    resume_ticket: Option<SealedEnvelope>,
+    masked_fallback_ticket: Option<SealedEnvelope>,
     supported_carriers: &[CarrierBinding],
 ) -> Result<HandshakeSuccess, RuntimeError> {
     let socket = build_udp_socket(
@@ -104,7 +104,7 @@ async fn attempt_client_handshake_d1(
             persistent_state,
             CarrierBinding::D1DatagramUdp,
             supported_carriers,
-            resume_ticket.clone(),
+            masked_fallback_ticket.clone(),
             now,
         );
         let prepared_c0 = initiate_c0(credential, request, carrier)?;
@@ -178,7 +178,7 @@ async fn attempt_client_handshake_d2(
     config: &ResolvedClientConfig,
     persistent_state: &ClientPersistentState,
     carrier: &D2Carrier,
-    resume_ticket: Option<SealedEnvelope>,
+    masked_fallback_ticket: Option<SealedEnvelope>,
     supported_carriers: &[CarrierBinding],
 ) -> Result<HandshakeSuccess, RuntimeError> {
     let (endpoint, connection) =
@@ -194,7 +194,7 @@ async fn attempt_client_handshake_d2(
             persistent_state,
             CarrierBinding::D2EncryptedDatagram,
             supported_carriers,
-            resume_ticket.clone(),
+            masked_fallback_ticket.clone(),
             now,
         );
         let prepared_c0 = initiate_c0(credential, request, carrier)?;

@@ -32,7 +32,8 @@ pub use self::{
     noise::{generate_static_keypair, NoiseHandshake, NoiseHandshakeConfig, StaticKeypair},
     opaque::{
         open_opaque_payload, open_opaque_payload_bytes, seal_opaque_payload,
-        seal_opaque_payload_bytes, OpaqueAead, ResumeTicket, SealedEnvelope, TokenProtector,
+        seal_opaque_payload_bytes, MaskedFallbackContext, MaskedFallbackEvidence,
+        MaskedFallbackTicket, OpaqueAead, ResumeTicket, SealedEnvelope, TokenProtector,
     },
     session::{
         derive_rekey_phase, derive_session_secrets, open_tunnel_payload,

@@ -32,12 +32,14 @@ pub struct ClientSessionRequest {
     pub supported_suites: Vec<CipherSuite>,
     /// Desired numeric mode.
     pub mode: Mode,
+    /// Coarse public-route hint for the current network context.
+    pub public_route_hint: PublicRouteHint,
     /// Coarse current path profile.
     pub path_profile: PathProfile,
     /// Current UNIX timestamp.
     pub now_secs: u64,
-    /// Optional resume ticket.
-    pub resume_ticket: Option<SealedEnvelope>,
+    /// Optional masked fallback ticket.
+    pub masked_fallback_ticket: Option<SealedEnvelope>,
     /// Requested random padding for `C0`.
     pub c0_padding_len: usize,
     /// Requested random padding for `C2`.
@@ -50,6 +52,7 @@ impl ClientSessionRequest {
     /// Creates a conservative request with spec-aligned defaults.
     #[must_use]
     pub fn conservative(endpoint_id: EndpointId, now_secs: u64) -> Self {
+        let public_route_hint = PublicRouteHint(endpoint_id.as_str().to_string());
         Self {
             endpoint_id,
             preferred_carrier: CarrierBinding::D1DatagramUdp,
@@ -59,9 +62,10 @@ impl ClientSessionRequest {
             ],
             supported_suites: vec![CipherSuite::NoiseXxPsk2X25519ChaChaPolyBlake2s],
             mode: Mode::STEALTH,
+            public_route_hint,
             path_profile: PathProfile::unknown(),
             now_secs,
-            resume_ticket: None,
+            masked_fallback_ticket: None,
             c0_padding_len: 24,
             c2_padding_len: 16,
             policy_flags: PolicyFlags {
@@ -165,10 +169,11 @@ pub fn initiate_c0<C: CarrierProfile>(
         supported_suites: request.supported_suites.clone(),
         supported_families: request.supported_carriers.clone(),
         requested_mode: request.mode,
+        public_route_hint: request.public_route_hint,
         path_profile: request.path_profile,
         client_nonce,
         noise_msg1,
-        optional_resume_ticket: request.resume_ticket.clone(),
+        optional_masked_fallback_ticket: request.masked_fallback_ticket.clone(),
         slot_binding: legacy_upgrade_slot_binding(
             &request.endpoint_id,
             carrier.binding(),
@@ -320,7 +325,7 @@ impl ClientPendingS3 {
             secrets: self.secrets,
             tunnel_mtu: ug4.tunnel_mtu,
             rekey_limits: ug4.rekey_limits,
-            resume_ticket: ug4.optional_resume_ticket,
+            masked_fallback_ticket: ug4.optional_masked_fallback_ticket,
             client_identity: None,
             client_static_public: None,
             optional_extensions: ug4.optional_extensions,

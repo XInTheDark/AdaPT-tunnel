@@ -1,5 +1,5 @@
 use super::*;
-use apt_types::{CarrierBinding, PathProfile, SessionRole};
+use apt_types::{CarrierBinding, PathProfile, PublicRouteHint, SessionRole};
 use serde::{Deserialize, Serialize};
 
 #[test]
@@ -38,6 +38,43 @@ fn ticket_round_trip_and_integrity_failure() {
 
     sealed.ciphertext[0] ^= 0x01;
     let err = protector.open::<ResumeTicket>(&sealed).unwrap_err();
+    assert!(matches!(err, CryptoError::Aead));
+}
+
+#[test]
+fn masked_fallback_ticket_is_bound_to_context_and_aad() {
+    let protector = TokenProtector::new([6_u8; 32]);
+    let context = MaskedFallbackContext {
+        server_id: "edge-a".to_string(),
+        public_route: PublicRouteHint("d2:edge.example:443".to_string()),
+        path_profile: PathProfile::unknown(),
+    };
+    let sealed = protector
+        .seal_masked_fallback_ticket(
+            &context,
+            1_234,
+            CarrierBinding::D2EncryptedDatagram,
+            MaskedFallbackEvidence::ObservedSafe,
+            false,
+        )
+        .unwrap();
+    let opened = protector
+        .open_masked_fallback_ticket(&sealed, &context)
+        .unwrap();
+    assert_eq!(opened.server_id, "edge-a");
+    assert_eq!(opened.expires_at_secs, 1_234);
+    assert_eq!(opened.preferred_family, CarrierBinding::D2EncryptedDatagram);
+    assert_eq!(opened.evidence, MaskedFallbackEvidence::ObservedSafe);
+    assert!(!opened.allow_shadow_lane);
+
+    let wrong_context = MaskedFallbackContext {
+        server_id: "edge-a".to_string(),
+        public_route: PublicRouteHint("d1:198.51.100.10:51820".to_string()),
+        path_profile: PathProfile::unknown(),
+    };
+    let err = protector
+        .open_masked_fallback_ticket(&sealed, &wrong_context)
+        .unwrap_err();
     assert!(matches!(err, CryptoError::Aead));
 }
 

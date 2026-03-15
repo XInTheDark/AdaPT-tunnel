@@ -1,11 +1,12 @@
 use super::*;
+use apt_types::PublicRouteHint;
 
 pub(super) fn client_session_request(
     config: &ResolvedClientConfig,
     persistent_state: &ClientPersistentState,
     preferred_carrier: CarrierBinding,
     supported_carriers: &[CarrierBinding],
-    resume_ticket: Option<SealedEnvelope>,
+    masked_fallback_ticket: Option<SealedEnvelope>,
     now: u64,
 ) -> ClientSessionRequest {
     let mut request = ClientSessionRequest::conservative(config.endpoint_id.clone(), now);
@@ -13,12 +14,16 @@ pub(super) fn client_session_request(
     request.supported_carriers = supported_carriers.to_vec();
     request.mode = config.mode;
     request.policy_flags.allow_hybrid_pq = config.session_policy.allow_hybrid_pq;
+    request.public_route_hint = persistent_state
+        .active_network_profile()
+        .map(|profile| profile.context.public_route.clone())
+        .unwrap_or_else(|| PublicRouteHint(config.endpoint_id.as_str().to_string()));
     request.path_profile = admission_path_profile(
         persistent_state
             .active_network_profile()
             .map(|profile| &profile.normality),
     );
-    request.resume_ticket = resume_ticket;
+    request.masked_fallback_ticket = masked_fallback_ticket;
     request
 }
 

@@ -105,7 +105,7 @@ pub struct AdmissionServerSecrets {
     pub static_keypair: StaticKeypair,
     /// Cookie protection key.
     pub cookie_key: [u8; 32],
-    /// Resumption ticket protection key.
+    /// Ticket protection key.
     pub ticket_key: [u8; 32],
 }
 
@@ -141,9 +141,9 @@ pub struct AdmissionConfig {
     pub tunnel_mtu: u16,
     /// Rekey limits.
     pub rekey_limits: RekeyLimits,
-    /// Whether to issue resumption tickets.
+    /// Whether to issue sealed remembered-safe tickets.
     pub issue_resumption_tickets: bool,
-    /// Lifetime of new resumption tickets.
+    /// Lifetime of new remembered-safe tickets.
     pub ticket_lifetime_secs: u64,
 }
 
@@ -191,8 +191,8 @@ pub struct EstablishedSession {
     pub tunnel_mtu: u16,
     /// Rekey limits.
     pub rekey_limits: RekeyLimits,
-    /// Optional fresh resumption ticket.
-    pub resume_ticket: Option<SealedEnvelope>,
+    /// Optional fresh masked fallback ticket.
+    pub masked_fallback_ticket: Option<SealedEnvelope>,
     /// Optional client identity surfaced inside the encrypted Noise payload.
     pub client_identity: Option<String>,
     /// Optional client static public key observed during the Noise handshake.
@@ -367,28 +367,50 @@ impl AdmissionServer {
         Ok(bincode::serialize(payload)?)
     }
 
-    pub(super) fn issue_ticket(
+    pub(super) fn open_masked_fallback_ticket(
         &self,
-        identity: &CredentialIdentity,
-        chosen_carrier: CarrierBinding,
+        envelope: &SealedEnvelope,
+        active_binding: CarrierBinding,
+        public_route_hint: &PublicRouteHint,
         path_profile: PathProfile,
-        resume_secret: [u8; 32],
+        now_secs: u64,
+    ) -> Result<bool, AdmissionError> {
+        let context = MaskedFallbackContext {
+            server_id: self.config.endpoint_id.to_string(),
+            public_route: public_route_hint.clone(),
+            path_profile,
+        };
+        let ticket = self
+            .ticket_protector
+            .open_masked_fallback_ticket(envelope, &context)?;
+        Ok(ticket.expires_at_secs > now_secs && ticket.preferred_family == active_binding)
+    }
+
+    pub(super) fn issue_masked_fallback_ticket(
+        &self,
+        chosen_carrier: CarrierBinding,
+        public_route_hint: &PublicRouteHint,
+        path_profile: PathProfile,
         now_secs: u64,
     ) -> Result<Option<SealedEnvelope>, AdmissionError> {
         if !self.config.issue_resumption_tickets {
             return Ok(None);
         }
-        let ticket = ResumeTicket {
-            credential_label: match identity {
-                CredentialIdentity::SharedDeployment => "shared-deployment".to_string(),
-                CredentialIdentity::User(user_id) => format!("user:{user_id}"),
-            },
-            server_id: self.config.endpoint_id.to_string(),
-            expires_at_secs: now_secs + self.config.ticket_lifetime_secs,
-            last_successful_carrier: chosen_carrier,
-            last_path_profile: path_profile,
-            resume_secret,
+        let evidence = match path_profile.path {
+            apt_types::PathClass::Stable => MaskedFallbackEvidence::ObservedStable,
+            _ => MaskedFallbackEvidence::ObservedSafe,
         };
-        Ok(Some(self.ticket_protector.seal(&ticket)?))
+        let context = MaskedFallbackContext {
+            server_id: self.config.endpoint_id.to_string(),
+            public_route: public_route_hint.clone(),
+            path_profile,
+        };
+        Ok(Some(self.ticket_protector.seal_masked_fallback_ticket(
+            &context,
+            now_secs + self.config.ticket_lifetime_secs,
+            chosen_carrier,
+            evidence,
+            false,
+        )?))
     }
 }
