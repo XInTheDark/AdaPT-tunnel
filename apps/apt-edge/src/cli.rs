@@ -45,6 +45,15 @@ pub(super) struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub(super) enum UtilsCommand {
+    /// Install or refresh the systemd startup service for an existing server config.
+    InstallSystemdService {
+        /// Path to the server config created by `apt-edge init`.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Use defaults for any missing values instead of prompting.
+        #[arg(long, default_value_t = false)]
+        yes: bool,
+    },
     /// Enable or refresh the D2 QUIC carrier on an existing server config.
     EnableD2 {
         /// Path to the server config created by `apt-edge init`.
@@ -176,6 +185,7 @@ pub(super) enum Command {
         mode: Option<CliRuntimeMode>,
     },
     /// Operator utilities and maintenance helpers.
+    #[command(alias = "util")]
     Utils {
         #[command(subcommand)]
         command: UtilsCommand,
@@ -186,4 +196,47 @@ pub(super) enum Command {
         #[arg(long)]
         out_dir: PathBuf,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_install_systemd_service_utils_command() {
+        let cli = Cli::try_parse_from([
+            "apt-edge",
+            "utils",
+            "install-systemd-service",
+            "--config",
+            "/etc/adapt/server.toml",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Command::Utils {
+                command: UtilsCommand::InstallSystemdService { config, yes },
+            } => {
+                assert_eq!(config, Some(PathBuf::from("/etc/adapt/server.toml")));
+                assert!(!yes);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_util_alias_for_utils_command() {
+        let cli =
+            Cli::try_parse_from(["apt-edge", "util", "install-systemd-service", "--yes"]).unwrap();
+
+        match cli.command {
+            Command::Utils {
+                command: UtilsCommand::InstallSystemdService { config, yes },
+            } => {
+                assert_eq!(config, None);
+                assert!(yes);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
 }

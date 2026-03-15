@@ -49,7 +49,7 @@ This guided command creates:
 - `/etc/adapt/server.toml` by default
 - the server key files
 - a `bundles/` directory for single-file client bundles
-- optionally, a boot-persistent `systemd` service when you say yes to the startup prompt or pass `--install-systemd-service`
+- optionally, a boot-persistent `systemd` service when you say yes to the startup prompt, pass `--install-systemd-service`, or later run `apt-edge utils install-systemd-service`
 
 #### 2) Create a ready-to-use client bundle
 
@@ -79,7 +79,7 @@ sudo apt-edge revoke-client --config /etc/adapt/server.toml --name laptop
 sudo apt-edge start
 ```
 
-If you enable the startup-service option during `apt-edge init`, the command also writes `/etc/systemd/system/apt-edge.service`, enables it, and starts it immediately. In that case, you can manage it with:
+If you enable the startup-service option during `apt-edge init`, the command also writes `/etc/systemd/system/apt-edge.service`, enables it, and starts it immediately. If you skip that during setup, you can install or refresh the same unit later with `apt-edge utils install-systemd-service --config /etc/adapt/server.toml`. In either case, you can manage it with:
 
 ```bash
 sudo systemctl status apt-edge
@@ -157,7 +157,7 @@ sudo apt-edge add-client --config /etc/adapt/server.toml --name laptop --auth pe
 sudo apt-edge start
 ```
 
-If you want the server to come back automatically after reboot, answer `y` to the startup-service prompt during `apt-edge init` or pass `--install-systemd-service`.
+If you want the server to come back automatically after reboot, answer `y` to the startup-service prompt during `apt-edge init`, pass `--install-systemd-service`, or later run `apt-edge utils install-systemd-service --config /etc/adapt/server.toml`.
 
 ### On the client
 
@@ -234,6 +234,14 @@ Useful options:
 - `--config` — server config path
 - `--d2-bind` — UDP listen address for the `D2` QUIC carrier
 - `--d2-public-endpoint` — client-reachable `D2` endpoint, usually `host:443`
+- `--yes` — skip prompts for missing values
+
+#### `apt-edge utils install-systemd-service`
+Install or refresh `/etc/systemd/system/apt-edge.service` for an existing server config.
+
+Useful options:
+
+- `--config` — server config path
 - `--yes` — skip prompts for missing values
 
 #### `apt-edge start`

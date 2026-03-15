@@ -398,6 +398,36 @@ pub(super) fn enable_d2_for_server(
     Ok(())
 }
 
+pub(super) fn install_systemd_service_for_server(config: Option<PathBuf>, yes: bool) -> CliResult {
+    let config_path = match config {
+        Some(path) => path,
+        None => match find_server_config() {
+            Some(path) => path,
+            None if yes => {
+                return Err(
+                    "could not find a server config; pass --config or run `apt-edge init` first"
+                        .into(),
+                );
+            }
+            None => prompt_path("Server config path", Some("/etc/adapt/server.toml"))?,
+        },
+    };
+    let _server_config = ServerConfig::load(&config_path)?;
+    let startup_service = install_and_enable_systemd_service(&config_path)?;
+
+    println!("\nStartup service installed or refreshed.\n");
+    println!("Validated server config:");
+    println!("  • {}", config_path.display());
+    println!("Systemd unit:");
+    println!("  • {}", startup_service.service_name);
+    println!("  • {}", startup_service.service_path.display());
+    println!("\nThe service has been enabled and started/restarted immediately.");
+    println!("Manage it with:");
+    println!("  sudo systemctl status {}", startup_service.service_name);
+    println!("  sudo journalctl -u {} -f", startup_service.service_name);
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 struct D2Material {
     bind: SocketAddr,
