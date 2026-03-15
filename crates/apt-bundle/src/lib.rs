@@ -1,6 +1,8 @@
 //! Single-file client bundle support for the APT operator/client CLIs.
 #![allow(missing_docs)]
 
+mod import;
+
 use apt_runtime::{ClientConfig, Mode, RuntimeCarrierPreference, SessionPolicy};
 use apt_types::AuthProfile;
 use ipnet::IpNet;
@@ -21,6 +23,11 @@ const DEFAULT_ZSTD_LEVEL: i32 = 9;
 
 pub const CLIENT_BUNDLE_EXTENSION: &str = "aptbundle";
 pub const DEFAULT_CLIENT_BUNDLE_FILE_NAME: &str = "client.aptbundle";
+
+pub use self::import::{
+    protect_client_bundle_for_import, unprotect_client_bundle_from_import, ClientBundleImportError,
+    CLIENT_BUNDLE_IMPORT_KEY_LEN,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientBundle {

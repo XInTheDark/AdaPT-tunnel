@@ -12,8 +12,10 @@ use std::{
 };
 use tracing_subscriber::{fmt, EnvFilter};
 
+mod import;
 mod override_config;
 
+use self::import::import_client_bundle;
 use self::override_config::apply_optional_client_override;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -39,7 +41,7 @@ impl From<CliCarrier> for RuntimeCarrierPreference {
 #[command(
     name = "apt-client",
     about = "APT VPN client",
-    long_about = "APT VPN client. The usual workflow is: install the single-file client bundle into `/etc/adapt/client.aptbundle`, then run `apt-client up`."
+    long_about = "APT VPN client. Import a temporary bundle with `apt-client import` or install a single-file bundle into `/etc/adapt/client.aptbundle`, then run `apt-client up`."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -48,6 +50,18 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Import a client bundle from a temporary host-provided import endpoint.
+    Import {
+        /// Temporary host:port displayed by `apt-edge add-client`.
+        #[arg(long)]
+        server: String,
+        /// Temporary import key displayed by `apt-edge add-client`.
+        #[arg(long)]
+        key: String,
+        /// Path where the imported bundle should be stored.
+        #[arg(long)]
+        bundle: Option<PathBuf>,
+    },
     /// Start the VPN using a client config bundle.
     #[command(alias = "connect", alias = "start", alias = "run")]
     Up {
@@ -80,6 +94,11 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().command {
+        Command::Import {
+            server,
+            key,
+            bundle,
+        } => import_client_bundle(server, key, bundle).await?,
         Command::Up {
             bundle,
             mode,

@@ -13,7 +13,7 @@
 ## Current milestone
 
 - **Milestone:** Phase 3 adaptive/persona/local-normality rewrite
-- **Status:** multi-profile persistence/context discovery, runtime hot-path CPU hardening, bounded histogram local-normality, adaptive keepalive learning, continuous numeric-mode persona/scheduler shaping, and the mode-only controller/admission negotiation rewrite are now shipped
+- **Status:** multi-profile persistence/context discovery, runtime hot-path CPU hardening, bounded histogram local-normality, adaptive keepalive learning, continuous numeric-mode persona/scheduler shaping, the mode-only controller/admission negotiation rewrite, and the temporary client-bundle import workflow are now shipped
 - **Primary remaining goal:** finish the spec-credible adaptive runtime by:
   - validating real-traffic behavior and CPU/latency envelopes at the three reference points
 - **Performance intent:**
@@ -23,11 +23,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** mode-only controller + admission negotiation rewrite
-- **Latency impact:** control-plane overhead remains negligible; runtime shaping now follows the controller’s numeric current mode instead of a coarse bucketed state, so new/untrusted profiles may begin slightly more conservative before decaying toward the negotiated baseline
-- **Bandwidth impact:** no admission bandwidth change of note; adaptive padding/cover decisions now follow numeric controller output directly instead of legacy preset remapping
-- **CPU impact:** negligible steady-state controller overhead; per-tick/controller bookkeeping remains trivial relative to tunnel I/O
-- **Notes:** admission `C0/S1/S3` negotiation is now numeric-mode-based end-to-end, `SessionPolicy` no longer carries runtime mode presets, controller transitions are explicit numeric adjustments from richer signals, fallback ordering now layers explicit preference + remembered profile + persona + conservative ordering, and live shaping/keepalive behavior consumes the controller’s numeric mode rather than converting through `speed/balanced/stealth`
+- **Chunk:** temporary client-bundle import workflow
+- **Latency impact:** no tunnel dataplane impact; import is an operator/bootstrap-time helper only
+- **Bandwidth impact:** one extra encrypted bundle transfer during provisioning/import only; no steady-state tunnel bandwidth change
+- **CPU impact:** negligible; short-lived bundle encryption and one-shot TCP serving/import are trivial compared with live tunnel work
+- **Notes:** `apt-edge add-client` now writes the local `.aptbundle` as before but also starts a short-lived one-shot import helper by default, prints a temporary `apt-client import --server ... --key ...` command, and still preserves manual bundle-copy fallback; bundle import protection lives in a focused shared `apt-bundle` module so secret-bearing bundle contents are not served in plaintext
 
 ## Numeric mode model
 
@@ -65,12 +65,14 @@ The Phase 3 end state remains **`mode`-only** across operator-facing config, CLI
 | Chunk | Status | Scope | Estimated impact |
 |---|---|---|---|
 | Planning/docs maintenance | active | Keep `PLAN.md` current after each shipped chunk; keep assumptions, scope, status, and expected performance notes aligned with the live code | No runtime impact |
+| Bundle import workflow validation | pending | Smoke-test `apt-edge add-client` temporary import handoff plus `apt-client import` install behavior on real hosts, including manual fallback when the temporary port is unreachable | Provisioning-only cost |
 | QA/perf validation | pending | Real-traffic checks at `mode=0`, `mode=50`, and `mode=100`, plus workspace/integration coverage for adaptive behavior | Validation-only cost |
 
 ## Next tasks
 
-1. Run workspace tests plus mode-by-mode smoke/perf checks, with special attention to CPU under `mode=0`, then update this file again with the next shipped chunk and impact note.
-2. Record lightweight real-traffic QA results for latency/throughput/CPU at `mode=0`, `mode=50`, and `mode=100`, and confirm that the shipped numeric controller behavior stays within the intended envelopes.
+1. Smoke-test the new temporary bundle import flow end-to-end (`apt-edge add-client` → printed import command → `apt-client import` → `apt-client up`) and verify the manual bundle-copy fallback still works when desired.
+2. Run workspace tests plus mode-by-mode smoke/perf checks, with special attention to CPU under `mode=0`, then update this file again with the next shipped chunk and impact note.
+3. Record lightweight real-traffic QA results for latency/throughput/CPU at `mode=0`, `mode=50`, and `mode=100`, and confirm that the shipped numeric controller behavior stays within the intended envelopes.
 
 ## Detailed implementation requirements for remaining chunks
 

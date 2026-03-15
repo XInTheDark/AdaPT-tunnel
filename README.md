@@ -21,7 +21,7 @@ Implemented today:
 - client runtime with conservative `D1 -> D2 -> S1` fallback when the optional carriers are configured (`apt-client up`)
 - guided server initialization (`apt-edge init`)
 - guided D2 enablement / certificate generation for existing deployments (`apt-edge utils enable-d2`)
-- shared/per-user client bundle provisioning and revocation (`apt-edge add-client`, `apt-edge revoke-client`)
+- shared/per-user client bundle provisioning, temporary import handoff, and revocation (`apt-edge add-client`, `apt-client import`, `apt-edge revoke-client`)
 - TUN interface wiring, route/NAT orchestration, and best-effort pushed DNS automation
 - authenticated path revalidation and sparse standby probing
 
@@ -63,7 +63,8 @@ This command:
 - authorizes the client in `server.toml`
 - defaults to a dedicated per-user admission key in the guided flow
 - generates the client static identity
-- writes a single `.aptbundle` file you can copy to the device
+- writes a single `.aptbundle` file for manual fallback
+- starts a short-lived temporary import service and prints an `apt-client import` command plus one-time key
 
 If you need the older shared-deployment admission model for a specific client, pass `--auth shared` instead.
 
@@ -88,7 +89,16 @@ sudo journalctl -u apt-edge -f
 
 ### Client flow
 
-Copy the generated client bundle file into `/etc/adapt/client.aptbundle` on the client device, then run:
+The easiest flow is to run the one-time import command that `apt-edge add-client` prints, for example:
+
+```bash
+sudo apt-client import --server vpn.example.com:40123 --key <temporary-key>
+sudo apt-client up
+```
+
+That imports the generated bundle into `/etc/adapt/client.aptbundle` by default.
+
+If you prefer the manual fallback path, copy the generated client bundle file into `/etc/adapt/client.aptbundle` on the client device, then run:
 
 ```bash
 sudo apt-client up
@@ -161,7 +171,7 @@ If you want the server to come back automatically after reboot, answer `y` to th
 
 ### On the client
 
-After copying the generated bundle file into `/etc/adapt/client.aptbundle` on the client:
+Run the one-time `apt-client import --server ... --key ...` command shown by `apt-edge add-client`, then:
 
 ```bash
 sudo apt-client up
@@ -206,6 +216,10 @@ Useful options:
 - `--name` — client name
 - `--auth shared|per-user` — choose the admission model; `per-user` is the recommended default
 - `--out-file` — where to write the single-file client bundle
+- `--no-import` — skip the temporary import service and only write the local bundle file
+- `--import-host` — override the public hostname/IP shown in the temporary import command
+- `--import-bind` — local bind address for the temporary import service (default `0.0.0.0:0`)
+- `--import-timeout-secs` — lifetime of the temporary import service
 - `--client-ip` — manually choose the client tunnel IP
 - `--client-ipv6` — manually choose the client tunnel IPv6 when the server IPv6 tunnel is enabled
 - `--yes` — skip prompts for missing values
@@ -253,6 +267,15 @@ Useful option:
 - `--mode 0..100` — one-shot numeric mode override (`0` = speed, `50` = balanced, `100` = stealth)
 
 ### `apt-client`
+
+#### `apt-client import`
+Import a client bundle from the short-lived temporary endpoint printed by `apt-edge add-client`.
+
+Useful options:
+
+- `--server` — temporary `host:port` endpoint printed by `apt-edge add-client`
+- `--key` — one-time temporary import key printed by `apt-edge add-client`
+- `--bundle` — optional custom path where the imported single-file bundle should be written
 
 #### `apt-client up`
 Start the VPN using a generated client bundle.

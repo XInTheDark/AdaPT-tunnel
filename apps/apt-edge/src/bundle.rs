@@ -7,6 +7,10 @@ pub(super) fn add_client(
     name: Option<String>,
     auth: Option<CliAuthProfile>,
     out_file: Option<PathBuf>,
+    no_import: bool,
+    import_host: Option<String>,
+    import_bind: Option<SocketAddr>,
+    import_timeout_secs: u64,
     client_ip: Option<Ipv4Addr>,
     client_ipv6: Option<Ipv6Addr>,
     yes: bool,
@@ -145,6 +149,25 @@ pub(super) fn add_client(
             config: client_config,
         },
     )?;
+    let import_offer = if no_import {
+        None
+    } else {
+        match crate::import::spawn_client_bundle_import_offer(
+            &bundle_path,
+            &server_config.public_endpoint,
+            import_host.as_deref(),
+            import_bind,
+            import_timeout_secs,
+        ) {
+            Ok(offer) => Some(offer),
+            Err(error) => {
+                eprintln!(
+                    "warning: temporary import service could not be started; falling back to local bundle copy instructions: {error}"
+                );
+                None
+            }
+        }
+    };
 
     println!("\nClient bundle created.\n");
     println!("Updated server config:");
@@ -156,7 +179,29 @@ pub(super) fn add_client(
         println!("Assigned tunnel IPv6: {client_ipv6}");
     }
     println!("Admission profile: {}", auth_profile_label(auth_profile));
-    println!("\nWhat to do next:");
+    if let Some(import_offer) = import_offer {
+        println!("\nTemporary client import:");
+        println!("  • endpoint: {}", import_offer.endpoint);
+        println!("  • temporary key: {}", import_offer.temporary_key);
+        println!("  • expires in: {} seconds", import_offer.timeout_secs);
+        println!("  • client command:");
+        println!(
+            "     sudo apt-client import --server {} --key {}",
+            import_offer.endpoint, import_offer.temporary_key
+        );
+        println!(
+            "     # or specify a custom install path with --bundle /path/to/{}.aptbundle",
+            name
+        );
+        println!(
+            "     # if this host is behind a firewall/NAT, make sure port {} is reachable",
+            import_offer
+                .endpoint
+                .rsplit_once(':')
+                .map_or_else(|| "?".to_string(), |(_, port)| port.to_string())
+        );
+    }
+    println!("\nManual fallback:");
     println!("  1. Copy this single bundle file to the client device:");
     println!("     {}", bundle_path.display());
     println!("  2. Recommended install path on the client:");

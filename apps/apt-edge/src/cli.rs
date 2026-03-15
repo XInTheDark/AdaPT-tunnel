@@ -1,4 +1,5 @@
 use super::*;
+use crate::import::DEFAULT_IMPORT_TIMEOUT_SECS;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub(super) enum CliAuthProfile {
@@ -19,7 +20,7 @@ impl From<CliAuthProfile> for AuthProfile {
 #[command(
     name = "apt-edge",
     about = "APT VPN server",
-    long_about = "APT VPN server. Use `init` to create a server config, `add-client` to generate ready-to-use single-file client bundles, and `start` to run the server."
+    long_about = "APT VPN server. Use `init` to create a server config, `add-client` to generate ready-to-use single-file client bundles plus an optional temporary import command, and `start` to run the server."
 )]
 pub(super) struct Cli {
     #[command(subcommand)]
@@ -127,6 +128,18 @@ pub(super) enum Command {
         /// Path where the single-file client bundle should be written.
         #[arg(long)]
         out_file: Option<PathBuf>,
+        /// Disable the short-lived temporary import service and only write the local bundle file.
+        #[arg(long, default_value_t = false)]
+        no_import: bool,
+        /// Public hostname or IP that clients should use for the temporary import service.
+        #[arg(long)]
+        import_host: Option<String>,
+        /// Local bind address for the temporary import service. Defaults to 0.0.0.0:0.
+        #[arg(long)]
+        import_bind: Option<SocketAddr>,
+        /// Lifetime of the temporary import service in seconds.
+        #[arg(long, default_value_t = DEFAULT_IMPORT_TIMEOUT_SECS)]
+        import_timeout_secs: u64,
         /// Specific client tunnel IP to assign. If omitted, the next free IP is chosen.
         #[arg(long)]
         client_ip: Option<Ipv4Addr>,
@@ -166,6 +179,18 @@ pub(super) enum Command {
         /// Override the numeric mode for this launch only (0 = speed, 100 = stealth).
         #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
         mode: Option<u8>,
+    },
+    /// Hidden helper used to serve a one-shot encrypted client bundle import.
+    #[command(hide = true)]
+    ServeImport {
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        bind: SocketAddr,
+        #[arg(long)]
+        key: String,
+        #[arg(long, default_value_t = DEFAULT_IMPORT_TIMEOUT_SECS)]
+        timeout_secs: u64,
     },
     /// Operator utilities and maintenance helpers.
     Utils {

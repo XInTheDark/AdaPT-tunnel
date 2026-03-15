@@ -11,5 +11,6 @@ The older low-level deployment notes have been superseded by the user-friendly C
 
 - `apt-edge init`
 - `apt-edge add-client`
+- `apt-client import`
 - `apt-edge start`
 - `apt-client up`

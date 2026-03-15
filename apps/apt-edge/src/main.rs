@@ -21,6 +21,7 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 mod bundle;
 mod cli;
+mod import;
 mod init;
 mod start;
 mod startup;
@@ -29,6 +30,7 @@ mod support;
 use self::{
     bundle::{add_client, list_clients, revoke_client, write_server_keyset},
     cli::{Cli, CliAuthProfile, Command, UtilsCommand},
+    import::serve_client_bundle_import,
     init::{enable_d2_for_server, init_server, install_systemd_service_for_server},
     start::start_server,
     support::*,
@@ -91,13 +93,35 @@ async fn run() -> CliResult {
             name,
             auth,
             out_file,
+            no_import,
+            import_host,
+            import_bind,
+            import_timeout_secs,
             client_ip,
             client_ipv6,
             yes,
-        } => add_client(config, name, auth, out_file, client_ip, client_ipv6, yes)?,
+        } => add_client(
+            config,
+            name,
+            auth,
+            out_file,
+            no_import,
+            import_host,
+            import_bind,
+            import_timeout_secs,
+            client_ip,
+            client_ipv6,
+            yes,
+        )?,
         Command::ListClients { config } => list_clients(config)?,
         Command::RevokeClient { config, name, yes } => revoke_client(config, name, yes)?,
         Command::Start { config, mode } => start_server(config, mode).await?,
+        Command::ServeImport {
+            bundle,
+            bind,
+            key,
+            timeout_secs,
+        } => serve_client_bundle_import(bundle, bind, key, timeout_secs).await?,
         Command::Utils { command } => match command {
             UtilsCommand::InstallSystemdService { config, yes } => {
                 install_systemd_service_for_server(config, yes)?
