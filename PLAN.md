@@ -1,86 +1,106 @@
-# Client daemon / TUI / no-sudo client UX plan
+```
+# Phase 4 V2 Public-Session Stealth Rewrite Plan
 
 ## Purpose
 
-`PLAN.md` is the repository's living implementation plan for current and pending non-trivial work. It should stay forward-looking and track only:
+`PLAN.md` is the repository's canonical living implementation plan for current non-trivial work. It should stay forward-looking and track only:
 
 - the current milestone and status
 - active/pending implementation chunks
 - next tasks in expected execution order
 - explicit assumptions and non-goals
-- estimated latency / bandwidth / CPU impact notes per chunk
+- expected latency / bandwidth / CPU impact notes per chunk
 
 ## Current milestone
 
-- **Milestone:** privileged local client daemon + terminal dashboard + user-scoped default client install
-- **Status:** the core implementation is now shipped in code:
-  - new shared `apt-client-control` crate for local control protocol + `~/.adapt-tunnel` path helpers
-  - structured client runtime hooks/events in `apt-runtime`
-  - new privileged `apt-clientd` daemon with Unix-socket IPC, snapshots/events, reconnect supervision, and periodic latency sampling
-  - `apt-client up`, `apt-client test`, and `apt-client tui` now target the daemon instead of requiring a direct privileged runtime launch each time
-  - default bundle/import/state/override/socket paths now live under `~/.adapt-tunnel`
-  - no implicit `/etc/adapt` client bundle discovery remains in the new default path
-  - retriable runtime failures now schedule reconnect attempts automatically, including the reported AEAD/tunnel failure class
-  - release packaging/install scripts now include `apt-clientd` so installed client bundles can actually use `apt-client service install`
-  - daemon connect behavior now preserves the expected one-shot initial connect semantics: disconnect during `Connecting` cancels startup promptly, first-connect failures surface as errors instead of looping forever, and only post-establishment failures stay on the automatic reconnect path
-  - server-side carrier churn no longer crashes `apt-edge` when a stale D2/stream path loses its sender; those sends are now treated as soft path-loss conditions instead of fatal host errors
-  - macOS client DNS teardown now restores the prior resolver config and then refreshes resolver caches; route/DNS teardown failures now surface as warnings instead of failing silently
-- **Primary remaining goal:** validate the new daemon/service flow on real hosts and polish any behavior gaps found in end-to-end use
-- **UX intent:**
-  - one-time privileged setup is acceptable (`sudo apt-client service install`)
-  - normal daily use should be unprivileged (`apt-client import`, `apt-client up`, `apt-client test`, `apt-client tui`)
-  - the TUI is the first-class local wrapper; a GUI remains deferred
+- **Milestone:** Phase 4 v2 public-session stealth rewrite
+- **Status:** design reset started; the repository now treats the v1 outer transport model as technically functional but not strong enough to justify aggressive stealth claims
+- **Canonical design docs:**
+  - `SPEC_v2.md`
+  - `docs/ARCHITECTURE_V2.md`
+  - `docs/V2_ROADMAP.md`
+- **Primary remaining goal:** replace transport-centric camouflage with a public-session stealth architecture that keeps the secure inner core but makes the outer session behave like a real public service
+- **Implementation ordering:**
+  - Stage 1: hardening + honesty baseline
+  - Stage 2A: first public-session carrier baseline
+  - Stage 2B: second public-session carrier baseline
+  - Stage 3: cover compiler, masked fallback tickets, and indistinguishability-budget control
+- **Performance intent:**
+  - low-stealth / permissive operation should remain within the same practical order of magnitude as the corresponding public session baseline
+  - higher-stealth modes may reduce throughput and increase latency, but must do so through explicit bounded budgets rather than accidental regressions
+  - no phase should ship a new carrier with worse probe handling than the honest public service it is borrowing
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** local client daemon + TUI wrapper + `~/.adapt-tunnel` default client install
-- **Latency impact:** negligible steady-state dataplane impact; the daemon only adds local supervision/bookkeeping plus an optional periodic RTT probe while connected
-- **Bandwidth impact:** negligible steady-state tunnel impact; the only new routine network activity is the bounded latency probe when the daemon has a connected session
-- **CPU impact:** small persistent local-process overhead from the daemon while installed/running; the TUI itself is opt-in and only consumes local terminal/UI work when launched
-- **Notes:** mode/carrier/bundle changes currently apply by reconnecting through the daemon rather than mutating the live runtime in place
+- **Chunk:** v2 design reset docs
+- **Latency impact:** none yet; design-only
+- **Bandwidth impact:** none yet; design-only
+- **CPU impact:** none yet; design-only
+- **Notes:** the repository now has a concrete staged plan for replacing the current carrier model with public-session stealth carriers and retiring fake-decoy behaviour
+
+## Core v2 design rules
+
+- No visible AdaPT-specific admission handshake may appear on the public wire in v2 stealth carriers.
+- No fake decoy pages or toy probe strings. The public surface must be a real service with real semantics.
+- `D1` remains supported only as a low-stealth opaque fallback and must not be treated as the flagship stealth path.
+- `S1` and `D2` are redefined in v2 as public-session carrier families, not as thin wrappers around inner tunnel packets.
+- Fast lanes and datagram lanes are subordinate to an already-established public session and must never become the default first visible behaviour on hostile paths.
+- Any future stealth claim must be backed by the empirical harness, not only by reasoning from the code.
 
 ## Assumptions and non-goals
 
-- The default client root is `~/.adapt-tunnel`.
-- The default client bundle path is `~/.adapt-tunnel/client.aptbundle`.
-- The default daemon socket path is `~/.adapt-tunnel/clientd.sock`.
-- The default local override/state files stay next to the selected bundle.
-- No implicit `/etc/adapt` bundle discovery remains in the normal client flow.
-- Explicit legacy paths are still acceptable when the operator passes them directly (for example `--bundle /etc/adapt/client.aptbundle`).
-- One-time privileged installation of the daemon/service is in scope; removing all privileged platform operations is not, because TUN, routes, and DNS changes still require elevation.
-- The daemon remains a local wrapper/supervisor, not a remote control plane.
-- TUI-first is in scope; a desktop GUI is intentionally deferred.
+- Break-vNext is allowed for `D2`/`S1` wire behaviour, bundle/config schema, and public transport semantics.
+- `H1` remains deferred until the public-session baseline exists and the harness shows the first two families are credible.
+- Hybrid PQ remains deferred and continues to be rejected in the live runtime until separately planned.
+- AdaPT v2 is not an anonymity system.
+- AdaPT v2 is not expected to defeat a global adversary doing perfect long-window end-to-end correlation.
+- Self-contained same-host lab deployments may exist for convenience, but they must be documented as weaker camouflage than origin-backed deployments.
+- The current v1 outer carriers may be retained temporarily behind explicit legacy flags only when needed for migration/testing.
 
 ## Active / pending workstreams
 
-| Chunk | Status | Scope | Estimated impact |
+| Chunk | Status | Scope | Expected impact |
 |---|---|---|---|
-| Planning/docs maintenance | active | Keep `PLAN.md`, README/guides, and operator/client instructions aligned with the daemon-first client flow | No runtime impact |
-| Release packaging hotfix publication | active | Publish refreshed release assets so the installer bundle includes `apt-clientd`; verify future release/install flows match the daemon-first client architecture | Distribution-only cost |
-| Post-disconnect teardown validation | active | Reproduce and verify the reported macOS browser-profile hang after disconnect, with focus on resolver/cache cleanup and teardown logs | Brief best-effort resolver refresh on disconnect only |
-| Real-host daemon/service validation | pending | Smoke-test `apt-client service install|status|uninstall` and the resulting daemon behavior on actual Linux and macOS hosts | Validation-only cost |
-| End-to-end client UX validation | pending | Validate `apt-client import` → `apt-client up` / `apt-client tui` / `apt-client test` with the new `~/.adapt-tunnel` defaults and no daily sudo | Validation-only cost |
-| Reconnect/failure-path validation | pending | Confirm automatic recovery on real transient failures, especially AEAD/tunnel failure cases, and tune retry/backoff/logging only if needed | Temporary reconnect delay only during failures |
+| Planning/docs maintenance | active | Keep `PLAN.md`, `SPEC_v2.md`, and `docs/ARCHITECTURE_V2.md` aligned with live code and shipped scope | No runtime impact |
+| Stage 1 hardening | active | Disable legacy `S1` defaults, demote `D1`, remove toy decoys, add pre-auth deadlines/caps, and make transport availability explicit | Reduced attack surface; minor configuration churn |
+| Empirical harness | active | Add passive capture, active probe, retry-pattern, and timing/burst regression jobs for AdaPT and browser H2/H3 baselines | Validation-only cost; essential gate |
+| Runtime/module split | pending | Break oversized runtime/edge transport code into surface-focused modules before landing public-session carriers | No intentional runtime impact; reduces maintenance risk |
+| Hidden-upgrade core | pending | Refactor `apt-admission` so it owns logical hidden-upgrade capsules/tickets rather than a public-wire handshake format | Moderate implementation risk; core enabler |
+| First public-session carrier | pending | Ship the first honest public-session stealth carrier, recommended initial target: H2 API-sync carrier | Main v2 milestone; practical stealth uplift |
+| Second public-session carrier | pending | Ship the H3 public-session sibling carrier after the first baseline is stable | Major feature; higher protocol complexity |
+| Cover compiler and budget controller | pending | Add trace-compiled cover profiles, secret-seeded cover plans, masked fallback tickets, and indistinguishability budgets | High novelty; bounded runtime overhead |
 
 ## Next tasks
 
-1. Publish refreshed release assets so `curl ... install.sh | sudo bash` installs `apt-clientd` alongside `apt-client`, then confirm the release archive contents and installer behavior from a clean machine.
-2. Reproduce the reported macOS browser-profile hang around a full connect/disconnect cycle and confirm whether the new DNS/cache teardown removes the stale-loading symptom without regressing normal reconnect behavior.
-3. Smoke-test the one-time service install flow on Linux and macOS and confirm the daemon can be reached afterward through `~/.adapt-tunnel/clientd.sock` without sudo.
-4. Run an end-to-end client workflow with the new defaults: import a bundle into `~/.adapt-tunnel`, connect with `apt-client up`, inspect/change settings with `apt-client tui`, and run `apt-client test` against the daemon-managed session.
-5. Force or capture representative transient failures (including the reported AEAD/tunnel failure class when reproducible) and confirm the daemon reconnect loop behaves correctly, surfaces useful logs/state, and returns to `Connected` without manual intervention when the failure is temporary.
-6. After real-host validation, record any required follow-up polish here before starting a separate GUI discussion or broader client UX milestone.
+1. Update the runtime/config surface so legacy `S1` is no longer implicitly advertised, bundled, or selected by default.
+2. Add explicit pre-auth read/lifetime deadlines, connection caps, and low-cost validation ordering for every exposed transport path.
+3. Land the first version of the empirical harness covering passive wire image, retry ladders, active probes, and timing/burst regression against browser H2/H3 captures.
+4. Split the existing transport/runtime modules into surface-oriented components so v2 work does not grow existing oversized files.
+5. Choose the first public-session family to implement end-to-end. Recommended default: H2/TLS API-sync baseline before H3.
+6. Draft and then implement the hidden-upgrade capsule API and the structured v2 transport blocks for bundles/config.
 
-## Validation requirements for this milestone
+## Detailed implementation requirements for the first upcoming chunks
 
-Required before closing this milestone:
+### Stage 1 hardening acceptance
 
-- workspace tests stay green
-- `cargo run -p apt-client -- --help` and the new daemon/TUI/service help surfaces stay coherent
-- importing a bundle defaults to `~/.adapt-tunnel/client.aptbundle`
-- normal client usage does not require sudo after the one-time service install
-- the client no longer implicitly falls back to `/etc/adapt/client.aptbundle`
-- changing mode/carrier/bundle through the daemon/TUI reconnects cleanly and updates snapshots/events correctly
-- daemon snapshots expose session status, tx/rx counters, reconnect state, and RTT information
-- transient/retriable runtime failures schedule reconnect attempts automatically instead of leaving the client abruptly disconnected
-- terminal cleanup remains correct when the TUI exits normally or on error
+- Server does not advertise, start, or bundle legacy `S1` unless a legacy compatibility flag is explicitly enabled.
+- Client default selection is `auto`, not hardcoded `D1`.
+- Normal attempt order is: explicit operator pin if set, then remembered network preference, then the first configured public-session family, then `D1` only as remembered-safe or explicit fallback.
+- No shipped runtime path emits hardcoded fake HTTP decoy strings.
+- Every exposed pre-auth path has deadlines and bounded resource allocation.
+
+### Empirical harness acceptance
+
+- The harness captures and stores browser H2 and H3 baseline traces.
+- The harness captures current AdaPT `D1` and any remaining legacy carriers as a "known weaker baseline" for improvement tracking.
+- The harness exercises active probes and records whether the response matches honest public-service behaviour, silence, or a distinctive protocol failure.
+- No future stealth-facing phase is considered complete without a harness delta report.
+
+### First public-session carrier acceptance
+
+- A strict end-to-end hidden upgrade succeeds inside a real public-service session.
+- An unauthenticated client can still use the public service normally.
+- Invalid or probing clients see ordinary public-service semantics rather than AdaPT-specific failures.
+- No AdaPT-specific header, length prefix, or explicit carrier negotiation is exposed on the public wire.
+- The client and server derive the same cover plan without negotiating that plan explicitly on the wire.
+```
