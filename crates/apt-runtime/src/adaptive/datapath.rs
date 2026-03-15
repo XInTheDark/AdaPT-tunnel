@@ -14,6 +14,7 @@ pub(crate) struct AdaptiveRuntimeConfig {
 pub struct AdaptiveDatapath {
     pub(super) persona_seed: [u8; 32],
     pub(super) chosen_carrier: CarrierBinding,
+    pub(super) operator_mode: Mode,
     pub(super) allow_speed_first_by_policy: bool,
     pub(super) controller: PolicyController,
     pub(super) persona: PersonaProfile,
@@ -24,6 +25,7 @@ pub struct AdaptiveDatapath {
     pub(super) last_policy_observation_secs: u64,
     pub(super) last_send_millis: Option<u64>,
     pub(super) last_recv_millis: Option<u64>,
+    pub(super) idle_resume_until_millis: Option<u64>,
     pub(super) observations_since_path_refresh: u16,
     pub(super) session_started_millis: u64,
     pub(super) session_outbound_bytes: u64,
@@ -53,6 +55,7 @@ impl AdaptiveDatapath {
         let persona = super::shaping::generate_persona(
             chosen_carrier,
             persona_seed,
+            runtime_config.operator_mode,
             controller.current_mode,
             path_profile,
             remembered_profile.clone(),
@@ -60,6 +63,7 @@ impl AdaptiveDatapath {
         let mut state = Self {
             persona_seed,
             chosen_carrier,
+            operator_mode: runtime_config.operator_mode,
             allow_speed_first_by_policy: runtime_config.allow_speed_first_by_policy,
             controller,
             persona,
@@ -76,6 +80,7 @@ impl AdaptiveDatapath {
             last_policy_observation_secs: now_secs,
             last_send_millis: None,
             last_recv_millis: None,
+            idle_resume_until_millis: None,
             observations_since_path_refresh: 0,
             session_started_millis: now_secs.saturating_mul(1_000),
             session_outbound_bytes: 0,
@@ -99,6 +104,7 @@ impl AdaptiveDatapath {
         let persona = super::shaping::generate_persona(
             chosen_carrier,
             persona_seed,
+            runtime_config.operator_mode,
             controller.current_mode,
             initial_path_profile,
             None,
@@ -106,6 +112,7 @@ impl AdaptiveDatapath {
         let mut state = Self {
             persona_seed,
             chosen_carrier,
+            operator_mode: runtime_config.operator_mode,
             allow_speed_first_by_policy: runtime_config.allow_speed_first_by_policy,
             controller,
             persona,
@@ -122,6 +129,7 @@ impl AdaptiveDatapath {
             last_policy_observation_secs: now_secs,
             last_send_millis: None,
             last_recv_millis: None,
+            idle_resume_until_millis: None,
             observations_since_path_refresh: 0,
             session_started_millis: now_secs.saturating_mul(1_000),
             session_outbound_bytes: 0,

@@ -46,7 +46,7 @@ fn keepalive_frames_include_cover_padding_when_sparse_cover_is_active() {
         0,
     );
     adaptive.persona.scheduler.keepalive_mode = KeepaliveMode::SparseCover;
-    let frames = adaptive.build_keepalive_frames(80);
+    let frames = adaptive.build_keepalive_frames(80, 10_000);
     assert!(matches!(frames.first(), Some(Frame::Ping)));
     assert!(frames
         .iter()
@@ -87,8 +87,11 @@ fn speed_first_mode_disables_cover_padding() {
         None,
         0,
     );
-    assert!(adaptive.maybe_padding_frame(128, false).is_none());
-    assert_eq!(adaptive.build_keepalive_frames(96), vec![Frame::Ping]);
+    assert!(adaptive.maybe_padding_frame(128, false, 10_000).is_none());
+    assert_eq!(
+        adaptive.build_keepalive_frames(96, 10_000),
+        vec![Frame::Ping]
+    );
     assert_eq!(adaptive.keepalive_mode(), KeepaliveMode::SuppressWhenActive);
 }
 
@@ -242,4 +245,70 @@ fn non_speed_modes_use_real_adaptive_keepalive_paths() {
     );
     stealth.persona.scheduler.keepalive_mode = KeepaliveMode::SparseCover;
     assert_eq!(stealth.keepalive_mode(), KeepaliveMode::SparseCover);
+}
+
+#[test]
+fn constrained_high_mode_prefers_smaller_bursts_and_packing_targets() {
+    let context = build_client_network_context("edge-a", "route-a");
+    let mut adaptive = AdaptiveDatapath::new_client(
+        CarrierBinding::S1EncryptedStream,
+        [53_u8; 32],
+        context,
+        None,
+        None,
+        runtime_config(PolicyMode::StealthFirst, Mode::STEALTH),
+        PathProfile::unknown(),
+        None,
+        0,
+    );
+    adaptive.path_profile.path = PathClass::Constrained;
+    adaptive.path_profile.mtu = apt_types::MtuClass::Small;
+    adaptive.persona.prefers_fragmentation = true;
+    adaptive.begin_outbound_data_send(10_000);
+    assert!(adaptive.burst_cap(CarrierBinding::S1EncryptedStream, 10_000) <= 2);
+    assert!(adaptive.soft_packing_target_bytes(CarrierBinding::S1EncryptedStream) < 900);
+}
+
+#[test]
+fn pacing_delay_respects_mode_caps() {
+    let context = build_client_network_context("edge-a", "route-a");
+    let mut balanced = AdaptiveDatapath::new_client(
+        CarrierBinding::S1EncryptedStream,
+        [59_u8; 32],
+        context.clone(),
+        None,
+        None,
+        runtime_config(PolicyMode::Balanced, Mode::BALANCED),
+        PathProfile::unknown(),
+        None,
+        0,
+    );
+    balanced.persona.scheduler.pacing_family = apt_types::PacingFamily::Smooth;
+    let interactive_delay =
+        balanced.pacing_delay_ms(&[Frame::IpData(vec![0_u8; 200])], 1, 0, 1_000);
+    assert!(interactive_delay <= 3);
+
+    let mut stealth = AdaptiveDatapath::new_client(
+        CarrierBinding::S1EncryptedStream,
+        [61_u8; 32],
+        context,
+        None,
+        None,
+        runtime_config(PolicyMode::StealthFirst, Mode::STEALTH),
+        PathProfile::unknown(),
+        None,
+        0,
+    );
+    stealth.persona.scheduler.pacing_family = apt_types::PacingFamily::Smooth;
+    let bulk_delay = stealth.pacing_delay_ms(
+        &[
+            Frame::IpData(vec![0_u8; 1_200]),
+            Frame::IpData(vec![0_u8; 1_200]),
+        ],
+        1,
+        0,
+        1_000,
+    );
+    assert!(bulk_delay <= 40);
+    assert!(bulk_delay > 0);
 }

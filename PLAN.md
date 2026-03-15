@@ -13,10 +13,10 @@
 ## Current milestone
 
 - **Milestone:** Phase 3 adaptive/persona/local-normality rewrite
-- **Status:** multi-profile persistence/context discovery, runtime hot-path CPU hardening, bounded histogram local-normality, and adaptive keepalive learning are now shipped
+- **Status:** multi-profile persistence/context discovery, runtime hot-path CPU hardening, bounded histogram local-normality, adaptive keepalive learning, and continuous numeric-mode persona/scheduler shaping are now shipped
 - **Primary remaining goal:** finish the spec-credible adaptive runtime by:
-  - wiring persona outputs into live scheduler/runtime behavior so numeric `mode` scales continuously rather than behaving like a renamed enum
   - upgrading the controller to consume richer signals and apply bounded `mode` adjustments
+  - validating real-traffic behavior and CPU/latency envelopes at the anchor modes
 - **Performance intent:**
   - mode near `0`: no meaningful throughput/latency penalty
   - mode around `50`: mild impact only
@@ -24,11 +24,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** adaptive keepalive learning
-- **Latency impact:** none
-- **Bandwidth impact:** neutral-to-lower on active and permissive paths; explicit keepalives are now suppressed on recent non-keepalive activity and non-zero modes can stretch toward learned idle intervals
-- **CPU impact:** negligible
-- **Notes:** runtime keepalives now use a dedicated adaptive controller instead of persona-sampled placeholder intervals, persist learned per-profile idle interval state, reuse learned targets across reconnects, learn only from idle-specific outcomes, and make non-zero `mode` values use a real `Adaptive`/`SparseCover` path while `mode=0` stays base-interval `SuppressWhenActive`
+- **Chunk:** persona/scheduler runtime wiring + soft packing
+- **Latency impact:** `mode=0` remains `~0 ms`; mid-range shaping now stays within the `0-3 ms` interactive / `0-10 ms` bulk design envelope; high-mode pacing is capped within the `0-10 ms` interactive / `0-40 ms` bulk envelope
+- **Bandwidth impact:** `mode=0` remains effectively `0%`; mid-range steady padding stays within `0-2%`; high-mode steady padding now tracks `2-8%` with bounded probationary increases during idle-resume / unbootstrapped phases
+- **CPU impact:** `mode=0` remains near the previous baseline; mid/high modes now pay bounded scheduling/shaping overhead in line with the planned `~0-2%` / `~1-5%` envelopes
+- **Notes:** persona generation now scales continuously from numeric `mode`, live runtime scheduling consumes pacing family / burst targets / packet-size bins / idle-resume ramp / keepalive style / fallback order / migration threshold / soft packing preferences, and stream-path batching/pacing now changes monotonically with `mode` instead of switching on old preset buckets
 
 ## Numeric mode model
 
@@ -65,59 +65,17 @@ The Phase 3 end state remains **`mode`-only** across operator-facing config, CLI
 | Chunk | Status | Scope | Estimated impact |
 |---|---|---|---|
 | Planning/docs maintenance | active | Keep `PLAN.md` current after each shipped chunk; keep assumptions, scope, status, and expected performance notes aligned with the live code | No runtime impact |
-| Persona/scheduler runtime wiring + soft packing | pending | Consume persona outputs live, derive shaping behavior continuously from numeric `mode`, and add soft MTU-aware packing behavior | `mode=0`: `~0` latency / `~0` padding / `~0-1%` CPU; `mode≈50`: `+0-3 ms` interactive / `+0-10 ms` bulk / `+0-2%` bandwidth / `+0-2%` CPU; `mode=100`: `+0-10 ms` interactive / `+0-40 ms` bulk / `+2-8%` steady bandwidth with up to `15-20%` during probation / `+1-5%` CPU |
 | Policy/controller follow-up | pending | Feed richer signals into the controller, remember per-profile carrier preference/permissiveness, and apply bounded numeric `mode` increases/decreases | Negligible runtime overhead |
 | QA/perf validation | pending | Real-traffic checks at `mode=0`, `mode=50`, and `mode=100`, plus workspace/integration coverage for adaptive behavior | Validation-only cost |
 
 ## Next tasks
 
-1. Rework persona generation and runtime scheduling so pacing, padding, keepalive style, soft packing, and idle-resume behavior scale continuously from numeric `mode` instead of coarse anchor buckets.
-2. Expand the controller to consume richer delivery/impairment/rebinding/idle-timeout signals and to adjust `mode` conservatively with remembered per-profile preferences.
-3. Run workspace tests plus mode-by-mode smoke/perf checks, with special attention to CPU under `mode=0`, then update this file again with the next shipped chunk and impact note.
+1. Expand the controller to consume richer delivery/impairment/rebinding/idle-timeout signals and to adjust `mode` conservatively with remembered per-profile preferences.
+2. Run workspace tests plus mode-by-mode smoke/perf checks, with special attention to CPU under `mode=0`, then update this file again with the next shipped chunk and impact note.
 
 ## Detailed implementation requirements for remaining chunks
 
-### 1) Persona / scheduler runtime rewrite
-
-Keep persona generation deterministic per session, but make the important outputs live in the runtime.
-
-Persona outputs that must be consumed:
-
-- `pacing_family`
-- `burst_size_target`
-- `packet_size_bins`
-- `padding_budget`
-- `keepalive_mode`
-- `idle_resume_ramp_ms`
-- `fallback_order`
-- `migration_threshold`
-- `prefers_fragmentation`
-
-`prefers_fragmentation` must remain soft packing / MTU behavior only:
-
-- smaller packing targets
-- less aggressive batching on constrained / small-MTU paths
-- no new tunnel wire fragmentation or reassembly format
-
-Runtime effects:
-
-- `pacing_family`
-  - Smooth: tiny inter-record delay only in balanced / high-mode paths
-  - Bursty: short grouped sends within burst cap
-  - Opportunistic: immediate send path
-- `idle_resume_ramp_ms`
-  - after long idle, temporarily cap first bursts and keep pacing gentle for the ramp window
-- `prefers_fragmentation`
-  - reduce per-record packing target and disable aggressive batching on constrained / small-MTU paths
-
-Hard performance caps:
-
-- speed end (`mode≈0`): `0 ms` deliberate added latency
-- mid-range (`mode≈50`): up to `3 ms` added interactive latency, up to `10 ms` bulk
-- stealth end (`mode≈100`): up to `10 ms` interactive, up to `40 ms` bulk
-- never exceed the repo's existing global scheduler latency budgets
-
-### 2) Policy / controller follow-up
+### 1) Policy / controller follow-up
 
 Keep the controller explicit and rule-based.
 
@@ -146,7 +104,7 @@ Carrier ordering must be:
 4. conservative binding order
 5. always filtered by actually enabled carriers
 
-### 3) QA / perf validation
+### 2) QA / perf validation
 
 Run lightweight real-traffic QA for all three anchor points (`mode=0`, `mode=50`, `mode=100`):
 

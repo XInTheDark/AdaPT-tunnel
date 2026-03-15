@@ -274,9 +274,9 @@ impl AdaptiveDatapath {
             .due(now_secs, self.persona.scheduler.keepalive_mode)
     }
 
-    pub fn build_keepalive_frames(&mut self, payload_hint: usize) -> Vec<Frame> {
+    pub fn build_keepalive_frames(&mut self, payload_hint: usize, now_millis: u64) -> Vec<Frame> {
         let mut frames = vec![Frame::Ping];
-        if let Some(padding) = self.maybe_padding_frame(payload_hint.max(64), true) {
+        if let Some(padding) = self.maybe_padding_frame(payload_hint.max(64), true, now_millis) {
             frames.push(padding);
         }
         frames

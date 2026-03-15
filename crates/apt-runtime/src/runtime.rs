@@ -62,6 +62,7 @@ mod d2;
 mod handshake;
 mod packets;
 mod pathio;
+mod scheduler;
 mod server;
 mod support;
 mod transport;
@@ -69,7 +70,7 @@ mod transport;
 #[cfg(test)]
 mod tests;
 
-use self::{d2::*, handshake::*, packets::*, pathio::*, support::*, transport::*};
+use self::{d2::*, handshake::*, packets::*, pathio::*, scheduler::*, support::*, transport::*};
 
 const DATAGRAM_BUFFER_SIZE: usize = 65_535;
 const PATH_VALIDATION_TIMEOUT_SECS: u64 = 10;

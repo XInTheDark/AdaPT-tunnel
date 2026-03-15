@@ -5,6 +5,7 @@ pub(super) async fn send_frames_on_client_path(
     endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
     encapsulation: TunnelEncapsulation,
+    adaptive: &AdaptiveDatapath,
     path: &ClientPathState,
     tunnel: &mut TunnelSession,
     frames: &[Frame],
@@ -20,9 +21,10 @@ pub(super) async fn send_frames_on_client_path(
         frames,
         now,
     ) {
+        maybe_apply_pacing_delay(adaptive, frames, 1, 0, now).await;
         return queue_path_payload(&path.sender, outer);
     }
-    for batch in plan_outbound_tunnel_batches(
+    let batches = plan_outbound_tunnel_batches(
         carriers,
         endpoint_id,
         outer_keys,
@@ -31,7 +33,10 @@ pub(super) async fn send_frames_on_client_path(
         tunnel,
         frames,
         now,
-    )? {
+    )?;
+    let batch_count = batches.len();
+    for (index, batch) in batches.into_iter().enumerate() {
+        maybe_apply_pacing_delay(adaptive, &batch, batch_count, index, now).await;
         let outer = encode_client_tunnel_packet_batch(
             carriers,
             endpoint_id,
@@ -68,6 +73,7 @@ pub(super) async fn send_frames_to_server_path(
         endpoint_id,
         &session.outer_keys,
         session.encapsulation,
+        Some(&session.adaptive),
         &path,
         binding,
         &mut session.tunnel,
@@ -86,6 +92,7 @@ pub(super) async fn send_frames_to_path_handle(
     endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
     encapsulation: TunnelEncapsulation,
+    adaptive: Option<&AdaptiveDatapath>,
     path: &PathHandle,
     binding: CarrierBinding,
     tunnel: &mut TunnelSession,
@@ -102,9 +109,12 @@ pub(super) async fn send_frames_to_path_handle(
         frames,
         now,
     ) {
+        if let Some(adaptive) = adaptive {
+            maybe_apply_pacing_delay(adaptive, frames, 1, 0, now).await;
+        }
         return send_outer_to_path(udp_socket, d2_peers, stream_peers, path, outer).await;
     }
-    for batch in plan_outbound_tunnel_batches(
+    let batches = plan_outbound_tunnel_batches(
         carriers,
         endpoint_id,
         outer_keys,
@@ -113,7 +123,12 @@ pub(super) async fn send_frames_to_path_handle(
         tunnel,
         frames,
         now,
-    )? {
+    )?;
+    let batch_count = batches.len();
+    for (index, batch) in batches.into_iter().enumerate() {
+        if let Some(adaptive) = adaptive {
+            maybe_apply_pacing_delay(adaptive, &batch, batch_count, index, now).await;
+        }
         let outer = encode_server_tunnel_packet_batch(
             carriers,
             endpoint_id,
@@ -127,6 +142,24 @@ pub(super) async fn send_frames_to_path_handle(
         send_outer_to_path(udp_socket, d2_peers, stream_peers, path, outer).await?;
     }
     Ok(())
+}
+
+async fn maybe_apply_pacing_delay(
+    adaptive: &AdaptiveDatapath,
+    frames: &[Frame],
+    batch_count: usize,
+    batch_index: usize,
+    now_secs: u64,
+) {
+    let delay_ms = adaptive.pacing_delay_ms(
+        frames,
+        batch_count,
+        batch_index,
+        now_secs.saturating_mul(1_000),
+    );
+    if delay_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(u64::from(delay_ms))).await;
+    }
 }
 
 async fn send_outer_to_path(

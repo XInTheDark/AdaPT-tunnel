@@ -15,11 +15,13 @@ pub(super) async fn handle_tun_packet(
     if let Some(destination) = extract_destination_ip(&packet) {
         if let Some(session_id) = sessions_by_tunnel_ip.get(&destination).copied() {
             if let Some(session) = sessions.get_mut(&session_id) {
+                let shaping_started_millis = now_millis();
                 let (frames, payload_bytes, burst_len) = collect_outbound_tun_frames(
                     packet,
                     tun_rx,
-                    &session.adaptive,
+                    &mut session.adaptive,
                     session.primary_path.binding,
+                    shaping_started_millis,
                 );
                 send_frames_to_server_path(
                     udp_socket,
@@ -114,6 +116,7 @@ pub(super) async fn run_tick(
                     &config.endpoint_id,
                     &session.outer_keys,
                     session.encapsulation,
+                    None,
                     &pending.handle,
                     pending.binding,
                     &mut session.tunnel,
@@ -127,7 +130,11 @@ pub(super) async fn run_tick(
         }
         let mut frames = session.tunnel.collect_due_control_frames(now);
         if session.adaptive.keepalive_due(now) {
-            frames.extend(session.adaptive.build_keepalive_frames(64));
+            frames.extend(
+                session
+                    .adaptive
+                    .build_keepalive_frames(64, now.saturating_mul(1_000)),
+            );
         }
         match session.tunnel.rekey_status(now) {
             RekeyStatus::SoftLimitReached => {

@@ -193,6 +193,7 @@ pub(super) async fn run_client_session_loop(
                                 &config.endpoint_id,
                                 &outer_keys,
                                 encapsulation,
+                                &adaptive,
                                 paths.get(&path_id).expect("path exists"),
                                 &mut tunnel,
                                 &response_frames,
@@ -260,20 +261,26 @@ pub(super) async fn run_client_session_loop(
             packet = tun_rx.recv() => {
                 match packet {
                     Some(packet) => {
-                        let Some(active_path) = paths.get(&active_path_id) else {
+                        let Some(active_binding) = paths.get(&active_path_id).map(|path| path.binding) else {
                             return Err(RuntimeError::Timeout("all transports closed"));
                         };
+                        let shaping_started_millis = now_millis();
                         let (frames, payload_bytes, burst_len) = collect_outbound_tun_frames(
                             packet,
                             &mut tun_rx,
-                            &adaptive,
-                            active_path.binding,
+                            &mut adaptive,
+                            active_binding,
+                            shaping_started_millis,
                         );
+                        let Some(active_path) = paths.get(&active_path_id) else {
+                            return Err(RuntimeError::Timeout("all transports closed"));
+                        };
                         send_frames_on_client_path(
                             carriers,
                             &config.endpoint_id,
                             &outer_keys,
                             encapsulation,
+                            &adaptive,
                             active_path,
                             &mut tunnel,
                             &frames,
@@ -389,6 +396,7 @@ pub(super) async fn run_client_session_loop(
                                     &config.endpoint_id,
                                     &outer_keys,
                                     encapsulation,
+                                    &adaptive,
                                     &path,
                                     &mut tunnel,
                                     &[Frame::PathChallenge {
@@ -447,7 +455,7 @@ pub(super) async fn run_client_session_loop(
                 }
                 let mut frames = tunnel.collect_due_control_frames(now);
                 if paths.contains_key(&active_path_id) && adaptive.keepalive_due(now) {
-                    frames.extend(adaptive.build_keepalive_frames(64));
+                    frames.extend(adaptive.build_keepalive_frames(64, now.saturating_mul(1_000)));
                 }
                 match tunnel.rekey_status(now) {
                     RekeyStatus::SoftLimitReached => {
@@ -473,6 +481,7 @@ pub(super) async fn run_client_session_loop(
                         &config.endpoint_id,
                         &outer_keys,
                         encapsulation,
+                        &adaptive,
                         active_path,
                         &mut tunnel,
                         &frames,
