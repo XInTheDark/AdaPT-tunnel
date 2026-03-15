@@ -35,8 +35,27 @@ pub(super) async fn handle_tun_packet(
                     &frames,
                     now_secs(),
                 )
-                .await?;
-                session.primary_path.last_send_secs = now_secs();
+                .await
+                .map_or_else(
+                    |error| {
+                        if is_path_sender_unavailable(&error) {
+                            warn!(
+                                session_id = ?session.session_id,
+                                path = ?session.primary_path.handle,
+                                binding = %session.primary_path.binding.as_str(),
+                                error = %error,
+                                "dropping outbound server packet because the active peer path is no longer writable"
+                            );
+                            Ok(())
+                        } else {
+                            Err(error)
+                        }
+                    },
+                    |_| {
+                        session.primary_path.last_send_secs = now_secs();
+                        Ok(())
+                    },
+                )?;
                 session
                     .adaptive
                     .record_outbound(payload_bytes, burst_len, now_millis());
@@ -166,8 +185,27 @@ pub(super) async fn run_tick(
                 &frames,
                 now,
             )
-            .await?;
-            session.primary_path.last_send_secs = now;
+            .await
+            .map_or_else(
+                |error| {
+                    if is_path_sender_unavailable(&error) {
+                        warn!(
+                            session_id = ?session.session_id,
+                            path = ?session.primary_path.handle,
+                            binding = %session.primary_path.binding.as_str(),
+                            error = %error,
+                            "skipping server keepalive/control send because the active peer path is no longer writable"
+                        );
+                        Ok(())
+                    } else {
+                        Err(error)
+                    }
+                },
+                |_| {
+                    session.primary_path.last_send_secs = now;
+                    Ok(())
+                },
+            )?;
             session
                 .adaptive
                 .record_outbound(payload_bytes, burst_len, now_millis());

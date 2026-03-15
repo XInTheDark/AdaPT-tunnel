@@ -215,7 +215,7 @@ async fn handle_server_decoded_packet(
     }
 
     if !response_frames.is_empty() {
-        send_frames_to_server_path(
+        if let Err(error) = send_frames_to_server_path(
             udp_socket,
             d2_peers,
             stream_peers,
@@ -227,7 +227,19 @@ async fn handle_server_decoded_packet(
             &response_frames,
             now,
         )
-        .await?;
+        .await
+        {
+            if !is_path_sender_unavailable(&error) {
+                return Err(error);
+            }
+            debug!(
+                session_id = ?session.session_id,
+                path = ?path,
+                binding = %binding.as_str(),
+                error = %error,
+                "dropping server response frames because the selected peer path is no longer writable"
+            );
+        }
     }
 
     Ok(())

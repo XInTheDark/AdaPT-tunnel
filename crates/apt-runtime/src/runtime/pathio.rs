@@ -211,3 +211,46 @@ pub(super) fn queue_path_payload(
             .map_err(|_| RuntimeError::InvalidConfig("stream path closed".to_string())),
     }
 }
+
+pub(super) fn is_path_sender_unavailable(error: &RuntimeError) -> bool {
+    matches!(
+        error,
+        RuntimeError::InvalidConfig(message)
+            if matches!(
+                message.as_str(),
+                "missing D2 peer sender"
+                    | "missing stream peer sender"
+                    | "datagram path closed"
+                    | "D2 path closed"
+                    | "stream path closed"
+            )
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_missing_or_closed_path_senders_as_soft_failures() {
+        assert!(is_path_sender_unavailable(&RuntimeError::InvalidConfig(
+            "missing D2 peer sender".to_string(),
+        )));
+        assert!(is_path_sender_unavailable(&RuntimeError::InvalidConfig(
+            "D2 path closed".to_string(),
+        )));
+        assert!(is_path_sender_unavailable(&RuntimeError::InvalidConfig(
+            "missing stream peer sender".to_string(),
+        )));
+        assert!(is_path_sender_unavailable(&RuntimeError::InvalidConfig(
+            "stream path closed".to_string(),
+        )));
+
+        assert!(!is_path_sender_unavailable(&RuntimeError::InvalidConfig(
+            "bad bundle".to_string(),
+        )));
+        assert!(!is_path_sender_unavailable(&RuntimeError::Timeout(
+            "live session"
+        )));
+    }
+}
