@@ -19,6 +19,7 @@ Implemented today:
 - first-cut persona, policy, and observability layers
 - combined server daemon runtime over `D1`, optional `D2`, and optional `S1` (`apt-edge start`)
 - client runtime with conservative `D1 -> D2 -> S1` fallback when the optional carriers are configured (`apt-client up`)
+- targeted client-side QA bring-up with tunnel ping, DNS/public-egress checks, and a download throughput probe (`apt-client test`)
 - guided server initialization (`apt-edge init`)
 - guided D2 enablement / certificate generation for existing deployments (`apt-edge utils enable-d2`)
 - shared/per-user client bundle provisioning, temporary import handoff, and revocation (`apt-edge add-client`, `apt-client import`, `apt-edge revoke-client`)
@@ -94,6 +95,8 @@ The easiest flow is to run the one-time import command that `apt-edge add-client
 ```bash
 sudo apt-client import --server vpn.example.com:40123 --key <temporary-key>
 sudo apt-client up
+# or run an automated QA pass that brings the tunnel up temporarily and tears it back down
+sudo apt-client test
 ```
 
 That imports the generated bundle into `/etc/adapt/client.aptbundle` by default.
@@ -171,10 +174,12 @@ If you want the server to come back automatically after reboot, answer `y` to th
 
 ### On the client
 
-Run the one-time `apt-client import --server ... --key ...` command shown by `apt-edge add-client`, then:
+Run the one-time `apt-client import --server ... --key ...` command shown by `apt-edge add-client`, then either connect normally or run the built-in QA pass:
 
 ```bash
 sudo apt-client up
+# or
+sudo apt-client test
 ```
 
 ## CLI reference
@@ -287,6 +292,25 @@ Useful option:
 - `--carrier auto|d1|d2|s1` — one-shot preferred-carrier override
 
 If omitted, the client tries common default locations first. It also auto-creates a blank optional override TOML next to the installed bundle so local client-only settings can be edited without changing the bundle itself.
+
+#### `apt-client test`
+Bring the tunnel up temporarily and run a lightweight QA pass. The command automatically disconnects after the checks finish.
+
+By default it always tests tunnel reachability with IPv4 ping, tries IPv6 ping when the session exposes an IPv6 tunnel address, and then runs DNS/public-egress/download checks when the active routes include a default route.
+
+Useful options:
+
+- `--bundle` — path to the single-file client bundle
+- `--mode 0..100` — one-shot numeric mode override for the QA run
+- `--carrier auto|d1|d2|s1` — one-shot preferred-carrier override for the QA run
+- `--connect-timeout-secs` — fail if the tunnel does not come up in time
+- `--ping-count` — number of ICMP probes per tunnel ping check
+- `--dns-host` — hostname used for the DNS resolution check
+- `--public-ip-url` — endpoint used for the public-egress-IP check
+- `--speedtest-url` — override the default download throughput URL
+- `--speedtest-bytes` — byte target for the default throughput endpoint
+- `--speedtest-timeout-secs` — timeout for the throughput probe
+- `--skip-dns`, `--skip-public-ip`, `--skip-speedtest` — disable specific checks
 
 ## GitHub release assets
 

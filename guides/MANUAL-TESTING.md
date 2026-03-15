@@ -2,6 +2,17 @@
 
 Use this after following `guides/DEPLOYMENT.md`.
 
+## 0. Optional automated QA pass
+
+Before walking through the manual checklist, you can run the built-in client QA helper:
+
+```bash
+sudo ./target/release/apt-client test
+```
+
+It brings the tunnel up temporarily, runs tunnel ping checks plus DNS/public-egress/download checks when full-tunnel routing is active, and then disconnects automatically. The manual steps below are still useful when you want deeper carrier-specific validation or more targeted debugging.
+
+
 ## 1. Handshake + tunnel bring-up
 
 Start the server:

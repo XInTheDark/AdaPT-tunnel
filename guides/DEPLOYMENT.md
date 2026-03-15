@@ -252,12 +252,19 @@ Then start the client using the default config location:
 sudo ./target/release/apt-client up
 ```
 
+For a quick automated QA pass instead of a long-lived session, you can also run:
+
+```bash
+sudo ./target/release/apt-client test
+```
+
 When the bundle is installed at `/etc/adapt/client.aptbundle`, the client stores its persistent state in `/var/lib/adapt/client-state.toml`.
 On first run, it also creates a blank optional override file at `/etc/adapt/client.override.toml`.
 
 Useful one-shot overrides:
 
 - `--mode 0..100` — temporary numeric mode override (`0` = speed, `50` = balanced, `100` = stealth)
+- `apt-client test --mode <value>` runs the same numeric mode through the built-in QA checks and disconnects automatically when finished
 - `--carrier auto|d1|d2|s1` — temporary carrier preference override
 
 The generated bundle keeps `D1` as the normal first choice. When `D2` and/or `S1` are present, the conservative automatic order is `D1 -> D2 -> S1`.

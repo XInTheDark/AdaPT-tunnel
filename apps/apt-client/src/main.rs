@@ -14,9 +14,11 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 mod import;
 mod override_config;
+mod qa;
 
 use self::import::import_client_bundle;
 use self::override_config::apply_optional_client_override;
+use self::qa::{run_targeted_tests, QaOptions};
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum CliCarrier {
@@ -41,7 +43,7 @@ impl From<CliCarrier> for RuntimeCarrierPreference {
 #[command(
     name = "apt-client",
     about = "APT VPN client",
-    long_about = "APT VPN client. Import a temporary bundle with `apt-client import` or install a single-file bundle into `/etc/adapt/client.aptbundle`, then run `apt-client up`."
+    long_about = "APT VPN client. Import a temporary bundle with `apt-client import`, start the tunnel with `apt-client up`, or run targeted QA with `apt-client test`."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -75,6 +77,11 @@ enum Command {
         #[arg(long, value_enum)]
         carrier: Option<CliCarrier>,
     },
+    /// Bring the tunnel up temporarily and run targeted QA checks.
+    Test {
+        #[command(flatten)]
+        options: QaOptions,
+    },
     /// Advanced: generate only a standalone client identity.
     #[command(hide = true)]
     GenIdentity {
@@ -104,6 +111,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             mode,
             carrier,
         } => start_client(bundle, mode, carrier).await?,
+        Command::Test { options } => run_targeted_tests(options).await?,
         Command::GenIdentity { out_dir } => generate_identity(&out_dir)?,
     }
     Ok(())

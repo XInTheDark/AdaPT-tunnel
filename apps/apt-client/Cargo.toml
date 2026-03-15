@@ -8,6 +8,7 @@ apt-bundle.workspace = true
 apt-runtime.workspace = true
 clap.workspace = true
 ipnet.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 tokio.workspace = true
 toml.workspace = true

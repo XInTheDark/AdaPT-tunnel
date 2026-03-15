@@ -13,7 +13,7 @@
 ## Current milestone
 
 - **Milestone:** Phase 3 adaptive/persona/local-normality rewrite
-- **Status:** multi-profile persistence/context discovery, runtime hot-path CPU hardening, bounded histogram local-normality, adaptive keepalive learning, continuous numeric-mode persona/scheduler shaping, the mode-only controller/admission negotiation rewrite, the temporary client-bundle import workflow, and a follow-up datagram pacing regression fix are now shipped
+- **Status:** multi-profile persistence/context discovery, runtime hot-path CPU hardening, bounded histogram local-normality, adaptive keepalive learning, continuous numeric-mode persona/scheduler shaping, the mode-only controller/admission negotiation rewrite, the temporary client-bundle import workflow, the datagram pacing regression fix, and a client-side `apt-client test` QA helper are now shipped
 - **Primary remaining goal:** finish the spec-credible adaptive runtime by:
   - validating real-traffic behavior and CPU/latency envelopes at the three reference points
 - **Performance intent:**
@@ -23,11 +23,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** datagram pacing regression fix
-- **Latency impact:** removes unintended steady per-packet pacing delay on datagram carriers outside idle-resume windows, restoring practical latency/throughput behavior for mid/high numeric modes on `D1`/`D2`
-- **Bandwidth impact:** no meaningful change; shaping/padding behavior is otherwise unchanged
-- **CPU impact:** slightly lower on datagram-heavy sessions because the runtime no longer schedules avoidable sleep/wake pacing work on every packet
-- **Notes:** the follow-up fix keeps deliberate pacing on stream-oriented batching where it is practical, skips steady per-packet pacing on datagram carriers, and stops reseeding persona randomness from the raw numeric mode so adjacent mode values do not re-roll the session into a drastically different pacing family
+- **Chunk:** `apt-client test` targeted QA helper
+- **Latency impact:** no steady-state runtime impact; the added behavior only runs when the new QA command is invoked
+- **Bandwidth impact:** no steady-state runtime impact; the QA helper intentionally generates bounded probe traffic and an optional download throughput test while it is running
+- **CPU impact:** no steady-state runtime impact; the helper does add short-lived client CPU/process-sampling work during explicit QA runs only
+- **Notes:** `apt-client test` now brings the tunnel up temporarily with an existing bundle, waits for the session-establishment log, runs tunnel ping checks plus DNS/public-egress/download checks when full-tunnel routing is active, reports a rough child-process CPU sample during the throughput probe, and then disconnects automatically
 
 ## Numeric mode model
 
@@ -66,12 +66,12 @@ The Phase 3 end state remains **`mode`-only** across operator-facing config, CLI
 |---|---|---|---|
 | Planning/docs maintenance | active | Keep `PLAN.md` current after each shipped chunk; keep assumptions, scope, status, and expected performance notes aligned with the live code | No runtime impact |
 | Bundle import workflow validation | pending | Smoke-test `apt-edge add-client` temporary import handoff plus `apt-client import` install behavior on real hosts, including manual fallback when the temporary port is unreachable | Provisioning-only cost |
-| QA/perf validation | pending | Real-traffic checks at `mode=0`, `mode=50`, and `mode=100`, plus workspace/integration coverage for adaptive behavior | Validation-only cost |
+| QA/perf validation | pending | Real-traffic checks at `mode=0`, `mode=50`, and `mode=100`, now using `apt-client test` for the repeatable client-side smoke path plus any needed manual carrier-specific follow-up | Validation-only cost |
 
 ## Next tasks
 
 1. Smoke-test the new temporary bundle import flow end-to-end (`apt-edge add-client` → printed import command → `apt-client import` → `apt-client up`) and verify the manual bundle-copy fallback still works when desired.
-2. Run workspace tests plus mode-by-mode smoke/perf checks, with special attention to datagram-path throughput/latency around mid/high modes and CPU under `mode=0`, then update this file again with the next shipped chunk and impact note.
+2. Run `apt-client test` plus any needed manual carrier forcing at `mode=0`, `mode=50`, and `mode=100`, with special attention to datagram-path throughput/latency around mid/high modes and CPU under low mode, then update this file again with the next shipped chunk and impact note.
 3. Record lightweight real-traffic QA results for latency/throughput/CPU at `mode=0`, `mode=50`, and `mode=100`, and confirm that the shipped numeric controller behavior stays within the intended envelopes without the old mid-mode pacing cliff.
 
 ## Detailed implementation requirements for remaining chunks
@@ -80,9 +80,9 @@ The Phase 3 end state remains **`mode`-only** across operator-facing config, CLI
 
 Run lightweight real-traffic QA for all three reference points (`mode=0`, `mode=50`, `mode=100`):
 
-- ping RTT
-- throughput check (`iperf3` / equivalent)
-- rough CPU observation
+- `apt-client test` tunnel ping RTT checks
+- throughput check (`apt-client test` download probe, `iperf3`, or equivalent when deeper validation is needed)
+- rough CPU observation (the built-in QA helper now reports a client-process sample during the throughput probe)
 - speed-end run, mid-range run, stealth-end run
 
 Required validation coverage:
