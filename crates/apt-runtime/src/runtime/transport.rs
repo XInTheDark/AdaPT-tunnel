@@ -28,7 +28,8 @@ pub(super) async fn open_client_standby_path(
             )
         }
         CarrierBinding::D2EncryptedDatagram => {
-            let (endpoint, connection) = open_client_d2_connection(config).await?;
+            let (endpoint, connection) =
+                open_client_d2_connection(config, config.handshake_timeout_secs).await?;
             Ok(spawn_client_d2_path(
                 path_id, endpoint, connection, event_tx,
             ))
@@ -39,7 +40,12 @@ pub(super) async fn open_client_standby_path(
                     "stream_server_addr is not configured".to_string(),
                 ));
             };
-            let stream = TcpStream::connect(addr).await?;
+            let stream = timeout(
+                Duration::from_secs(config.handshake_timeout_secs),
+                TcpStream::connect(addr),
+            )
+            .await
+            .map_err(|_| RuntimeError::Timeout("stream connection"))??;
             let _ = stream.set_nodelay(true);
             spawn_client_transport_path(
                 path_id,

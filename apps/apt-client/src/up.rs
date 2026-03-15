@@ -35,13 +35,17 @@ async fn attach_to_session(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut subscription = subscribe().await?;
     let mut last_lifecycle = None;
-    let mut seen_connected = false;
+    let mut saw_session_activity = false;
     render_snapshot(
         &subscription.initial_snapshot,
         &mut last_lifecycle,
-        &mut seen_connected,
+        &mut saw_session_activity,
     )?;
-    render_snapshot(&initial_snapshot, &mut last_lifecycle, &mut seen_connected)?;
+    render_snapshot(
+        &initial_snapshot,
+        &mut last_lifecycle,
+        &mut saw_session_activity,
+    )?;
 
     loop {
         tokio::select! {
@@ -53,7 +57,7 @@ async fn attach_to_session(
                 match maybe_event? {
                     Some(event) => match event {
                         ClientDaemonEvent::Snapshot(snapshot) => {
-                            if let Some(done) = render_snapshot(&snapshot, &mut last_lifecycle, &mut seen_connected)? {
+                            if let Some(done) = render_snapshot(&snapshot, &mut last_lifecycle, &mut saw_session_activity)? {
                                 return done;
                             }
                         }
@@ -61,7 +65,7 @@ async fn attach_to_session(
                             println!("[{level:?}] {message}");
                         }
                         ClientDaemonEvent::SessionEstablished { session } => {
-                            seen_connected = true;
+                            saw_session_activity = true;
                             println!("connected: server={} carrier={} mode={} iface={}", session.server, session.carrier, session.negotiated_mode, session.interface_name);
                         }
                         ClientDaemonEvent::CarrierChanged { from, to } => {
@@ -91,7 +95,7 @@ async fn attach_to_session(
 fn render_snapshot(
     snapshot: &ClientDaemonSnapshot,
     last_lifecycle: &mut Option<ClientDaemonLifecycle>,
-    seen_connected: &mut bool,
+    saw_session_activity: &mut bool,
 ) -> Result<
     Option<Result<(), Box<dyn std::error::Error + Send + Sync>>>,
     Box<dyn std::error::Error + Send + Sync>,
@@ -100,11 +104,11 @@ fn render_snapshot(
         println!("status: {:?}", snapshot.lifecycle);
         *last_lifecycle = Some(snapshot.lifecycle.clone());
     }
+    if !matches!(snapshot.lifecycle, ClientDaemonLifecycle::Idle) {
+        *saw_session_activity = true;
+    }
     match snapshot.lifecycle {
-        ClientDaemonLifecycle::Connected => {
-            *seen_connected = true;
-            Ok(None)
-        }
+        ClientDaemonLifecycle::Connected => Ok(None),
         ClientDaemonLifecycle::Error => {
             let message = snapshot
                 .last_error
@@ -112,7 +116,7 @@ fn render_snapshot(
                 .unwrap_or_else(|| "client daemon reported a fatal error".to_string());
             Ok(Some(Err(message.into())))
         }
-        ClientDaemonLifecycle::Idle if *seen_connected => Ok(Some(Ok(()))),
+        ClientDaemonLifecycle::Idle if *saw_session_activity => Ok(Some(Ok(()))),
         _ => Ok(None),
     }
 }

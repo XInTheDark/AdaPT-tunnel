@@ -7,6 +7,7 @@ use bytes::Bytes;
 
 pub(super) async fn open_client_d2_connection(
     config: &ResolvedClientConfig,
+    timeout_secs: u64,
 ) -> Result<(quinn::Endpoint, quinn::Connection), RuntimeError> {
     let d2 = config.d2.as_ref().ok_or_else(|| {
         RuntimeError::InvalidConfig("D2 was requested, but it is not configured".to_string())
@@ -23,8 +24,10 @@ pub(super) async fn open_client_d2_connection(
     )?;
     let connection = endpoint
         .connect(d2.endpoint.addr, &d2.endpoint.server_name)
-        .map_err(|error| RuntimeError::Quic(error.to_string()))?
+        .map_err(|error| RuntimeError::Quic(error.to_string()))?;
+    let connection = timeout(Duration::from_secs(timeout_secs), connection)
         .await
+        .map_err(|_| RuntimeError::Timeout("d2 connection"))?
         .map_err(|error| RuntimeError::Quic(error.to_string()))?;
     ensure_d2_datagram_support(&connection)?;
     Ok((endpoint, connection))

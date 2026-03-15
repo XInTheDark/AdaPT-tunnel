@@ -191,7 +191,8 @@ async fn attempt_client_handshake_d2(
     resume_ticket: Option<SealedEnvelope>,
     supported_carriers: &[CarrierBinding],
 ) -> Result<HandshakeSuccess, RuntimeError> {
-    let (endpoint, connection) = open_client_d2_connection(config).await?;
+    let (endpoint, connection) =
+        open_client_d2_connection(config, config.handshake_timeout_secs).await?;
 
     for _ in 0..config.handshake_retries {
         let now = now_secs();
@@ -289,7 +290,12 @@ async fn attempt_client_handshake_s1(
         ));
     };
     for _ in 0..config.handshake_retries {
-        let mut stream = TcpStream::connect(server_addr).await?;
+        let mut stream = timeout(
+            Duration::from_secs(config.handshake_timeout_secs),
+            TcpStream::connect(server_addr),
+        )
+        .await
+        .map_err(|_| RuntimeError::Timeout("stream connection"))??;
         let _ = stream.set_nodelay(true);
         let now = now_secs();
         let current_epoch_slot = now / DEFAULT_ADMISSION_EPOCH_SLOT_SECS;

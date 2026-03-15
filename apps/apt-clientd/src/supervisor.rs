@@ -175,6 +175,7 @@ struct DesiredState {
 struct SessionControl {
     generation: u64,
     shutdown_tx: watch::Sender<bool>,
+    established: bool,
     _task: JoinHandle<()>,
 }
 
@@ -185,6 +186,7 @@ struct SupervisorState {
     desired: DesiredState,
     should_run: bool,
     pending_connect: bool,
+    reconnect_armed: bool,
     session: Option<SessionControl>,
     reconnect_token: u64,
     reconnect_attempt: u32,
@@ -210,6 +212,7 @@ impl SupervisorState {
             signal_tx,
             should_run: false,
             pending_connect: false,
+            reconnect_armed: false,
             session: None,
             reconnect_token: 0,
             reconnect_attempt: 0,
@@ -377,6 +380,7 @@ impl SupervisorState {
         self.session = Some(SessionControl {
             generation,
             shutdown_tx,
+            established: false,
             _task: task,
         });
         self.reconnect_token = self.reconnect_token.saturating_add(1);
@@ -476,6 +480,7 @@ async fn run_supervisor(
                     state.apply_connect_options(options);
                     state.should_run = true;
                     state.pending_connect = true;
+                    state.reconnect_armed = false;
                     let response = if state.session.is_some() {
                         state.request_session_shutdown(true);
                         state.current_snapshot_ack("restarting client session")
@@ -500,6 +505,7 @@ async fn run_supervisor(
                 SupervisorCommand::Disconnect { reply_tx } => {
                     state.should_run = false;
                     state.pending_connect = false;
+                    state.reconnect_armed = false;
                     state.reconnect_attempt = 0;
                     state.request_session_shutdown(true);
                     if state.session.is_none() {
@@ -515,6 +521,7 @@ async fn run_supervisor(
                 SupervisorCommand::ReconnectNow { reply_tx } => {
                     state.should_run = true;
                     state.pending_connect = true;
+                    state.reconnect_armed = false;
                     state.reconnect_attempt = 0;
                     state.update_snapshot(|snapshot| {
                         snapshot.reconnect_attempt = 0;
@@ -544,6 +551,7 @@ async fn run_supervisor(
                 }
                 SupervisorCommand::SetMode { mode, reply_tx } => {
                     state.desired.mode = Some(mode);
+                    state.reconnect_armed = false;
                     state.update_snapshot(|snapshot| snapshot.desired_mode = Some(mode));
                     state.publish_log(
                         ClientLogLevel::Info,
@@ -570,6 +578,7 @@ async fn run_supervisor(
                 }
                 SupervisorCommand::SetCarrier { carrier, reply_tx } => {
                     state.desired.carrier = carrier;
+                    state.reconnect_armed = false;
                     state.update_snapshot(|snapshot| snapshot.desired_carrier = carrier);
                     state.publish_log(
                         ClientLogLevel::Info,
@@ -599,6 +608,7 @@ async fn run_supervisor(
                     reply_tx,
                 } => {
                     state.desired.bundle_path = bundle_path.clone();
+                    state.reconnect_armed = false;
                     state.update_snapshot(|snapshot| {
                         snapshot.selected_bundle_path = Some(bundle_path.clone())
                     });
@@ -650,6 +660,10 @@ async fn run_supervisor(
                         state.publish_snapshot();
                     }
                     ClientRuntimeEvent::SessionEstablished { session } => {
+                        if let Some(active_session) = state.session.as_mut() {
+                            active_session.established = true;
+                        }
+                        state.reconnect_armed = true;
                         state.update_snapshot(|snapshot| {
                             snapshot.lifecycle = ClientDaemonLifecycle::Connected;
                             snapshot.server = Some(session.server.clone());
@@ -726,6 +740,11 @@ async fn run_supervisor(
                 }
             }
             SupervisorSignal::SessionFinished { generation, result } => {
+                let had_established = state
+                    .session
+                    .as_ref()
+                    .map(|session| session.established)
+                    .unwrap_or(false);
                 if state
                     .session
                     .as_ref()
@@ -757,12 +776,33 @@ async fn run_supervisor(
                     continue;
                 }
                 match result {
-                    Ok(_) => {
+                    Ok(_)
+                        if should_schedule_reconnect(
+                            None,
+                            state.reconnect_armed,
+                            had_established,
+                        ) =>
+                    {
                         state.reconnect_attempt = state.reconnect_attempt.saturating_add(1);
                         state.clear_runtime_details();
                         state.spawn_reconnect_timer("client session disconnected".to_string());
                     }
-                    Err(error) if is_retriable_error(&error) => {
+                    Ok(_) => {
+                        state.should_run = false;
+                        state.clear_runtime_details();
+                        state.publish_error(
+                            "client session ended before an active connection was established"
+                                .to_string(),
+                            true,
+                        );
+                    }
+                    Err(error)
+                        if should_schedule_reconnect(
+                            Some(&error),
+                            state.reconnect_armed,
+                            had_established,
+                        ) =>
+                    {
                         state.reconnect_attempt = state.reconnect_attempt.saturating_add(1);
                         state.clear_runtime_details();
                         state.spawn_reconnect_timer(error.to_string());
@@ -860,6 +900,20 @@ fn reconnect_delay_secs(attempt: u32) -> u64 {
     }
 }
 
+fn should_schedule_reconnect(
+    error: Option<&RuntimeError>,
+    reconnect_armed: bool,
+    had_established: bool,
+) -> bool {
+    if !reconnect_armed && !had_established {
+        return false;
+    }
+    match error {
+        None => true,
+        Some(error) => is_retriable_error(error),
+    }
+}
+
 fn is_retriable_error(error: &RuntimeError) -> bool {
     matches!(
         error,
@@ -904,5 +958,28 @@ mod tests {
         assert!(!is_retriable_error(&RuntimeError::UnsupportedPlatform(
             "dns automation"
         )));
+        assert!(!is_retriable_error(&RuntimeError::Canceled("shutdown")));
+    }
+
+    #[test]
+    fn reconnect_only_arms_after_a_real_established_session() {
+        assert!(!should_schedule_reconnect(
+            Some(&RuntimeError::Timeout("handshake")),
+            false,
+            false,
+        ));
+        assert!(!should_schedule_reconnect(None, false, false));
+
+        assert!(should_schedule_reconnect(
+            Some(&RuntimeError::Timeout("live session")),
+            true,
+            true,
+        ));
+        assert!(should_schedule_reconnect(None, true, true));
+        assert!(!should_schedule_reconnect(
+            Some(&RuntimeError::InvalidConfig("bad bundle".to_string())),
+            true,
+            true,
+        ));
     }
 }

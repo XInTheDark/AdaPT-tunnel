@@ -29,6 +29,8 @@ pub enum RuntimeError {
     InvalidConfig(String),
     #[error("timeout while waiting for {0}")]
     Timeout(&'static str),
+    #[error("operation canceled: {0}")]
+    Canceled(&'static str),
     #[error("client is not authorized on the server")]
     UnauthorizedPeer,
     #[error("no active session owns destination {0}")]

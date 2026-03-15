@@ -22,6 +22,7 @@
   - no implicit `/etc/adapt` client bundle discovery remains in the new default path
   - retriable runtime failures now schedule reconnect attempts automatically, including the reported AEAD/tunnel failure class
   - release packaging/install scripts now include `apt-clientd` so installed client bundles can actually use `apt-client service install`
+  - daemon connect behavior now preserves the expected one-shot initial connect semantics: disconnect during `Connecting` cancels startup promptly, first-connect failures surface as errors instead of looping forever, and only post-establishment failures stay on the automatic reconnect path
   - macOS client DNS teardown now restores the prior resolver config and then refreshes resolver caches; route/DNS teardown failures now surface as warnings instead of failing silently
 - **Primary remaining goal:** validate the new daemon/service flow on real hosts and polish any behavior gaps found in end-to-end use
 - **UX intent:**
