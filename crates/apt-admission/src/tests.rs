@@ -56,6 +56,17 @@ fn test_per_user_server_setup() -> (AdmissionServer, ClientCredential, D1Carrier
     (server, client_credential, D1Carrier::conservative())
 }
 
+fn test_slot_binding() -> UpgradeSlotBinding {
+    UpgradeSlotBinding {
+        family_id: "api-sync".to_string(),
+        profile_version: "2026.03".to_string(),
+        slot_id: "request-json-metadata".to_string(),
+        phase: UpgradeMessagePhase::Request,
+        epoch_slot: 77,
+        path_hint: "/v1/devices/{device_id}/sync".to_string(),
+    }
+}
+
 #[test]
 fn successful_one_point_five_rtt_establishment() {
     let (mut server, credential, carrier) = test_server_setup();
@@ -315,4 +326,71 @@ fn mode_negotiation_uses_the_more_conservative_side() {
 
     server.config.default_mode = Mode::STEALTH;
     assert_eq!(server.choose_mode(Mode::SPEED), Mode::STEALTH);
+}
+
+#[test]
+fn transport_agnostic_ug_capsules_round_trip_without_public_packet_envelope() {
+    let ug1 = Ug1 {
+        endpoint_id: EndpointId::new("adapt-test".to_string()),
+        auth_profile: AuthProfile::PerUser,
+        credential_identity: CredentialIdentity::User("laptop".to_string()),
+        supported_suites: vec![CipherSuite::NoiseXxPsk2X25519ChaChaPolyBlake2s],
+        supported_families: vec![
+            CarrierBinding::S1EncryptedStream,
+            CarrierBinding::D2EncryptedDatagram,
+        ],
+        requested_mode: Mode::STEALTH,
+        path_profile: PathProfile::unknown(),
+        client_nonce: ClientNonce::random(),
+        noise_msg1: vec![1, 2, 3],
+        optional_resume_ticket: None,
+        slot_binding: test_slot_binding(),
+        padding: vec![9; 12],
+    };
+    let ug2 = Ug2 {
+        chosen_suite: CipherSuite::NoiseXxPsk2X25519ChaChaPolyBlake2s,
+        chosen_family: CarrierBinding::S1EncryptedStream,
+        chosen_mode: Mode::BALANCED,
+        anti_amplification_cookie: SealedEnvelope {
+            nonce: [0x11; 24],
+            ciphertext: vec![0x22; 32],
+        },
+        cookie_expiry: 123,
+        noise_msg2: vec![4, 5, 6],
+        optional_resume_accept: true,
+        slot_binding: test_slot_binding(),
+        padding: vec![7; 8],
+    };
+    let ug3 = Ug3 {
+        selected_family_ack: CarrierBinding::S1EncryptedStream,
+        anti_amplification_cookie: SealedEnvelope {
+            nonce: [0x33; 24],
+            ciphertext: vec![0x44; 16],
+        },
+        noise_msg3: vec![7, 8, 9],
+        slot_binding: test_slot_binding(),
+        padding: vec![1; 4],
+    };
+    let ug4 = Ug4 {
+        session_id: SessionId([0x55; 16]),
+        tunnel_mtu: 1380,
+        rekey_limits: RekeyLimits::default(),
+        ticket_issue_flag: true,
+        optional_resume_ticket: Some(SealedEnvelope {
+            nonce: [0x66; 24],
+            ciphertext: vec![0x77; 24],
+        }),
+        slot_binding: test_slot_binding(),
+        optional_extensions: vec![vec![0x88; 3]],
+    };
+
+    let decoded_ug1: Ug1 = bincode::deserialize(&bincode::serialize(&ug1).unwrap()).unwrap();
+    let decoded_ug2: Ug2 = bincode::deserialize(&bincode::serialize(&ug2).unwrap()).unwrap();
+    let decoded_ug3: Ug3 = bincode::deserialize(&bincode::serialize(&ug3).unwrap()).unwrap();
+    let decoded_ug4: Ug4 = bincode::deserialize(&bincode::serialize(&ug4).unwrap()).unwrap();
+
+    assert_eq!(decoded_ug1, ug1);
+    assert_eq!(decoded_ug2, ug2);
+    assert_eq!(decoded_ug3, ug3);
+    assert_eq!(decoded_ug4, ug4);
 }

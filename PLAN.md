@@ -13,7 +13,7 @@
 ## Current milestone
 
 - **Milestone:** Phase B/C bridge — runtime/model refactor prep with hidden-upgrade core landing next
-- **Status:** Phase A hardening is complete; early Phase B/D prep is now in place with the live `D1` + optional `D2` baseline, manifest-driven harness fixtures, draft v2 structured transport config types, and an initial `apt-origin` family-definition crate as Phase C hidden-upgrade work becomes the next major focus
+- **Status:** Phase A hardening is complete; early Phase B/C/D prep is now in place with the live `D1` + optional `D2` baseline, manifest-driven harness fixtures, draft v2 structured transport config types, an initial `apt-origin` family-definition crate, and transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types as the hidden-upgrade state-machine rewrite becomes the next major focus
 - **Canonical design docs:**
   - `SPEC_v2.md`
   - `docs/ARCHITECTURE_V2.md`
@@ -64,7 +64,7 @@
 | Planning/docs maintenance | active | Keep `PLAN.md`, `SPEC_v2.md`, and `docs/ARCHITECTURE_V2.md` aligned with live code and shipped scope | No runtime impact |
 | Runtime/module split | active | Finish separating remaining transport-owned runtime/helpers into surface-ready modules and remove remaining coupling between the live runtime baseline and future public-session families | No intentional runtime impact; lowers maintenance risk |
 | Empirical harness | active | Extend `apt-harness` beyond the initial passive/probe/retry report helpers into baseline corpora ingestion and runtime comparison fixtures; sample fixture manifests are the current sub-step | Offline-only analysis cost |
-| Hidden-upgrade core | pending | Refactor `apt-admission` so it owns logical hidden-upgrade capsules/tickets rather than a public-wire packet envelope | Moderate implementation risk; core enabler |
+| Hidden-upgrade core | active | `apt-admission` now has transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types and slot bindings; next step is moving client/server state machines off the old `AdmissionPacket` envelope model | Moderate implementation risk; core enabler |
 | Structured v2 transport config | active | Draft v2 public-session transport blocks and deployment metadata now exist behind a separate schema boundary; next step is wiring them into bundle/origin/surface planning without changing the live runtime path yet | Minor config churn |
 | Origin family definitions | active | `apt-origin` now carries initial API-sync and object/origin family skeletons plus legal request/response slot classes; next step is enriching them with cover-profile/runtime integration | No runtime impact yet |
 | First public-session carrier | pending | Ship the H2 API-sync family end-to-end with honest unauthenticated semantics and hidden-upgrade slots | Main v2 milestone |
@@ -76,7 +76,7 @@
 1. Split any remaining mixed transport/runtime code into surface-oriented modules before new v2 crates land.
 2. Extend the draft v2 transport/config types into bundle/origin-facing planning structures without changing the live runtime schema yet.
 3. Grow `apt-harness` from manifest-driven samples into richer baseline corpora ingestion and browser/AdaPT comparison fixtures.
-4. Rework `apt-admission` around transport-agnostic hidden-upgrade capsules (`UG1`/`UG2`/`UG3`/`UG4`) and masked fallback tickets.
+4. Rework the `apt-admission` client/server state machines around transport-agnostic hidden-upgrade capsules (`UG1`/`UG2`/`UG3`/`UG4`) and masked fallback tickets.
 5. Enrich `apt-origin` with cover-profile/runtime-facing metadata, then add `apt-surface-h2` for the H2 API-sync reference path.
 6. Follow with the H3 sibling, then cover compiler/budget work once both public-session baselines exist.
 

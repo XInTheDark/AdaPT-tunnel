@@ -22,6 +22,7 @@ use thiserror::Error;
 mod client;
 mod packet;
 mod server;
+mod upgrade;
 
 #[cfg(test)]
 mod tests;
@@ -36,6 +37,7 @@ pub use self::{
         AdmissionConfig, AdmissionServer, AdmissionServerSecrets, CredentialStore,
         EstablishedServerReply, EstablishedSession, PerUserCredential, ServerResponse,
     },
+    upgrade::{Ug1, Ug2, Ug3, Ug4, UpgradeMessagePhase, UpgradeSlotBinding},
 };
 
 const VERSION: &str = "APT/1-core";
