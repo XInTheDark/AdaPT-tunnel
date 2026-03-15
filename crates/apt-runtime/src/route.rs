@@ -6,9 +6,9 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     process::Command,
 };
-use tracing::debug;
 #[cfg(target_os = "linux")]
 use tracing::info;
+use tracing::{debug, warn};
 
 mod client;
 mod server;
@@ -20,12 +20,31 @@ pub struct RouteGuard {
 
 impl RouteGuard {
     pub fn cleanup(&mut self) {
+        for error in self.cleanup_errors() {
+            warn!(error = %error, "route cleanup command failed");
+        }
+    }
+
+    pub fn cleanup_errors(&mut self) -> Vec<String> {
+        let mut errors = Vec::new();
         for command in self.cleanup_commands.iter().rev() {
             if let Some((program, args)) = command.split_first() {
-                let _ = Command::new(program).args(args).output();
+                match Command::new(program).args(args).output() {
+                    Ok(output) if output.status.success() => {}
+                    Ok(output) => errors.push(format!(
+                        "{} {} failed: {}",
+                        program,
+                        args.join(" "),
+                        String::from_utf8_lossy(&output.stderr)
+                    )),
+                    Err(error) => {
+                        errors.push(format!("{} {} failed: {}", program, args.join(" "), error))
+                    }
+                }
             }
         }
         self.cleanup_commands.clear();
+        errors
     }
 }
 

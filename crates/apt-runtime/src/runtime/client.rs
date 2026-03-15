@@ -1,5 +1,6 @@
 use super::*;
 use crate::dns::{configure_client_dns, DnsGuard};
+use crate::route::RouteGuard;
 use apt_client_control::ClientRuntimeEvent;
 
 mod helpers;
@@ -53,7 +54,7 @@ pub(super) async fn run_client(
     } else {
         config.routes.clone()
     };
-    let _dns_guard = match configure_client_dns(&tun.interface_name, &transport.dns_servers) {
+    let mut dns_guard = match configure_client_dns(&tun.interface_name, &transport.dns_servers) {
         Ok(guard) => guard,
         Err(error) => {
             warn!(
@@ -66,7 +67,7 @@ pub(super) async fn run_client(
         }
     };
     let exempt_endpoints = client_route_exempt_endpoints(&config);
-    let _route_guard = configure_client_network_for_endpoints(
+    let mut route_guard = configure_client_network_for_endpoints(
         &tun.interface_name,
         &exempt_endpoints,
         &effective_routes,
@@ -126,7 +127,7 @@ pub(super) async fn run_client(
         &observability,
     );
 
-    let status = run_client_session_loop(
+    let session_result = run_client_session_loop(
         &config,
         tun,
         handshake,
@@ -137,8 +138,23 @@ pub(super) async fn run_client(
         &hooks,
         &carriers,
     )
-    .await?;
-    persistent_state.last_status = Some(status.status.clone());
-    persistent_state.store(&config.state_path)?;
+    .await;
+
+    if let Ok(status) = &session_result {
+        persistent_state.last_status = Some(status.status.clone());
+        persistent_state.store(&config.state_path)?;
+    }
+    log_cleanup_warnings(&mut route_guard, &mut dns_guard);
+
+    let status = session_result?;
     Ok(ClientRuntimeResult { status, telemetry })
+}
+
+fn log_cleanup_warnings(route_guard: &mut RouteGuard, dns_guard: &mut DnsGuard) {
+    for error in route_guard.cleanup_errors() {
+        warn!(error = %error, "client route teardown reported a cleanup failure");
+    }
+    for error in dns_guard.cleanup_errors() {
+        warn!(error = %error, "client dns teardown reported a cleanup failure");
+    }
 }

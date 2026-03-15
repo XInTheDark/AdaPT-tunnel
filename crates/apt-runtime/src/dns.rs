@@ -1,6 +1,6 @@
 use crate::error::RuntimeError;
 use std::{env, net::IpAddr, path::Path, process::Command};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 #[derive(Debug, Default)]
 pub struct DnsGuard {
@@ -9,12 +9,31 @@ pub struct DnsGuard {
 
 impl DnsGuard {
     pub fn cleanup(&mut self) {
+        for error in self.cleanup_errors() {
+            warn!(error = %error, "dns cleanup command failed");
+        }
+    }
+
+    pub fn cleanup_errors(&mut self) -> Vec<String> {
+        let mut errors = Vec::new();
         for command in self.cleanup_commands.iter().rev() {
             if let Some((program, args)) = command.split_first() {
-                let _ = Command::new(program).args(args).output();
+                match Command::new(program).args(args).output() {
+                    Ok(output) if output.status.success() => {}
+                    Ok(output) => errors.push(format!(
+                        "{} {} failed: {}",
+                        program,
+                        args.join(" "),
+                        String::from_utf8_lossy(&output.stderr)
+                    )),
+                    Err(error) => {
+                        errors.push(format!("{} {} failed: {}", program, args.join(" "), error))
+                    }
+                }
             }
         }
         self.cleanup_commands.clear();
+        errors
     }
 }
 
@@ -104,6 +123,12 @@ fn configure_client_dns_macos(
     let original_dns = macos_dns_servers(&service)?;
 
     let mut guard = DnsGuard::default();
+    // `DnsGuard` runs cleanup commands in reverse order, so register the
+    // post-restore resolver refresh commands first. That way cleanup restores
+    // the original DNS settings before flushing stale macOS resolver state.
+    guard
+        .cleanup_commands
+        .extend(macos_post_restore_cleanup_commands());
     let mut set_args = vec!["-setdnsservers".to_string(), service.clone()];
     set_args.extend(dns_servers.iter().map(ToString::to_string));
     run_command("networksetup", &set_args)?;
@@ -133,6 +158,18 @@ fn configure_client_dns_macos(
         "applied pushed DNS settings on the primary macOS network service"
     );
     Ok(guard)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_post_restore_cleanup_commands() -> Vec<Vec<String>> {
+    vec![
+        vec![
+            "killall".to_string(),
+            "-HUP".to_string(),
+            "mDNSResponder".to_string(),
+        ],
+        vec!["dscacheutil".to_string(), "-flushcache".to_string()],
+    ]
 }
 
 #[cfg(target_os = "macos")]
@@ -270,7 +307,8 @@ fn parse_macos_dns_servers(output: &str) -> Result<Vec<IpAddr>, RuntimeError> {
 mod tests {
     #[cfg(target_os = "macos")]
     use super::{
-        parse_macos_default_interface, parse_macos_dns_servers, parse_macos_service_for_device,
+        macos_post_restore_cleanup_commands, parse_macos_default_interface,
+        parse_macos_dns_servers, parse_macos_service_for_device,
     };
 
     #[cfg(target_os = "macos")]
@@ -329,5 +367,36 @@ An asterisk (*) denotes that a network service is disabled.
         let parsed =
             parse_macos_dns_servers("There aren't any DNS Servers set on Wi-Fi.\n").unwrap();
         assert!(parsed.is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_cleanup_refresh_commands_restore_dns_before_flushing_caches() {
+        let mut cleanup_commands = macos_post_restore_cleanup_commands();
+        cleanup_commands.push(vec![
+            "networksetup".to_string(),
+            "-setdnsservers".to_string(),
+            "Wi-Fi".to_string(),
+            "empty".to_string(),
+        ]);
+
+        let cleanup_order = cleanup_commands.into_iter().rev().collect::<Vec<_>>();
+        assert_eq!(
+            cleanup_order,
+            vec![
+                vec![
+                    "networksetup".to_string(),
+                    "-setdnsservers".to_string(),
+                    "Wi-Fi".to_string(),
+                    "empty".to_string(),
+                ],
+                vec!["dscacheutil".to_string(), "-flushcache".to_string()],
+                vec![
+                    "killall".to_string(),
+                    "-HUP".to_string(),
+                    "mDNSResponder".to_string(),
+                ],
+            ]
+        );
     }
 }

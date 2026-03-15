@@ -21,6 +21,7 @@
   - default bundle/import/state/override/socket paths now live under `~/.adapt-tunnel`
   - no implicit `/etc/adapt` client bundle discovery remains in the new default path
   - retriable runtime failures now schedule reconnect attempts automatically, including the reported AEAD/tunnel failure class
+  - macOS client DNS teardown now restores the prior resolver config and then refreshes resolver caches; route/DNS teardown failures now surface as warnings instead of failing silently
 - **Primary remaining goal:** validate the new daemon/service flow on real hosts and polish any behavior gaps found in end-to-end use
 - **UX intent:**
   - one-time privileged setup is acceptable (`sudo apt-client service install`)
@@ -52,16 +53,18 @@
 | Chunk | Status | Scope | Estimated impact |
 |---|---|---|---|
 | Planning/docs maintenance | active | Keep `PLAN.md`, README/guides, and operator/client instructions aligned with the daemon-first client flow | No runtime impact |
+| Post-disconnect teardown validation | active | Reproduce and verify the reported macOS browser-profile hang after disconnect, with focus on resolver/cache cleanup and teardown logs | Brief best-effort resolver refresh on disconnect only |
 | Real-host daemon/service validation | pending | Smoke-test `apt-client service install|status|uninstall` and the resulting daemon behavior on actual Linux and macOS hosts | Validation-only cost |
 | End-to-end client UX validation | pending | Validate `apt-client import` → `apt-client up` / `apt-client tui` / `apt-client test` with the new `~/.adapt-tunnel` defaults and no daily sudo | Validation-only cost |
 | Reconnect/failure-path validation | pending | Confirm automatic recovery on real transient failures, especially AEAD/tunnel failure cases, and tune retry/backoff/logging only if needed | Temporary reconnect delay only during failures |
 
 ## Next tasks
 
-1. Smoke-test the one-time service install flow on Linux and macOS and confirm the daemon can be reached afterward through `~/.adapt-tunnel/clientd.sock` without sudo.
-2. Run an end-to-end client workflow with the new defaults: import a bundle into `~/.adapt-tunnel`, connect with `apt-client up`, inspect/change settings with `apt-client tui`, and run `apt-client test` against the daemon-managed session.
-3. Force or capture representative transient failures (including the reported AEAD/tunnel failure class when reproducible) and confirm the daemon reconnect loop behaves correctly, surfaces useful logs/state, and returns to `Connected` without manual intervention when the failure is temporary.
-4. After real-host validation, record any required follow-up polish here before starting a separate GUI discussion or broader client UX milestone.
+1. Reproduce the reported macOS browser-profile hang around a full connect/disconnect cycle and confirm whether the new DNS/cache teardown removes the stale-loading symptom without regressing normal reconnect behavior.
+2. Smoke-test the one-time service install flow on Linux and macOS and confirm the daemon can be reached afterward through `~/.adapt-tunnel/clientd.sock` without sudo.
+3. Run an end-to-end client workflow with the new defaults: import a bundle into `~/.adapt-tunnel`, connect with `apt-client up`, inspect/change settings with `apt-client tui`, and run `apt-client test` against the daemon-managed session.
+4. Force or capture representative transient failures (including the reported AEAD/tunnel failure class when reproducible) and confirm the daemon reconnect loop behaves correctly, surfaces useful logs/state, and returns to `Connected` without manual intervention when the failure is temporary.
+5. After real-host validation, record any required follow-up polish here before starting a separate GUI discussion or broader client UX milestone.
 
 ## Validation requirements for this milestone
 
