@@ -25,7 +25,9 @@ pub use config::{
     encode_key_hex, load_key32, AuthorizedPeerConfig, ClientConfig, ClientPersistentState,
     ResolvedClientConfig, ResolvedClientD2Config, ResolvedRemoteEndpoint, ResolvedServerConfig,
     ResolvedServerD2Config, RuntimeCarrierPreference, ServerConfig, ServerSessionExtension,
-    SessionTransportParameters,
+    SessionTransportParameters, V2ClientFamilyConfig, V2ClientTransportConfigDraft,
+    V2D1FallbackPolicy, V2DeploymentStrength, V2FamilyPreference, V2SchemaVersion,
+    V2ServerSurfaceConfig, V2ServerTransportConfigDraft, V2SurfaceTrustConfig,
 };
 pub use error::RuntimeError;
 pub use keys::{

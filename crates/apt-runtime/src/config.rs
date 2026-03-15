@@ -18,6 +18,7 @@ mod client;
 mod io;
 mod server;
 mod state;
+mod v2;
 
 #[cfg(test)]
 mod tests;
@@ -35,6 +36,11 @@ pub use self::{
     state::{
         ClientPersistentState, PersistedIdleOutcomeSummary, PersistedKeepaliveLearningState,
         PersistedNetworkProfile,
+    },
+    v2::{
+        V2ClientFamilyConfig, V2ClientTransportConfigDraft, V2D1FallbackPolicy,
+        V2DeploymentStrength, V2FamilyPreference, V2SchemaVersion, V2ServerSurfaceConfig,
+        V2ServerTransportConfigDraft, V2SurfaceTrustConfig,
     },
 };
 

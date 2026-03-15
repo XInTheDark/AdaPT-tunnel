@@ -13,7 +13,7 @@
 ## Current milestone
 
 - **Milestone:** Phase B/C bridge — runtime/model refactor prep with hidden-upgrade core landing next
-- **Status:** Phase A hardening is complete; the live runtime defaults to `auto`, prefers configured `D2`, keeps `D1` as the opaque fallback, removes the live legacy `S1` implementation, and now includes an initial empirical harness crate for passive/probe/retry reporting as Phase B/C prep continues
+- **Status:** Phase A hardening is complete; early Phase B prep is now in place with the live `D1` + optional `D2` baseline, manifest-driven harness fixtures, and draft v2 structured transport config types separated from the live schema as Phase C hidden-upgrade work becomes the next major focus
 - **Canonical design docs:**
   - `SPEC_v2.md`
   - `docs/ARCHITECTURE_V2.md`
@@ -32,11 +32,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** Phase A honesty + hardening baseline
-- **Latency impact:** neutral to slightly positive on default paths by removing legacy `S1` from automatic selection and preferring configured `D2`
-- **Bandwidth impact:** neutral on the live datapath; the new harness crate adds offline-only analysis data
-- **CPU impact:** negligible at runtime; small additional offline analysis cost inside harness reports/tests
-- **Notes:** the live legacy `S1` carrier implementation is gone; bundle/config upgrades sanitize legacy `S1` preference back to `auto`, legacy bundle decode keeps only compatibility fields needed to import older bundles, the shipped baseline is now described honestly as `D1` + optional `D2`, and the harness crate provides the first passive/probe/retry report surface for later empirical gates
+- **Chunk:** Early Phase B prep — harness fixtures + draft structured transport blocks
+- **Latency impact:** none on the live datapath; changes are schema/test/offline-analysis only
+- **Bandwidth impact:** none at runtime; fixture corpora only affect offline harness assets
+- **CPU impact:** negligible at runtime; tiny offline JSON fixture evaluation cost inside harness tests and future reports
+- **Notes:** `apt-harness` now supports manifest-driven sample fixture evaluation, and `apt-runtime` now exposes separate draft v2 client/server transport block types (`preferred_family`, structured `s1`/`d2`, `d1_policy`, deployment strength) without changing the live runtime schema yet
 
 ## Core v2 design rules
 
@@ -62,10 +62,10 @@
 | Chunk | Status | Scope | Expected impact |
 |---|---|---|---|
 | Planning/docs maintenance | active | Keep `PLAN.md`, `SPEC_v2.md`, and `docs/ARCHITECTURE_V2.md` aligned with live code and shipped scope | No runtime impact |
-| Runtime/module split | active | Finish separating remaining transport-owned runtime/helpers into surface-ready modules and eliminate stale legacy `S1` assumptions from shared codepaths | No intentional runtime impact; lowers maintenance risk |
+| Runtime/module split | active | Finish separating remaining transport-owned runtime/helpers into surface-ready modules and remove remaining coupling between the live runtime baseline and future public-session families | No intentional runtime impact; lowers maintenance risk |
 | Empirical harness | active | Extend `apt-harness` beyond the initial passive/probe/retry report helpers into baseline corpora ingestion and runtime comparison fixtures; sample fixture manifests are the current sub-step | Offline-only analysis cost |
 | Hidden-upgrade core | pending | Refactor `apt-admission` so it owns logical hidden-upgrade capsules/tickets rather than a public-wire packet envelope | Moderate implementation risk; core enabler |
-| Structured v2 transport config | pending | Add versioned public-session transport blocks and deployment metadata without reviving legacy stream fields on the primary schema | Minor config churn |
+| Structured v2 transport config | active | Draft v2 public-session transport blocks and deployment metadata now exist behind a separate schema boundary; next step is wiring them into bundle/origin/surface planning without changing the live runtime path yet | Minor config churn |
 | First public-session carrier | pending | Ship the H2 API-sync family end-to-end with honest unauthenticated semantics and hidden-upgrade slots | Main v2 milestone |
 | Second public-session carrier | pending | Ship the H3 public-session sibling after H2 is stable | Major feature; higher protocol complexity |
 | Cover compiler + budget controller | pending | Add machine-readable cover profiles, session plans, and bounded indistinguishability budgets | Bounded CPU/latency overhead |
@@ -73,8 +73,8 @@
 ## Next tasks
 
 1. Split any remaining mixed transport/runtime code into surface-oriented modules before new v2 crates land.
-2. Introduce the first structured v2 transport/config types for public-session families and deployment strength metadata.
-3. Extend `apt-harness` from the initial report helpers into baseline-trace ingestion plus browser/AdaPT comparison fixtures and manifest-driven evaluation.
+2. Extend the draft v2 transport/config types into bundle/origin-facing planning structures without changing the live runtime schema yet.
+3. Grow `apt-harness` from manifest-driven samples into richer baseline corpora ingestion and browser/AdaPT comparison fixtures.
 4. Rework `apt-admission` around transport-agnostic hidden-upgrade capsules (`UG1`/`UG2`/`UG3`/`UG4`) and masked fallback tickets.
 5. Add `apt-origin` + `apt-surface-h2` and land the H2 API-sync reference path with harness-facing trace output.
 6. Follow with the H3 sibling, then cover compiler/budget work once both public-session baselines exist.
