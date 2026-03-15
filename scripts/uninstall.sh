@@ -7,6 +7,8 @@ DEFAULT_INSTALLER_NAME="adapt-install"
 DEFAULT_UNINSTALLER_NAME="adapt-uninstall"
 DEFAULT_CONFIG_DIR="/etc/adapt"
 DEFAULT_STATE_DIR="/var/lib/adapt"
+DEFAULT_SYSTEMD_SERVICE_NAME="apt-edge.service"
+DEFAULT_SYSTEMD_SERVICE_PATH="/etc/systemd/system/${DEFAULT_SYSTEMD_SERVICE_NAME}"
 
 script_name="$(basename "$0")"
 script_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -22,6 +24,8 @@ installer_name="${ADAPT_INSTALLER_NAME:-$DEFAULT_INSTALLER_NAME}"
 uninstaller_name="${ADAPT_UNINSTALLER_NAME:-$DEFAULT_UNINSTALLER_NAME}"
 config_dir="${ADAPT_CONFIG_DIR:-$DEFAULT_CONFIG_DIR}"
 state_dir="${ADAPT_STATE_DIR:-$DEFAULT_STATE_DIR}"
+systemd_service_name="${ADAPT_SYSTEMD_SERVICE_NAME:-$DEFAULT_SYSTEMD_SERVICE_NAME}"
+systemd_service_path="${ADAPT_SYSTEMD_SERVICE_PATH:-$DEFAULT_SYSTEMD_SERVICE_PATH}"
 
 bin_dir_override=0
 share_dir_override=0
@@ -29,6 +33,8 @@ installer_name_override=0
 uninstaller_name_override=0
 config_dir_override=0
 state_dir_override=0
+systemd_service_name_override=0
+systemd_service_path_override=0
 purge_config=0
 purge_state=0
 dry_run=0
@@ -39,6 +45,8 @@ dry_run=0
 [[ -n "${ADAPT_UNINSTALLER_NAME:-}" ]] && uninstaller_name_override=1
 [[ -n "${ADAPT_CONFIG_DIR:-}" ]] && config_dir_override=1
 [[ -n "${ADAPT_STATE_DIR:-}" ]] && state_dir_override=1
+[[ -n "${ADAPT_SYSTEMD_SERVICE_NAME:-}" ]] && systemd_service_name_override=1
+[[ -n "${ADAPT_SYSTEMD_SERVICE_PATH:-}" ]] && systemd_service_path_override=1
 
 usage() {
   cat <<USAGE
@@ -56,6 +64,9 @@ Options:
   --uninstaller-name NAME Installed uninstall command name (default: ${uninstaller_name})
   --config-dir DIR        Runtime config directory to optionally purge (default: ${config_dir})
   --state-dir DIR         Runtime state directory to optionally purge (default: ${state_dir})
+  --systemd-service NAME  Startup service name to remove if present (default: ${systemd_service_name})
+  --systemd-unit-path PATH
+                         Startup unit path to remove if present (default: ${systemd_service_path})
   --purge-config          Also remove ${config_dir}
   --purge-state           Also remove ${state_dir}
   --purge-all             Remove both config and state directories
@@ -69,6 +80,8 @@ Environment overrides:
   ADAPT_UNINSTALLER_NAME
   ADAPT_CONFIG_DIR
   ADAPT_STATE_DIR
+  ADAPT_SYSTEMD_SERVICE_NAME
+  ADAPT_SYSTEMD_SERVICE_PATH
 
 Examples:
   sudo ${script_name}
@@ -158,6 +171,18 @@ while [[ $# -gt 0 ]]; do
       state_dir_override=1
       shift 2
       ;;
+    --systemd-service)
+      [[ $# -ge 2 ]] || die "missing value for --systemd-service"
+      systemd_service_name="$2"
+      systemd_service_name_override=1
+      shift 2
+      ;;
+    --systemd-unit-path)
+      [[ $# -ge 2 ]] || die "missing value for --systemd-unit-path"
+      systemd_service_path="$2"
+      systemd_service_path_override=1
+      shift 2
+      ;;
     --purge-config)
       purge_config=1
       shift
@@ -226,6 +251,33 @@ maybe_remove() {
 
 log "Using bin dir: ${bin_dir}"
 log "Using share dir: ${share_dir}"
+
+disable_systemd_service() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    warn "systemctl not found; skipping disable/stop for ${systemd_service_name}"
+    return 0
+  fi
+
+  systemctl disable --now "${systemd_service_name}" >/dev/null 2>&1 || \
+    warn "could not disable/stop ${systemd_service_name}; continuing"
+}
+
+reload_systemd() {
+  if [[ "$dry_run" -eq 1 ]]; then
+    return 0
+  fi
+  command -v systemctl >/dev/null 2>&1 || return 0
+  systemctl daemon-reload >/dev/null 2>&1 || \
+    warn "could not reload systemd after removing ${systemd_service_path}"
+}
+
+if [[ -e "${systemd_service_path}" || -L "${systemd_service_path}" ]]; then
+  disable_systemd_service
+  maybe_remove "${systemd_service_path}"
+  reload_systemd
+else
+  skipped+=("${systemd_service_path}")
+fi
 
 maybe_remove "${bin_dir}/apt-edge"
 maybe_remove "${bin_dir}/apt-client"

@@ -106,6 +106,7 @@ The command walks you through the main values, then creates:
 - the server key files
 - a `bundles/` directory for single-file client bundles
 - optional `D2` certificate/key files when you enable `D2`
+- optional `/etc/systemd/system/apt-edge.service` when you enable startup during `apt-edge init`, or later via `apt-edge utils install-systemd-service`
 
 If you keep the stream fallback enabled, the resulting config also carries:
 
@@ -125,6 +126,7 @@ Important:
 - using the raw public IP is completely fine
 - whatever you enter there becomes `public_endpoint` in `server.toml` and `server_addr` in generated client bundles
 - do not leave an example placeholder there unless that hostname actually resolves for your clients
+- if you want the server to survive reboots automatically, answer `y` to the startup-service prompt, pass `--install-systemd-service`, or later run `apt-edge utils install-systemd-service --config /etc/adapt/server.toml`
 
 You can also run it non-interactively, for example:
 
@@ -146,6 +148,7 @@ You can also run it non-interactively, for example:
   --push-route 0.0.0.0/0 \
   --dns 1.1.1.1 \
   --dns 1.0.0.1 \
+  --install-systemd-service \
   --yes
 ```
 
@@ -153,6 +156,9 @@ For an existing deployment that already has a `server.toml`, you can enable or r
 
 ```bash
 ./target/release/apt-edge utils enable-d2 --config /etc/adapt/server.toml --d2-public-endpoint vpn.example.com:443
+
+# install or refresh the boot-time systemd unit later if needed
+sudo ./target/release/apt-edge utils install-systemd-service --config /etc/adapt/server.toml
 ```
 
 ## 3. Generate a client bundle
@@ -196,6 +202,13 @@ On the Linux server:
 
 ```bash
 sudo ./target/release/apt-edge start --config /etc/adapt/server.toml
+```
+
+If you enabled startup-service installation during `apt-edge init`, the server is already enabled and started under `systemd`, so the most useful follow-up commands become:
+
+```bash
+sudo systemctl status apt-edge
+sudo journalctl -u apt-edge -f
 ```
 
 Useful one-shot overrides:

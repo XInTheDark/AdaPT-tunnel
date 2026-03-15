@@ -1,4 +1,5 @@
 use super::*;
+use crate::startup::{install_and_enable_systemd_service, systemd_is_available};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn init_server(
@@ -18,6 +19,7 @@ pub(super) fn init_server(
     interface_name: Option<String>,
     push_routes: Vec<String>,
     dns_servers: Vec<IpAddr>,
+    install_systemd_service: bool,
     yes: bool,
 ) -> CliResult {
     let out_dir = out_dir.unwrap_or_else(|| PathBuf::from("/etc/adapt"));
@@ -189,6 +191,16 @@ pub(super) fn init_server(
     } else {
         dns_servers
     };
+    let install_systemd_service = if install_systemd_service {
+        true
+    } else if yes || !systemd_is_available() {
+        false
+    } else {
+        prompt_bool(
+            "Install and start a systemd service so the server runs on boot",
+            false,
+        )?
+    };
 
     fs::create_dir_all(&out_dir)?;
     let keyset = generate_server_keyset()?;
@@ -261,6 +273,11 @@ pub(super) fn init_server(
     };
     let config_path = out_dir.join("server.toml");
     config.store(&config_path)?;
+    let startup_service = if install_systemd_service {
+        Some(install_and_enable_systemd_service(&config_path)?)
+    } else {
+        None
+    };
 
     println!("\nAPT server setup complete.\n");
     println!("Created:");
@@ -304,11 +321,21 @@ pub(super) fn init_server(
         "     apt-edge add-client --config {} --name laptop --auth per-user",
         config_path.display()
     );
-    println!("  2. Start the server:");
-    println!(
-        "     sudo apt-edge start --config {}",
-        config_path.display()
-    );
+    match startup_service {
+        Some(service) => {
+            println!("  2. Startup service installed and started:");
+            println!("     sudo systemctl status {}", service.service_name);
+            println!("     sudo journalctl -u {} -f", service.service_name);
+            println!("     unit file: {}", service.service_path.display());
+        }
+        None => {
+            println!("  2. Start the server:");
+            println!(
+                "     sudo apt-edge start --config {}",
+                config_path.display()
+            );
+        }
+    }
     Ok(())
 }
 
@@ -368,6 +395,36 @@ pub(super) fn enable_d2_for_server(
     );
     println!("  3. On a client, test strict D2 with:");
     println!("     sudo apt-client up --carrier d2");
+    Ok(())
+}
+
+pub(super) fn install_systemd_service_for_server(config: Option<PathBuf>, yes: bool) -> CliResult {
+    let config_path = match config {
+        Some(path) => path,
+        None => match find_server_config() {
+            Some(path) => path,
+            None if yes => {
+                return Err(
+                    "could not find a server config; pass --config or run `apt-edge init` first"
+                        .into(),
+                );
+            }
+            None => prompt_path("Server config path", Some("/etc/adapt/server.toml"))?,
+        },
+    };
+    let _server_config = ServerConfig::load(&config_path)?;
+    let startup_service = install_and_enable_systemd_service(&config_path)?;
+
+    println!("\nStartup service installed or refreshed.\n");
+    println!("Validated server config:");
+    println!("  • {}", config_path.display());
+    println!("Systemd unit:");
+    println!("  • {}", startup_service.service_name);
+    println!("  • {}", startup_service.service_path.display());
+    println!("\nThe service has been enabled and started/restarted immediately.");
+    println!("Manage it with:");
+    println!("  sudo systemctl status {}", startup_service.service_name);
+    println!("  sudo journalctl -u {} -f", startup_service.service_name);
     Ok(())
 }
 

@@ -99,6 +99,8 @@ Key points:
 sudo ./target/release/apt-edge start --config /etc/adapt/server.toml
 ```
 
+If you prefer boot-persistent service management on Linux, `apt-edge init` can now also install `/etc/systemd/system/apt-edge.service` for you when you answer `y` to the startup-service prompt or pass `--install-systemd-service`. If you skip that during init, you can later run `apt-edge utils install-systemd-service --config /etc/adapt/server.toml` to install or refresh the same unit.
+
 Optional one-shot override:
 
 - `--mode stealth|balanced|speed`

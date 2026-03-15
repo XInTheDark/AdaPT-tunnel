@@ -23,12 +23,13 @@ mod bundle;
 mod cli;
 mod init;
 mod start;
+mod startup;
 mod support;
 
 use self::{
     bundle::{add_client, list_clients, revoke_client, write_server_keyset},
     cli::{Cli, CliAuthProfile, CliRuntimeMode, Command, UtilsCommand},
-    init::{enable_d2_for_server, init_server},
+    init::{enable_d2_for_server, init_server, install_systemd_service_for_server},
     start::start_server,
     support::*,
 };
@@ -63,6 +64,7 @@ async fn run() -> CliResult {
             interface_name,
             push_routes,
             dns_servers,
+            install_systemd_service,
             yes,
         } => init_server(
             out_dir,
@@ -81,6 +83,7 @@ async fn run() -> CliResult {
             interface_name,
             push_routes,
             dns_servers,
+            install_systemd_service,
             yes,
         )?,
         Command::AddClient {
@@ -96,6 +99,9 @@ async fn run() -> CliResult {
         Command::RevokeClient { config, name, yes } => revoke_client(config, name, yes)?,
         Command::Start { config, mode } => start_server(config, mode).await?,
         Command::Utils { command } => match command {
+            UtilsCommand::InstallSystemdService { config, yes } => {
+                install_systemd_service_for_server(config, yes)?
+            }
             UtilsCommand::EnableD2 {
                 config,
                 d2_bind,
