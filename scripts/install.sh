@@ -47,6 +47,7 @@ Usage:
 Downloads the matching AdaPT Tunnel release bundle from GitHub and installs:
   - apt-edge
   - apt-client
+  - apt-clientd
   - apt-tunneld
   - ${installer_name} (this installer script for later updates)
   - ${uninstaller_name} (an uninstall helper)
@@ -486,6 +487,7 @@ stage_dir="$extract_dir/adapt-tunnel-${target}"
 [[ -d "$stage_dir" ]] || die "release archive did not unpack as expected"
 [[ -f "$stage_dir/bin/apt-edge" ]] || die "release archive is missing apt-edge"
 [[ -f "$stage_dir/bin/apt-client" ]] || die "release archive is missing apt-client"
+[[ -f "$stage_dir/bin/apt-clientd" ]] || die "release archive is missing apt-clientd"
 [[ -f "$stage_dir/bin/apt-tunneld" ]] || die "release archive is missing apt-tunneld"
 [[ -f "$stage_dir/install.sh" ]] || die "release archive is missing install.sh"
 [[ -f "$stage_dir/uninstall.sh" ]] || die "release archive is missing uninstall.sh"
@@ -494,6 +496,7 @@ log "Installing binaries into ${bin_dir}"
 mkdir -p "$bin_dir"
 install -m 0755 "$stage_dir/bin/apt-edge" "$bin_dir/apt-edge"
 install -m 0755 "$stage_dir/bin/apt-client" "$bin_dir/apt-client"
+install -m 0755 "$stage_dir/bin/apt-clientd" "$bin_dir/apt-clientd"
 install -m 0755 "$stage_dir/bin/apt-tunneld" "$bin_dir/apt-tunneld"
 install -m 0755 "$stage_dir/install.sh" "$bin_dir/$installer_name"
 install -m 0755 "$stage_dir/uninstall.sh" "$bin_dir/$uninstaller_name"

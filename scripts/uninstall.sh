@@ -281,6 +281,7 @@ fi
 
 maybe_remove "${bin_dir}/apt-edge"
 maybe_remove "${bin_dir}/apt-client"
+maybe_remove "${bin_dir}/apt-clientd"
 maybe_remove "${bin_dir}/apt-tunneld"
 maybe_remove "${bin_dir}/${installer_name}"
 maybe_remove "${bin_dir}/${uninstaller_name}"

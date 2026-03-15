@@ -19,8 +19,9 @@ mkdir -p "$stage_dir/bin" "$stage_dir/guides/examples"
 
 cp "$root_dir/target/$target/release/apt-edge" "$stage_dir/bin/"
 cp "$root_dir/target/$target/release/apt-client" "$stage_dir/bin/"
+cp "$root_dir/target/$target/release/apt-clientd" "$stage_dir/bin/"
 cp "$root_dir/target/$target/release/apt-tunneld" "$stage_dir/bin/"
-chmod 755 "$stage_dir/bin/apt-edge" "$stage_dir/bin/apt-client" "$stage_dir/bin/apt-tunneld"
+chmod 755 "$stage_dir/bin/apt-edge" "$stage_dir/bin/apt-client" "$stage_dir/bin/apt-clientd" "$stage_dir/bin/apt-tunneld"
 
 cp "$root_dir/README.md" "$stage_dir/"
 cp "$root_dir/SPEC_v1.md" "$stage_dir/"

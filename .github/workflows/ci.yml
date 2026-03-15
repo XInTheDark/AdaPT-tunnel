@@ -54,4 +54,10 @@ jobs:
           sudo apt-get install -y musl-tools
 
       - name: Build static Linux release binaries
-        run: cargo build --release --locked --target x86_64-unknown-linux-musl -p apt-edge -p apt-client -p apt-tunneld
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl -p apt-edge -p apt-client -p apt-clientd -p apt-tunneld
+
+      - name: Package static Linux release bundle
+        run: ./scripts/package-release.sh x86_64-unknown-linux-musl
+
+      - name: Verify packaged bundle contains apt-clientd
+        run: tar -tzf dist/adapt-tunnel-x86_64-unknown-linux-musl.tar.gz | grep -q 'bin/apt-clientd$'

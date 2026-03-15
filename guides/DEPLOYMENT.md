@@ -27,7 +27,7 @@ By default, that script:
 
 - auto-detects the host platform
 - prefers the static `x86_64-unknown-linux-musl` asset on `x86_64` Linux
-- installs `apt-edge`, `apt-client`, and `apt-tunneld` into `/usr/local/bin`
+- installs `apt-edge`, `apt-client`, `apt-clientd`, and `apt-tunneld` into `/usr/local/bin`
 - installs docs and update metadata into `/usr/local/share/adapt`
 - installs an updater command named `adapt-install`
 - installs an uninstall command named `adapt-uninstall`
@@ -71,6 +71,7 @@ Each release bundle contains:
 
 - `apt-edge`
 - `apt-client`
+- `apt-clientd`
 - `apt-tunneld`
 - `install.sh`
 - `uninstall.sh`
@@ -91,6 +92,8 @@ Main binaries:
 
 - `target/release/apt-edge`
 - `target/release/apt-client`
+- `target/release/apt-clientd`
+- `target/release/apt-tunneld`
 
 ## 2. Initialize the server
 

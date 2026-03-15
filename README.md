@@ -354,6 +354,7 @@ Each bundle includes:
 
 - `apt-edge`
 - `apt-client`
+- `apt-clientd`
 - `apt-tunneld`
 - `install.sh`
 - `uninstall.sh`
