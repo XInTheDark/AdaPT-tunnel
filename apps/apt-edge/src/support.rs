@@ -102,12 +102,6 @@ pub(super) fn validate_client_reachable_endpoint(endpoint: &str) -> CliResult {
     Ok(())
 }
 
-pub(super) fn derive_stream_public_endpoint(endpoint: &str) -> Option<String> {
-    let trimmed = endpoint.trim();
-    let (host, _) = trimmed.rsplit_once(':')?;
-    Some(format!("{host}:443"))
-}
-
 pub(super) fn first_usable_ipv4(subnet: Ipv4Net) -> CliResult<Ipv4Addr> {
     let network = u32::from(subnet.network());
     let broadcast = u32::from(subnet.broadcast());
@@ -259,9 +253,6 @@ mod tests {
             d2_public_endpoint: None,
             d2_certificate: None,
             d2_private_key: None,
-            stream_bind: None,
-            stream_public_endpoint: None,
-            stream_decoy_surface: false,
             endpoint_id: "adapt-demo".to_string(),
             admission_key: "11".repeat(32),
             server_static_private_key: "22".repeat(32),

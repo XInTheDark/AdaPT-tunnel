@@ -9,9 +9,6 @@ pub(super) fn init_server(
     enable_d2: bool,
     d2_bind: Option<SocketAddr>,
     d2_public_endpoint: Option<String>,
-    stream_bind: Option<SocketAddr>,
-    stream_public_endpoint: Option<String>,
-    stream_decoy_surface: bool,
     endpoint_id: Option<String>,
     egress_interface: Option<String>,
     tunnel_subnet: Option<String>,
@@ -83,46 +80,6 @@ pub(super) fn init_server(
             None if yes => Some(default_endpoint),
             None => {
                 let value = prompt_string("D2 client-reachable endpoint", Some(&default_endpoint))?;
-                validate_client_reachable_endpoint(&value)?;
-                Some(value)
-            }
-        }
-    } else {
-        None
-    };
-    let stream_enabled = if stream_bind.is_some() || stream_public_endpoint.is_some() {
-        true
-    } else if yes {
-        true
-    } else {
-        prompt_bool("Enable optional S1 stream fallback", true)?
-    };
-    let stream_bind = if stream_enabled {
-        match stream_bind {
-            Some(bind) => Some(bind),
-            None if yes => Some("0.0.0.0:443".parse()?),
-            None => Some(prompt_parse(
-                "S1 stream listen address",
-                Some("0.0.0.0:443"),
-            )?),
-        }
-    } else {
-        None
-    };
-    let stream_public_endpoint = if stream_enabled {
-        let default_endpoint =
-            derive_stream_public_endpoint(&public_endpoint).ok_or_else(|| {
-                "could not derive a default S1 public endpoint from the main public endpoint"
-                    .to_string()
-            })?;
-        match stream_public_endpoint {
-            Some(value) => {
-                validate_client_reachable_endpoint(&value)?;
-                Some(value)
-            }
-            None if yes => Some(default_endpoint),
-            None => {
-                let value = prompt_string("S1 client-reachable endpoint", Some(&default_endpoint))?;
                 validate_client_reachable_endpoint(&value)?;
                 Some(value)
             }
@@ -241,9 +198,6 @@ pub(super) fn init_server(
         d2_public_endpoint: d2.as_ref().map(|value| value.public_endpoint.clone()),
         d2_certificate: d2.as_ref().map(|value| value.certificate_spec.clone()),
         d2_private_key: d2.as_ref().map(|value| value.private_key_spec.clone()),
-        stream_bind,
-        stream_public_endpoint,
-        stream_decoy_surface,
         endpoint_id,
         admission_key: "file:./shared-admission.key".to_string(),
         server_static_private_key: "file:./server-static-private.key".to_string(),
@@ -300,10 +254,6 @@ pub(super) fn init_server(
     match &config.d2_public_endpoint {
         Some(endpoint) => println!("  • D2 QUIC endpoint: {endpoint}"),
         None => println!("  • D2 QUIC endpoint: disabled"),
-    }
-    match &config.stream_public_endpoint {
-        Some(endpoint) => println!("  • Stream fallback endpoint: {endpoint}"),
-        None => println!("  • Stream fallback endpoint: disabled"),
     }
     println!("  • Tunnel subnet: {}", subnet);
     println!("  • Server tunnel IP: {}", config.tunnel_local_ipv4);

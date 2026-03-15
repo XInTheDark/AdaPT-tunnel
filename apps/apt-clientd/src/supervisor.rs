@@ -886,7 +886,6 @@ fn runtime_carrier_preference(carrier: ClientCarrier) -> RuntimeCarrierPreferenc
         ClientCarrier::Auto => RuntimeCarrierPreference::Auto,
         ClientCarrier::D1 => RuntimeCarrierPreference::D1,
         ClientCarrier::D2 => RuntimeCarrierPreference::D2,
-        ClientCarrier::S1 => RuntimeCarrierPreference::S1,
     }
 }
 

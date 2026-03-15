@@ -115,7 +115,7 @@ pub(super) fn add_client(
     let client_config = ClientConfig {
         server_addr: server_config.public_endpoint.clone(),
         mode: server_config.mode,
-        preferred_carrier: RuntimeCarrierPreference::D1,
+        preferred_carrier: RuntimeCarrierPreference::Auto,
         auth_profile,
         endpoint_id: server_config.endpoint_id.clone(),
         admission_key: encode_key_hex(&bundle_admission_key),
@@ -130,8 +130,6 @@ pub(super) fn add_client(
         d2_server_addr: d2_bundle.as_ref().map(|value| value.endpoint.clone()),
         d2_server_certificate: d2_bundle.as_ref().map(|value| value.certificate.clone()),
         session_policy: SessionPolicy::default(),
-        enable_s1_fallback: true,
-        stream_server_addr: server_config.stream_public_endpoint.clone(),
         allow_session_migration: true,
         standby_health_check_secs: 0,
         keepalive_secs: 25,

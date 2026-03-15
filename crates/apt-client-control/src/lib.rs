@@ -19,7 +19,6 @@ pub enum ClientCarrier {
     Auto,
     D1,
     D2,
-    S1,
 }
 
 impl ClientCarrier {
@@ -29,7 +28,6 @@ impl ClientCarrier {
             Self::Auto => "auto",
             Self::D1 => "d1",
             Self::D2 => "d2",
-            Self::S1 => "s1",
         }
     }
 }
@@ -305,6 +303,5 @@ mod tests {
         assert_eq!(ClientCarrier::Auto.as_str(), "auto");
         assert_eq!(ClientCarrier::D1.as_str(), "d1");
         assert_eq!(ClientCarrier::D2.as_str(), "d2");
-        assert_eq!(ClientCarrier::S1.as_str(), "s1");
     }
 }

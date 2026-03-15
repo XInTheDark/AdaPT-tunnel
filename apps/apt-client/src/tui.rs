@@ -369,8 +369,7 @@ fn next_carrier(current: ClientCarrier) -> ClientCarrier {
     match current {
         ClientCarrier::Auto => ClientCarrier::D1,
         ClientCarrier::D1 => ClientCarrier::D2,
-        ClientCarrier::D2 => ClientCarrier::S1,
-        ClientCarrier::S1 => ClientCarrier::Auto,
+        ClientCarrier::D2 => ClientCarrier::Auto,
     }
 }
 

@@ -23,8 +23,6 @@ pub struct ClientOverrideConfig {
     pub d2_server_addr: Option<String>,
     pub d2_server_certificate: Option<String>,
     pub session_policy: Option<SessionPolicy>,
-    pub enable_s1_fallback: Option<bool>,
-    pub stream_server_addr: Option<String>,
     pub allow_session_migration: Option<bool>,
     pub standby_health_check_secs: Option<u64>,
     pub keepalive_secs: Option<u64>,
@@ -41,6 +39,7 @@ pub fn apply_optional_client_override(
     bundle_path: &Path,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let override_path = client_bundle_override_path(bundle_path);
+    super::strip_legacy_s1_surface(config);
     if !override_path.exists() {
         return Ok(override_path);
     }
@@ -108,12 +107,6 @@ impl ClientOverrideConfig {
         if let Some(session_policy) = self.session_policy.as_ref() {
             config.session_policy = session_policy.clone();
         }
-        if let Some(enable_s1_fallback) = self.enable_s1_fallback {
-            config.enable_s1_fallback = enable_s1_fallback;
-        }
-        if let Some(stream_server_addr) = self.stream_server_addr.as_ref() {
-            config.stream_server_addr = normalized_optional_string(stream_server_addr);
-        }
         if let Some(allow_session_migration) = self.allow_session_migration {
             config.allow_session_migration = allow_session_migration;
         }
@@ -145,6 +138,7 @@ impl ClientOverrideConfig {
                 state_path.clone()
             };
         }
+        super::strip_legacy_s1_surface(config);
     }
 }
 
@@ -180,7 +174,7 @@ mod tests {
         ClientConfig {
             server_addr: "198.51.100.10:51820".to_string(),
             mode: Mode::STEALTH,
-            preferred_carrier: RuntimeCarrierPreference::D1,
+            preferred_carrier: RuntimeCarrierPreference::Auto,
             auth_profile: AuthProfile::PerUser,
             endpoint_id: "adapt-demo".to_string(),
             admission_key: "11".repeat(32),
@@ -195,8 +189,6 @@ mod tests {
             d2_server_addr: Some("198.51.100.10:443".to_string()),
             d2_server_certificate: Some("BASE64-D2-CERT".to_string()),
             session_policy: SessionPolicy::default(),
-            enable_s1_fallback: true,
-            stream_server_addr: Some("198.51.100.10:443".to_string()),
             allow_session_migration: true,
             standby_health_check_secs: 0,
             keepalive_secs: 25,
@@ -215,13 +207,11 @@ mod tests {
         ClientOverrideConfig {
             interface_name: Some(String::new()),
             d2_server_addr: Some(String::new()),
-            stream_server_addr: Some(String::new()),
             ..ClientOverrideConfig::default()
         }
         .apply_to(&mut config, Path::new("/tmp/client.override.toml"));
         assert_eq!(config.interface_name, None);
         assert_eq!(config.d2_server_addr, None);
-        assert_eq!(config.stream_server_addr, None);
     }
 
     #[test]
@@ -250,5 +240,16 @@ mod tests {
             config.d2_server_certificate.as_deref(),
             Some("file:/etc/adapt/certs/d2.pem")
         );
+    }
+
+    #[test]
+    fn preferred_carrier_s1_is_sanitized_back_to_auto() {
+        let mut config = test_config();
+        ClientOverrideConfig {
+            preferred_carrier: Some(RuntimeCarrierPreference::S1),
+            ..ClientOverrideConfig::default()
+        }
+        .apply_to(&mut config, Path::new("/etc/adapt/client.override.toml"));
+        assert_eq!(config.preferred_carrier, RuntimeCarrierPreference::Auto);
     }
 }

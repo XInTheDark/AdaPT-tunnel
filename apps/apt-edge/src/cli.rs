@@ -77,15 +77,6 @@ pub(super) enum Command {
         /// Client-reachable host:port for the D2 QUIC carrier.
         #[arg(long)]
         d2_public_endpoint: Option<String>,
-        /// TCP listen address for the stream fallback carrier.
-        #[arg(long)]
-        stream_bind: Option<SocketAddr>,
-        /// Client-reachable host:port for the stream fallback carrier.
-        #[arg(long)]
-        stream_public_endpoint: Option<String>,
-        /// Return a decoy-like HTTP surface on invalid stream input.
-        #[arg(long, default_value_t = true)]
-        stream_decoy_surface: bool,
         /// Logical deployment identifier.
         #[arg(long)]
         endpoint_id: Option<String>,

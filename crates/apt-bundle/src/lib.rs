@@ -33,6 +33,10 @@ pub use client_override::{
     apply_optional_client_override, ensure_client_override_file, ClientOverrideConfig,
 };
 
+pub(crate) fn strip_legacy_s1_surface(config: &mut ClientConfig) {
+    config.preferred_carrier = config.preferred_carrier.normalize_legacy();
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientBundle {
     pub client_name: String,
@@ -97,7 +101,7 @@ struct LegacyClientConfig {
 
 impl From<LegacyClientBundle> for ClientBundle {
     fn from(value: LegacyClientBundle) -> Self {
-        Self {
+        let mut bundle = Self {
             client_name: value.client_name,
             config: ClientConfig {
                 server_addr: value.config.server_addr,
@@ -117,8 +121,6 @@ impl From<LegacyClientBundle> for ClientBundle {
                 d2_server_addr: value.config.d2_server_addr,
                 d2_server_certificate: value.config.d2_server_certificate,
                 session_policy: value.config.session_policy,
-                enable_s1_fallback: value.config.enable_s1_fallback,
-                stream_server_addr: value.config.stream_server_addr,
                 allow_session_migration: value.config.allow_session_migration,
                 standby_health_check_secs: value.config.standby_health_check_secs,
                 keepalive_secs: value.config.keepalive_secs,
@@ -129,7 +131,9 @@ impl From<LegacyClientBundle> for ClientBundle {
                 udp_send_buffer_bytes: value.config.udp_send_buffer_bytes,
                 state_path: value.config.state_path,
             },
-        }
+        };
+        strip_legacy_s1_surface(&mut bundle.config);
+        bundle
     }
 }
 
@@ -150,7 +154,9 @@ pub enum BundleError {
 }
 
 pub fn encode_client_bundle(bundle: &ClientBundle) -> Result<Vec<u8>, BundleError> {
-    let payload = bincode::serialize(bundle)?;
+    let mut sanitized = bundle.clone();
+    strip_legacy_s1_surface(&mut sanitized.config);
+    let payload = bincode::serialize(&sanitized)?;
     let compressed = zstd::encode_all(payload.as_slice(), DEFAULT_ZSTD_LEVEL)?;
     let digest = Sha256::digest(&compressed);
     let mut encoded = Vec::with_capacity(HEADER_LEN + compressed.len());
@@ -194,8 +200,11 @@ pub fn decode_client_bundle(bytes: &[u8]) -> Result<ClientBundle, BundleError> {
         return Err(BundleError::Integrity);
     }
     let decoded = zstd::decode_all(payload)?;
-    match bincode::deserialize(&decoded) {
-        Ok(bundle) => Ok(bundle),
+    match bincode::deserialize::<ClientBundle>(&decoded) {
+        Ok(mut bundle) => {
+            strip_legacy_s1_surface(&mut bundle.config);
+            Ok(bundle)
+        }
         Err(primary_error) => match bincode::deserialize::<LegacyClientBundle>(&decoded) {
             Ok(bundle) => Ok(bundle.into()),
             Err(_) => Err(BundleError::Serialization(primary_error)),
@@ -257,7 +266,7 @@ mod tests {
             config: ClientConfig {
                 server_addr: "198.51.100.10:51820".to_string(),
                 mode: Mode::STEALTH,
-                preferred_carrier: RuntimeCarrierPreference::D1,
+                preferred_carrier: RuntimeCarrierPreference::Auto,
                 auth_profile: AuthProfile::PerUser,
                 endpoint_id: "adapt-demo".to_string(),
                 admission_key: "11".repeat(32),
@@ -272,8 +281,6 @@ mod tests {
                 d2_server_addr: Some("198.51.100.10:443".to_string()),
                 d2_server_certificate: Some("BASE64-D2-CERT".to_string()),
                 session_policy: SessionPolicy::default(),
-                enable_s1_fallback: true,
-                stream_server_addr: Some("198.51.100.10:443".to_string()),
                 allow_session_migration: true,
                 standby_health_check_secs: 0,
                 keepalive_secs: 25,
@@ -302,7 +309,7 @@ mod tests {
             config: LegacyClientConfig {
                 server_addr: "198.51.100.10:51820".to_string(),
                 runtime_mode: LegacyRuntimeMode::Stealth,
-                preferred_carrier: RuntimeCarrierPreference::D1,
+                preferred_carrier: RuntimeCarrierPreference::S1,
                 auth_profile: AuthProfile::PerUser,
                 endpoint_id: "adapt-demo".to_string(),
                 admission_key: "11".repeat(32),
@@ -343,6 +350,22 @@ mod tests {
         let decoded = decode_client_bundle(&encoded).unwrap();
         assert_eq!(decoded.client_name, "laptop");
         assert_eq!(decoded.config.mode, Mode::STEALTH);
+        assert_eq!(
+            decoded.config.preferred_carrier,
+            RuntimeCarrierPreference::Auto
+        );
+    }
+
+    #[test]
+    fn encoding_strips_legacy_s1_surface_from_current_bundles() {
+        let mut bundle = test_bundle();
+        bundle.config.preferred_carrier = RuntimeCarrierPreference::S1;
+
+        let decoded = decode_client_bundle(&encode_client_bundle(&bundle).unwrap()).unwrap();
+        assert_eq!(
+            decoded.config.preferred_carrier,
+            RuntimeCarrierPreference::Auto
+        );
     }
 
     #[test]
