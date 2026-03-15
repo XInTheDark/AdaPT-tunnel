@@ -115,17 +115,20 @@ The normal operator flow is still:
 sudo ./target/release/apt-edge add-client --config /etc/adapt/server.toml --name laptop --auth per-user
 ```
 
-That produces a single-file bundle you can install as `/etc/adapt/client.aptbundle` on the client.
-On first client run, `apt-client up` also creates a blank optional override file at `/etc/adapt/client.override.toml`.
+That produces a single-file bundle you can install as `~/.adapt-tunnel/client.aptbundle` on the client.
+On first use, `apt-client up` also creates a blank optional override file at `~/.adapt-tunnel/client.override.toml`.
 
 ## 6. Start the client
 
 ```bash
-sudo ./target/release/apt-client up
+mkdir -p ~/.adapt-tunnel
+cp /path/to/laptop.aptbundle ~/.adapt-tunnel/client.aptbundle
+sudo ./target/release/apt-client service install
+./target/release/apt-client up
 ```
 
-If the bundle is installed at the default location `/etc/adapt/client.aptbundle`, the client stores persistent state at `/var/lib/adapt/client-state.toml`.
-Use `/etc/adapt/client.override.toml` for client-local changes that should not require rebuilding the bundle.
+If the bundle is installed at the default location `~/.adapt-tunnel/client.aptbundle`, the client stores persistent state at `~/.adapt-tunnel/client.state.toml`.
+Use `~/.adapt-tunnel/client.override.toml` for client-local changes that should not require rebuilding the bundle.
 
 Optional one-shot overrides:
 
@@ -135,7 +138,7 @@ Optional one-shot overrides:
 To run a bundle from a non-default location:
 
 ```bash
-sudo ./target/release/apt-client up --bundle /path/to/laptop.aptbundle
+./target/release/apt-client up --bundle /path/to/laptop.aptbundle
 ```
 
 That direct-launch path creates a sidecar override file such as `/path/to/laptop.override.toml`.

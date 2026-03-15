@@ -7,7 +7,8 @@ Use this after following `guides/DEPLOYMENT.md`.
 Before walking through the manual checklist, you can run the built-in client QA helper:
 
 ```bash
-sudo ./target/release/apt-client test
+sudo ./target/release/apt-client service install
+./target/release/apt-client test
 ```
 
 It brings the tunnel up temporarily, runs tunnel ping checks plus DNS/public-egress/download checks when full-tunnel routing is active, and then disconnects automatically. The manual steps below are still useful when you want deeper carrier-specific validation or more targeted debugging.
@@ -24,7 +25,7 @@ sudo ./target/release/apt-edge start --config /etc/adapt/server.toml
 Start the client:
 
 ```bash
-sudo ./target/release/apt-client up
+./target/release/apt-client up
 ```
 
 Expected result:
@@ -186,7 +187,7 @@ Expected:
 If your server config includes `d2_bind` / `d2_public_endpoint`, validate `D2` directly:
 
 ```bash
-sudo ./target/release/apt-client up --carrier d2
+./target/release/apt-client up --carrier d2
 ```
 
 Expected:
@@ -200,7 +201,7 @@ Expected:
 If your server config includes `stream_bind` / `stream_public_endpoint`, you can validate the `S1` runtime directly:
 
 ```bash
-sudo ./target/release/apt-client up --carrier s1
+./target/release/apt-client up --carrier s1
 ```
 
 Expected:
@@ -212,7 +213,7 @@ Expected:
 You can then return to the normal conservative preference order with:
 
 ```bash
-sudo ./target/release/apt-client up --carrier auto
+./target/release/apt-client up --carrier auto
 ```
 
 ## 11. Resume-ticket smoke test

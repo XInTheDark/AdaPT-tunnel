@@ -1,90 +1,14 @@
-use super::{find_client_bundle, prompt_bundle_path, CliCarrier};
-use clap::Args;
-use std::{
-    fmt,
-    net::{Ipv4Addr, Ipv6Addr},
-    path::PathBuf,
+use crate::{
+    cli::QaOptions,
+    paths::{ensure_user_owned_override, resolve_client_bundle_path},
 };
+use std::fmt;
 
 mod probes;
 mod process;
 
 use self::probes::{run_dns_check, run_ping_check, run_public_ip_check, run_speedtest};
-use self::process::{
-    drain_client_output, shutdown_client_process, spawn_client_up_process,
-    wait_for_established_session,
-};
-
-const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 20;
-const DEFAULT_PING_COUNT: u8 = 4;
-const DEFAULT_DNS_HOST: &str = "example.com";
-const DEFAULT_PUBLIC_IP_URL: &str = "https://api.ipify.org";
-const DEFAULT_SPEEDTEST_BYTES: usize = 25_000_000;
-const DEFAULT_SPEEDTEST_TIMEOUT_SECS: u64 = 45;
-
-#[derive(Debug, Clone, Args)]
-pub(super) struct QaOptions {
-    /// Path to the client bundle file. If omitted, common default locations are searched.
-    #[arg(long)]
-    pub bundle: Option<PathBuf>,
-    /// Override the numeric mode for this test run only (0 = speed, 100 = stealth).
-    #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
-    pub mode: Option<u8>,
-    /// Override the preferred carrier for this test run only.
-    #[arg(long, value_enum)]
-    pub carrier: Option<CliCarrier>,
-    /// Seconds to wait for `apt-client up` to establish the tunnel before failing.
-    #[arg(long, default_value_t = DEFAULT_CONNECT_TIMEOUT_SECS)]
-    pub connect_timeout_secs: u64,
-    /// Number of ICMP echo requests to send for each tunnel ping probe.
-    #[arg(long, default_value_t = DEFAULT_PING_COUNT)]
-    pub ping_count: u8,
-    /// Hostname to resolve during the DNS check.
-    #[arg(long, default_value = DEFAULT_DNS_HOST)]
-    pub dns_host: String,
-    /// URL used for the public egress-IP check when full-tunnel routing is active.
-    #[arg(long, default_value = DEFAULT_PUBLIC_IP_URL)]
-    pub public_ip_url: String,
-    /// Optional override URL for the throughput/speed test.
-    #[arg(long)]
-    pub speedtest_url: Option<String>,
-    /// Byte target for the default download throughput test endpoint.
-    #[arg(long, default_value_t = DEFAULT_SPEEDTEST_BYTES)]
-    pub speedtest_bytes: usize,
-    /// Timeout for the download throughput test.
-    #[arg(long, default_value_t = DEFAULT_SPEEDTEST_TIMEOUT_SECS)]
-    pub speedtest_timeout_secs: u64,
-    /// Skip the DNS lookup test.
-    #[arg(long, default_value_t = false)]
-    pub skip_dns: bool,
-    /// Skip the public egress-IP check.
-    #[arg(long, default_value_t = false)]
-    pub skip_public_ip: bool,
-    /// Skip the download throughput test.
-    #[arg(long, default_value_t = false)]
-    pub skip_speedtest: bool,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct EstablishedSession {
-    pub server: String,
-    pub tunnel_ipv4: Ipv4Addr,
-    pub tunnel_ipv6: Option<Ipv6Addr>,
-    pub server_tunnel_ipv4: Ipv4Addr,
-    pub server_tunnel_ipv6: Option<Ipv6Addr>,
-    pub interface_name: String,
-    pub routes: Vec<String>,
-    pub carrier: String,
-    pub negotiated_mode: u8,
-}
-
-impl EstablishedSession {
-    pub(super) fn has_default_route(&self) -> bool {
-        self.routes
-            .iter()
-            .any(|route| route == "0.0.0.0/0" || route == "::/0")
-    }
-}
+use self::process::{connect_and_wait_for_established, disconnect_session, EstablishedSession};
 
 #[derive(Debug, Clone)]
 pub(super) struct QaCheckResult {
@@ -136,19 +60,22 @@ pub(super) fn skip_result(name: &'static str, detail: impl Into<String>) -> QaCh
 
 pub(super) async fn run_targeted_tests(
     options: QaOptions,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let bundle_path = match options.bundle.clone() {
-        Some(path) => path,
-        None => find_client_bundle().unwrap_or(prompt_bundle_path()?),
-    };
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let bundle_path = resolve_client_bundle_path(options.launch.bundle.clone())?;
+    let _ = ensure_user_owned_override(&bundle_path)?;
     println!("Using client bundle: {}", bundle_path.display());
-    println!("Launching a temporary client session for QA...\n");
+    println!("Launching a temporary daemon-managed client session for QA...\n");
 
-    let mut child = spawn_client_up_process(&bundle_path, options.mode, options.carrier)?;
-    let ready = match wait_for_established_session(&mut child, options.connect_timeout_secs).await {
+    let ready = match connect_and_wait_for_established(
+        &options.launch,
+        bundle_path,
+        options.connect_timeout_secs,
+    )
+    .await
+    {
         Ok(ready) => ready,
         Err(error) => {
-            shutdown_client_process(&mut child).await.ok();
+            let _ = disconnect_session().await;
             return Err(error);
         }
     };
@@ -156,18 +83,11 @@ pub(super) async fn run_targeted_tests(
     println!();
     print_session_summary(&ready);
 
-    let line_forwarder = tokio::spawn(drain_client_output(
-        child
-            .lines_rx
-            .take()
-            .expect("child output receiver should exist after readiness"),
-    ));
-    let qa_result = execute_qa_suite(&ready, &options, child.pid).await;
-    let shutdown_result = shutdown_client_process(&mut child).await;
-    line_forwarder.await.ok();
+    let qa_result = execute_qa_suite(&ready, &options).await;
+    let shutdown_result = disconnect_session().await;
 
     if let Err(error) = shutdown_result {
-        eprintln!("warning: failed to shut down test client cleanly: {error}");
+        eprintln!("warning: failed to shut down the test session cleanly: {error}");
     }
 
     qa_result
@@ -198,8 +118,7 @@ fn print_session_summary(ready: &EstablishedSession) {
 async fn execute_qa_suite(
     ready: &EstablishedSession,
     options: &QaOptions,
-    child_pid: u32,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut results = Vec::new();
     results.push(
         run_ping_check(
@@ -222,75 +141,65 @@ async fn execute_qa_suite(
     } else {
         results.push(skip_result(
             "Tunnel IPv6 ping",
-            "server did not advertise an IPv6 tunnel address",
+            "no server tunnel IPv6 was negotiated",
         ));
     }
 
-    let can_run_public_checks = ready.has_default_route();
-    if !options.skip_dns {
-        if can_run_public_checks {
-            results.push(run_dns_check(&options.dns_host).await);
-        } else {
-            results.push(skip_result(
-                "DNS resolution",
-                "no default tunnel route detected; skipping internet-facing DNS QA",
-            ));
-        }
+    if options.skip_dns {
+        results.push(skip_result("DNS resolution", "skipped by flag"));
+    } else if ready.has_default_route() {
+        results.push(run_dns_check(&options.dns_host).await);
+    } else {
+        results.push(skip_result(
+            "DNS resolution",
+            "active routes do not include a default route",
+        ));
     }
 
-    if !options.skip_public_ip {
-        if can_run_public_checks {
-            results.push(run_public_ip_check(&options.public_ip_url).await);
-        } else {
-            results.push(skip_result(
-                "Public egress IP",
-                "no default tunnel route detected; skipping public egress-IP check",
-            ));
-        }
+    if options.skip_public_ip {
+        results.push(skip_result("Public egress IP", "skipped by flag"));
+    } else if ready.has_default_route() {
+        results.push(run_public_ip_check(&options.public_ip_url).await);
+    } else {
+        results.push(skip_result(
+            "Public egress IP",
+            "active routes do not include a default route",
+        ));
     }
 
-    if !options.skip_speedtest {
-        if can_run_public_checks || options.speedtest_url.is_some() {
-            results.push(
-                run_speedtest(
-                    options.speedtest_url.as_deref(),
-                    options.speedtest_bytes,
-                    options.speedtest_timeout_secs,
-                    child_pid,
-                )
-                .await,
-            );
-        } else {
-            results.push(skip_result(
-                "Download throughput",
-                "no default tunnel route detected and no explicit --speedtest-url was provided",
-            ));
-        }
+    if options.skip_speedtest {
+        results.push(skip_result("Download throughput", "skipped by flag"));
+    } else if ready.has_default_route() || options.speedtest_url.is_some() {
+        results.push(
+            run_speedtest(
+                options.speedtest_url.as_deref(),
+                options.speedtest_bytes,
+                options.speedtest_timeout_secs,
+                ready.daemon_pid,
+            )
+            .await,
+        );
+    } else {
+        results.push(skip_result(
+            "Download throughput",
+            "no default route is active and no explicit speedtest URL was supplied",
+        ));
     }
 
     print_results(&results);
-    let failed = results
+
+    if results
         .iter()
-        .filter(|result| matches!(result.outcome, QaOutcome::Fail))
-        .count();
-    if failed > 0 {
-        return Err(format!("{} QA check(s) failed", failed).into());
+        .any(|result| result.outcome == QaOutcome::Fail)
+    {
+        return Err("one or more QA checks failed".into());
     }
     Ok(())
 }
 
 fn print_results(results: &[QaCheckResult]) {
-    println!("\nQA results:");
-    let mut passed = 0usize;
-    let mut failed = 0usize;
-    let mut skipped = 0usize;
+    println!("QA results:");
     for result in results {
-        match result.outcome {
-            QaOutcome::Pass => passed += 1,
-            QaOutcome::Fail => failed += 1,
-            QaOutcome::Skip => skipped += 1,
-        }
         println!("  [{}] {} — {}", result.outcome, result.name, result.detail);
     }
-    println!("\nSummary: {passed} passed, {failed} failed, {skipped} skipped");
 }

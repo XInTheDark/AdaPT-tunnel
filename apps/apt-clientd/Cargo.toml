@@ -1,5 +1,5 @@
 [package]
-name = "apt-client"
+name = "apt-clientd"
 version.workspace = true
 edition.workspace = true
 
@@ -8,11 +8,11 @@ apt-bundle.workspace = true
 apt-client-control.workspace = true
 apt-runtime.workspace = true
 clap.workspace = true
-crossterm.workspace = true
-ratatui.workspace = true
-reqwest.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [lints]

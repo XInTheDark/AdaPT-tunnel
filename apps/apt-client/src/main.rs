@@ -1,94 +1,27 @@
 //! User-friendly CLI for the APT VPN client.
 
-use apt_bundle::{client_bundle_state_path, load_client_bundle, DEFAULT_CLIENT_BUNDLE_FILE_NAME};
-use apt_runtime::{
-    generate_client_identity, run_client, write_key_file, ClientConfig, Mode,
-    RuntimeCarrierPreference,
-};
-use clap::{value_parser, Parser, Subcommand, ValueEnum};
-use std::{
-    io::{self, Write},
-    path::{Path, PathBuf},
-};
+use apt_runtime::{generate_client_identity, write_key_file};
+use clap::Parser;
+use std::path::PathBuf;
 use tracing_subscriber::{fmt, EnvFilter};
 
+mod cli;
+mod daemon_client;
 mod import;
-mod override_config;
+mod paths;
 mod qa;
+mod service;
+mod tui;
+mod up;
 
-use self::import::import_client_bundle;
-use self::override_config::apply_optional_client_override;
-use self::qa::{run_targeted_tests, QaOptions};
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum CliCarrier {
-    Auto,
-    D1,
-    D2,
-    S1,
-}
-
-impl From<CliCarrier> for RuntimeCarrierPreference {
-    fn from(value: CliCarrier) -> Self {
-        match value {
-            CliCarrier::Auto => Self::Auto,
-            CliCarrier::D1 => Self::D1,
-            CliCarrier::D2 => Self::D2,
-            CliCarrier::S1 => Self::S1,
-        }
-    }
-}
-
-#[derive(Debug, Parser)]
-#[command(
-    name = "apt-client",
-    about = "APT VPN client",
-    long_about = "APT VPN client. Import a temporary bundle with `apt-client import`, start the tunnel with `apt-client up`, or run targeted QA with `apt-client test`."
-)]
-struct Cli {
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Debug, Subcommand)]
-enum Command {
-    /// Import a client bundle from a temporary host-provided import endpoint.
-    Import {
-        /// Temporary host:port displayed by `apt-edge add-client`.
-        #[arg(long)]
-        server: String,
-        /// Temporary import key displayed by `apt-edge add-client`.
-        #[arg(long)]
-        key: String,
-        /// Path where the imported bundle should be stored.
-        #[arg(long)]
-        bundle: Option<PathBuf>,
-    },
-    /// Start the VPN using a client config bundle.
-    #[command(alias = "connect", alias = "start", alias = "run")]
-    Up {
-        /// Path to the client bundle file. If omitted, common default locations are searched.
-        #[arg(long)]
-        bundle: Option<PathBuf>,
-        /// Override the numeric mode for this launch only (0 = speed, 100 = stealth).
-        #[arg(long, value_parser = value_parser!(u8).range(0..=100))]
-        mode: Option<u8>,
-        /// Override the preferred carrier for this launch only.
-        #[arg(long, value_enum)]
-        carrier: Option<CliCarrier>,
-    },
-    /// Bring the tunnel up temporarily and run targeted QA checks.
-    Test {
-        #[command(flatten)]
-        options: QaOptions,
-    },
-    /// Advanced: generate only a standalone client identity.
-    #[command(hide = true)]
-    GenIdentity {
-        #[arg(long)]
-        out_dir: PathBuf,
-    },
-}
+use self::{
+    cli::{Cli, Command},
+    import::import_client_bundle,
+    qa::run_targeted_tests,
+    service::handle_service_command,
+    tui::run_tui,
+    up::start_client,
+};
 
 #[tokio::main]
 async fn main() {
@@ -99,59 +32,23 @@ async fn main() {
     }
 }
 
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
+async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match Cli::parse().command {
         Command::Import {
             server,
             key,
             bundle,
         } => import_client_bundle(server, key, bundle).await?,
-        Command::Up {
-            bundle,
-            mode,
-            carrier,
-        } => start_client(bundle, mode, carrier).await?,
+        Command::Up { launch } => start_client(launch).await?,
         Command::Test { options } => run_targeted_tests(options).await?,
+        Command::Tui { options } => run_tui(options).await?,
+        Command::Service { command } => handle_service_command(command).await?,
         Command::GenIdentity { out_dir } => generate_identity(&out_dir)?,
     }
     Ok(())
 }
 
-async fn start_client(
-    bundle: Option<PathBuf>,
-    mode: Option<u8>,
-    carrier: Option<CliCarrier>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let bundle_path = match bundle {
-        Some(path) => path,
-        None => find_client_bundle().unwrap_or(prompt_bundle_path()?),
-    };
-    println!("Using client bundle: {}", bundle_path.display());
-    println!("Connecting to the VPN... Press Ctrl-C to disconnect.\n");
-    let loaded = load_bundle_config(&bundle_path)?;
-    let mut resolved = loaded.resolve()?;
-    if let Some(mode) = mode {
-        let mode = Mode::try_from(mode).expect("clap validated mode range");
-        resolved.mode = mode;
-    }
-    if let Some(carrier) = carrier {
-        resolved.preferred_carrier = carrier.into();
-        resolved.strict_preferred_carrier = !matches!(carrier, CliCarrier::Auto);
-    }
-    let result = run_client(resolved).await?;
-    println!("\nVPN session ended.");
-    if !result.status.tunnel_addresses.is_empty() {
-        println!("Last tunnel IPs:");
-        for address in &result.status.tunnel_addresses {
-            println!("  • {address}");
-        }
-    } else if let Some(tunnel_ip) = result.status.tunnel_address {
-        println!("Last tunnel IP: {tunnel_ip}");
-    }
-    Ok(())
-}
-
-fn generate_identity(out_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn generate_identity(out_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let identity = generate_client_identity()?;
     write_key_file(
         &out_dir.join("client-static-private.key"),
@@ -166,41 +63,6 @@ fn generate_identity(out_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>
         out_dir.display()
     );
     Ok(())
-}
-
-fn load_bundle_config(bundle_path: &Path) -> Result<ClientConfig, Box<dyn std::error::Error>> {
-    let mut bundle = load_client_bundle(bundle_path)?;
-    bundle.config.state_path = client_bundle_state_path(bundle_path);
-    let override_path = apply_optional_client_override(&mut bundle.config, bundle_path)?;
-    println!("Local override file: {}", override_path.display());
-    Ok(bundle.config)
-}
-
-fn find_client_bundle() -> Option<PathBuf> {
-    [
-        PathBuf::from("/etc/adapt").join(DEFAULT_CLIENT_BUNDLE_FILE_NAME),
-        PathBuf::from(format!("./{DEFAULT_CLIENT_BUNDLE_FILE_NAME}")),
-        PathBuf::from("./adapt-client").join(DEFAULT_CLIENT_BUNDLE_FILE_NAME),
-    ]
-    .into_iter()
-    .find(|path| path.exists())
-}
-
-fn prompt_bundle_path() -> io::Result<PathBuf> {
-    let mut stdout = io::stdout();
-    write!(
-        stdout,
-        "Path to client bundle [/etc/adapt/{DEFAULT_CLIENT_BUNDLE_FILE_NAME}]: "
-    )?;
-    stdout.flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let trimmed = input.trim();
-    Ok(if trimmed.is_empty() {
-        PathBuf::from("/etc/adapt").join(DEFAULT_CLIENT_BUNDLE_FILE_NAME)
-    } else {
-        PathBuf::from(trimmed)
-    })
 }
 
 fn init_logging() {

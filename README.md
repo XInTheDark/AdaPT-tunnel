@@ -90,31 +90,35 @@ sudo journalctl -u apt-edge -f
 
 ### Client flow
 
-The easiest flow is to run the one-time import command that `apt-edge add-client` prints, for example:
+The easiest flow is to run the one-time import command that `apt-edge add-client` prints, then install the privileged local daemon once and connect without `sudo` afterwards:
 
 ```bash
-sudo apt-client import --server vpn.example.com:40123 --key <temporary-key>
-sudo apt-client up
+apt-client import --server vpn.example.com:40123 --key <temporary-key>
+sudo apt-client service install
+apt-client up
 # or run an automated QA pass that brings the tunnel up temporarily and tears it back down
-sudo apt-client test
+apt-client test
 ```
 
-That imports the generated bundle into `/etc/adapt/client.aptbundle` by default.
+That imports the generated bundle into `~/.adapt-tunnel/client.aptbundle` by default.
 
-If you prefer the manual fallback path, copy the generated client bundle file into `/etc/adapt/client.aptbundle` on the client device, then run:
+If you prefer the manual fallback path, copy the generated client bundle file into `~/.adapt-tunnel/client.aptbundle` on the client device, then run:
 
 ```bash
-sudo apt-client up
+mkdir -p ~/.adapt-tunnel
+cp /path/to/laptop.aptbundle ~/.adapt-tunnel/client.aptbundle
+sudo apt-client service install
+apt-client up
 ```
 
-With that default install path, the client stores its persistent state in `/var/lib/adapt/client-state.toml`.
-On first run, the client also creates a blank optional override file at `/etc/adapt/client.override.toml` for local non-secret tweaks.
+With that default install path, the client stores its persistent state in `~/.adapt-tunnel/client.state.toml`.
+On first use, the client also creates a blank optional override file at `~/.adapt-tunnel/client.override.toml` for local non-secret tweaks.
 
 On macOS, the client should normally let the OS auto-create a `utun` interface instead of hardcoding a custom TUN name.
 
 When the session comes up, the client now logs the assigned tunnel IP, interface, and routes. If the server pushed DNS servers, the client also applies them automatically where the local platform supports it. The server logs when a client session is established.
 
-If you prefer not to install the bundle into `/etc/adapt`, you can still run it directly with `--bundle /path/to/laptop.aptbundle`.
+If you prefer not to install the bundle into `~/.adapt-tunnel`, you can still run it directly with `--bundle /path/to/laptop.aptbundle`.
 In that direct-launch case, the client creates a sidecar override file next to the bundle, for example `laptop.override.toml`.
 
 ## Recommended quickstart
@@ -174,12 +178,13 @@ If you want the server to come back automatically after reboot, answer `y` to th
 
 ### On the client
 
-Run the one-time `apt-client import --server ... --key ...` command shown by `apt-edge add-client`, then either connect normally or run the built-in QA pass:
+Run the one-time `apt-client import --server ... --key ...` command shown by `apt-edge add-client`, install the local daemon once, then either connect normally or run the built-in QA pass:
 
 ```bash
-sudo apt-client up
+sudo apt-client service install
+apt-client up
 # or
-sudo apt-client test
+apt-client test
 ```
 
 ## CLI reference
@@ -282,19 +287,32 @@ Useful options:
 - `--key` — one-time temporary import key printed by `apt-edge add-client`
 - `--bundle` — optional custom path where the imported single-file bundle should be written
 
-#### `apt-client up`
-Start the VPN using a generated client bundle.
+By default the imported bundle is stored at `~/.adapt-tunnel/client.aptbundle`.
 
-Useful option:
+#### `apt-client service install|uninstall|status`
+Install, remove, or inspect the privileged local client daemon that owns TUN/routes/DNS setup.
+
+Typical first-time setup:
+
+```bash
+sudo apt-client service install
+```
+
+After that, normal client connects and tests do not need `sudo` anymore.
+
+#### `apt-client up`
+Connect through the local client daemon using a generated client bundle and stay attached to its live events.
+
+Useful options:
 
 - `--bundle` — path to the single-file client bundle
 - `--mode 0..100` — one-shot numeric mode override (`0` = speed, `50` = balanced, `100` = stealth)
 - `--carrier auto|d1|d2|s1` — one-shot preferred-carrier override
 
-If omitted, the client tries common default locations first. It also auto-creates a blank optional override TOML next to the installed bundle so local client-only settings can be edited without changing the bundle itself.
+If omitted, the client first checks `~/.adapt-tunnel/client.aptbundle`, then the current-directory dev fallbacks. It also auto-creates a blank optional override TOML next to the selected bundle so local client-only settings can be edited without changing the bundle itself.
 
 #### `apt-client test`
-Bring the tunnel up temporarily and run a lightweight QA pass. The command automatically disconnects after the checks finish.
+Bring the tunnel up temporarily through the local daemon and run a lightweight QA pass. The command automatically disconnects after the checks finish.
 
 By default it always tests tunnel reachability with IPv4 ping, tries IPv6 ping when the session exposes an IPv6 tunnel address, and then runs DNS/public-egress/download checks when the active routes include a default route.
 
@@ -311,6 +329,9 @@ Useful options:
 - `--speedtest-bytes` — byte target for the default throughput endpoint
 - `--speedtest-timeout-secs` — timeout for the throughput probe
 - `--skip-dns`, `--skip-public-ip`, `--skip-speedtest` — disable specific checks
+
+#### `apt-client tui`
+Launch the terminal dashboard wrapper for the local daemon. It shows live status/stats/logs and lets you connect, disconnect, retry, change mode, change carrier, and change bundle from one screen.
 
 ## GitHub release assets
 

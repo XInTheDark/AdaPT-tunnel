@@ -1,17 +1,25 @@
 use super::*;
 use crate::dns::{configure_client_dns, DnsGuard};
+use apt_client_control::ClientRuntimeEvent;
 
 mod helpers;
 mod session;
 
+use helpers::{runtime_carrier, session_info};
 use session::run_client_session_loop;
 
 pub(super) async fn run_client(
     config: ResolvedClientConfig,
+    hooks: ClientRuntimeHooks,
 ) -> Result<ClientRuntimeResult, RuntimeError> {
     let observability = ObservabilityConfig::default();
     let mut telemetry = TelemetrySnapshot::new("apt-client");
     let carriers = RuntimeCarriers::new(1_380, false, config.d2.is_some());
+    hooks.emit(ClientRuntimeEvent::Starting {
+        server: config.server_addr.to_string(),
+        requested_mode: config.mode.value(),
+        preferred_carrier: runtime_carrier(config.preferred_carrier),
+    });
 
     let mut persistent_state = ClientPersistentState::load(&config.state_path)?;
     let network_context = discover_client_network_context(&config);
@@ -85,6 +93,16 @@ pub(super) async fn run_client(
             "server negotiated a different numeric mode than the client requested"
         );
     }
+    hooks.emit(ClientRuntimeEvent::SessionEstablished {
+        session: session_info(
+            &config,
+            &transport,
+            &tun.interface_name,
+            handshake.binding,
+            handshake.established.mode,
+            &effective_routes,
+        ),
+    });
 
     let credential_label = redact_credential(&handshake.established.credential_identity);
     record_event(
@@ -116,6 +134,7 @@ pub(super) async fn run_client(
         &mut persistent_state,
         &mut telemetry,
         &observability,
+        &hooks,
         &carriers,
     )
     .await?;

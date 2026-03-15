@@ -3,6 +3,8 @@ use super::helpers::{
     record_mode_change,
 };
 use super::*;
+use apt_client_control::ClientRuntimeEvent;
+use tokio::sync::watch;
 
 pub(super) async fn run_client_session_loop(
     config: &ResolvedClientConfig,
@@ -12,6 +14,7 @@ pub(super) async fn run_client_session_loop(
     persistent_state: &mut ClientPersistentState,
     telemetry: &mut TelemetrySnapshot,
     observability: &ObservabilityConfig,
+    hooks: &ClientRuntimeHooks,
     carriers: &RuntimeCarriers,
 ) -> Result<ClientStatus, RuntimeError> {
     let outer_keys = RuntimeOuterKeys::new(
@@ -91,6 +94,7 @@ pub(super) async fn run_client_session_loop(
     let mut migration_pressure = 0_u8;
     let mut next_standby_probe_secs =
         schedule_next_standby_probe(now_secs(), config.standby_health_check_secs, &adaptive);
+    let mut shutdown_rx = hooks.shutdown_rx.clone();
 
     loop {
         tokio::select! {
@@ -121,6 +125,7 @@ pub(super) async fn run_client_session_loop(
                                 persistent_state,
                                 telemetry,
                                 observability,
+                                hooks,
                                 session_id,
                             );
                         }
@@ -151,6 +156,7 @@ pub(super) async fn run_client_session_loop(
                                             record_mode_change(
                                                 telemetry,
                                                 observability,
+                                                hooks,
                                                 session_id,
                                                 mode,
                                             );
@@ -179,6 +185,9 @@ pub(super) async fn run_client_session_loop(
                                         standby_path_id.and_then(|id| paths.get(&id).map(|state| state.binding)),
                                         adaptive.current_mode(),
                                     );
+                                    hooks.emit(ClientRuntimeEvent::SessionEnded {
+                                        reason: Some("remote close".to_string()),
+                                    });
                                     return Ok(status);
                                 }
                                 _ => {}
@@ -194,6 +203,7 @@ pub(super) async fn run_client_session_loop(
                                 persistent_state,
                                 telemetry,
                                 observability,
+                                hooks,
                                 session_id,
                             );
                         }
@@ -230,7 +240,7 @@ pub(super) async fn run_client_session_loop(
                         if Some(path_id) == Some(active_path_id) {
                             migration_pressure = migration_pressure.saturating_add(1);
                             if let Some(mode) = adaptive.apply_signal(PathSignalEvent::ImmediateReset, now_secs()) {
-                                record_mode_change(telemetry, observability, session_id, mode);
+                                record_mode_change(telemetry, observability, hooks, session_id, mode);
                             }
                             if !promote_standby_if_available(
                                 standby_path_id,
@@ -241,6 +251,7 @@ pub(super) async fn run_client_session_loop(
                                 persistent_state,
                                 telemetry,
                                 observability,
+                                hooks,
                                 session_id,
                             ) && reason == "stream closed" {
                                 record_event(
@@ -301,7 +312,7 @@ pub(super) async fn run_client_session_loop(
                 let now = now_secs();
                 if let Some(mode) = adaptive.maybe_observe_stability(now) {
                     migration_pressure = migration_pressure.saturating_sub(1);
-                    record_mode_change(telemetry, observability, session_id, mode);
+                    record_mode_change(telemetry, observability, hooks, session_id, mode);
                     persist_client_learning(persistent_state, &adaptive);
                     persistent_state.store(&config.state_path)?;
                 }
@@ -311,7 +322,7 @@ pub(super) async fn run_client_session_loop(
                     paths.get(&active_path_id).map_or(now, |path| path.last_recv_secs),
                 ) {
                     migration_pressure = migration_pressure.saturating_add(1);
-                    record_mode_change(telemetry, observability, session_id, mode);
+                    record_mode_change(telemetry, observability, hooks, session_id, mode);
                     persist_client_learning(persistent_state, &adaptive);
                     persistent_state.store(&config.state_path)?;
                 }
@@ -326,6 +337,7 @@ pub(super) async fn run_client_session_loop(
                         persistent_state,
                         telemetry,
                         observability,
+                        hooks,
                         session_id,
                     ) {
                         persist_client_learning(persistent_state, &adaptive);
@@ -343,6 +355,7 @@ pub(super) async fn run_client_session_loop(
                         persistent_state,
                         telemetry,
                         observability,
+                        hooks,
                         session_id,
                     ) {
                         migration_pressure = 0;
@@ -407,6 +420,7 @@ pub(super) async fn run_client_session_loop(
                                     record_mode_change(
                                         telemetry,
                                         observability,
+                                        hooks,
                                         session_id,
                                         mode,
                                     );
@@ -475,8 +489,13 @@ pub(super) async fn run_client_session_loop(
                         adaptive.note_activity(now);
                     }
                 }
+                let stats = adaptive.session_stats();
+                hooks.emit(ClientRuntimeEvent::StatsTick {
+                    tx_bytes: stats.tx_bytes,
+                    rx_bytes: stats.rx_bytes,
+                });
             }
-            _ = tokio::signal::ctrl_c() => {
+            _ = wait_for_shutdown_signal(&mut shutdown_rx) => {
                 break;
             }
         }
@@ -491,6 +510,27 @@ pub(super) async fn run_client_session_loop(
         standby_path_id.and_then(|id| paths.get(&id).map(|state| state.binding)),
         adaptive.current_mode(),
     );
+    hooks.emit(ClientRuntimeEvent::SessionEnded {
+        reason: Some("shutdown".to_string()),
+    });
     persistent_state.last_status = Some(status.status.clone());
     Ok(status)
+}
+
+async fn wait_for_shutdown_signal(shutdown_rx: &mut Option<watch::Receiver<bool>>) {
+    let Some(shutdown_rx) = shutdown_rx.as_mut() else {
+        let _ = tokio::signal::ctrl_c().await;
+        return;
+    };
+    if *shutdown_rx.borrow() {
+        return;
+    }
+    loop {
+        if shutdown_rx.changed().await.is_err() {
+            return;
+        }
+        if *shutdown_rx.borrow() {
+            return;
+        }
+    }
 }

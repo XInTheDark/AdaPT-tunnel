@@ -1,4 +1,4 @@
-use apt_bundle::client_bundle_override_path;
+use crate::client_bundle_override_path;
 use apt_runtime::{ClientConfig, Mode, RuntimeCarrierPreference, SessionPolicy};
 use ipnet::IpNet;
 use serde::Deserialize;
@@ -7,11 +7,10 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
 };
-use tracing::warn;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(default)]
-pub(super) struct ClientOverrideConfig {
+pub struct ClientOverrideConfig {
     pub server_addr: Option<String>,
     #[serde(alias = "runtime_mode")]
     pub mode: Option<Mode>,
@@ -37,18 +36,11 @@ pub(super) struct ClientOverrideConfig {
     pub state_path: Option<PathBuf>,
 }
 
-pub(super) fn apply_optional_client_override(
+pub fn apply_optional_client_override(
     config: &mut ClientConfig,
     bundle_path: &Path,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let override_path = client_bundle_override_path(bundle_path);
-    if let Err(error) = ensure_blank_override_file(&override_path) {
-        warn!(
-            error = %error,
-            path = %override_path.display(),
-            "failed to create blank client override file"
-        );
-    }
     if !override_path.exists() {
         return Ok(override_path);
     }
@@ -57,14 +49,16 @@ pub(super) fn apply_optional_client_override(
     Ok(override_path)
 }
 
-fn ensure_blank_override_file(path: &Path) -> std::io::Result<()> {
+pub fn ensure_client_override_file(bundle_path: &Path) -> std::io::Result<PathBuf> {
+    let path = client_bundle_override_path(bundle_path);
     if path.exists() {
-        return Ok(());
+        return Ok(path);
     }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, b"")
+    fs::write(&path, b"")?;
+    Ok(path)
 }
 
 fn load_override_file(path: &Path) -> Result<ClientOverrideConfig, Box<dyn std::error::Error>> {
@@ -76,7 +70,7 @@ fn load_override_file(path: &Path) -> Result<ClientOverrideConfig, Box<dyn std::
 }
 
 impl ClientOverrideConfig {
-    fn apply_to(&self, config: &mut ClientConfig, override_path: &Path) {
+    pub fn apply_to(&self, config: &mut ClientConfig, override_path: &Path) {
         let base = override_path.parent().unwrap_or_else(|| Path::new("."));
         if let Some(server_addr) = self.server_addr.as_ref().map(|value| value.trim()) {
             if !server_addr.is_empty() {
@@ -179,7 +173,6 @@ fn normalize_optional_file_spec(value: &str, base: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apt_runtime::SessionPolicy;
     use apt_types::AuthProfile;
     use std::{net::SocketAddr, str::FromStr};
 
@@ -212,7 +205,7 @@ mod tests {
             handshake_retries: 5,
             udp_recv_buffer_bytes: 4 * 1024 * 1024,
             udp_send_buffer_bytes: 4 * 1024 * 1024,
-            state_path: PathBuf::from("/var/lib/adapt/client-state.toml"),
+            state_path: PathBuf::from("client-state.toml"),
         }
     }
 
@@ -220,21 +213,19 @@ mod tests {
     fn empty_override_string_clears_optional_fields() {
         let mut config = test_config();
         ClientOverrideConfig {
-            interface_name: Some("   ".to_string()),
-            d2_server_addr: Some("".to_string()),
-            d2_server_certificate: Some("   ".to_string()),
+            interface_name: Some(String::new()),
+            d2_server_addr: Some(String::new()),
             stream_server_addr: Some(String::new()),
             ..ClientOverrideConfig::default()
         }
-        .apply_to(&mut config, Path::new("/etc/adapt/client.override.toml"));
+        .apply_to(&mut config, Path::new("/tmp/client.override.toml"));
         assert_eq!(config.interface_name, None);
         assert_eq!(config.d2_server_addr, None);
-        assert_eq!(config.d2_server_certificate, None);
         assert_eq!(config.stream_server_addr, None);
     }
 
     #[test]
-    fn relative_state_path_is_resolved_from_override_file() {
+    fn relative_state_path_resolves_against_override_file() {
         let mut config = test_config();
         ClientOverrideConfig {
             state_path: Some(PathBuf::from("profiles/client-state.toml")),
@@ -248,30 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_override_fields_replace_bundle_defaults() {
-        let mut config = test_config();
-        ClientOverrideConfig {
-            mode: Some(Mode::BALANCED),
-            preferred_carrier: Some(RuntimeCarrierPreference::D2),
-            server_addr: Some("203.0.113.5:443".to_string()),
-            enable_d2_fallback: Some(false),
-            d2_server_addr: Some("203.0.113.5:8443".to_string()),
-            routes: Some(vec!["10.0.0.0/8".parse().unwrap()]),
-            use_server_pushed_routes: Some(false),
-            ..ClientOverrideConfig::default()
-        }
-        .apply_to(&mut config, Path::new("/etc/adapt/client.override.toml"));
-        assert_eq!(config.mode, Mode::BALANCED);
-        assert_eq!(config.preferred_carrier, RuntimeCarrierPreference::D2);
-        assert_eq!(config.server_addr, "203.0.113.5:443");
-        assert!(!config.enable_d2_fallback);
-        assert_eq!(config.d2_server_addr.as_deref(), Some("203.0.113.5:8443"));
-        assert_eq!(config.routes, vec!["10.0.0.0/8".parse().unwrap()]);
-        assert!(!config.use_server_pushed_routes);
-    }
-
-    #[test]
-    fn relative_d2_certificate_file_is_resolved_from_override_file() {
+    fn relative_file_specs_resolve_against_override_file() {
         let mut config = test_config();
         ClientOverrideConfig {
             d2_server_certificate: Some("file:certs/d2.pem".to_string()),

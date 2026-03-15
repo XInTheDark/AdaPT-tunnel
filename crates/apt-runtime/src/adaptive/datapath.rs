@@ -1,5 +1,6 @@
 use super::*;
 use crate::adaptive::keepalive::AdaptiveKeepaliveController;
+use crate::client_runtime::ClientRuntimeStats;
 use crate::config::PersistedKeepaliveLearningState;
 
 #[derive(Clone, Copy, Debug)]
@@ -141,6 +142,13 @@ impl AdaptiveDatapath {
 
     pub fn current_mode(&self) -> Mode {
         self.controller.current_mode
+    }
+
+    pub fn session_stats(&self) -> ClientRuntimeStats {
+        ClientRuntimeStats {
+            tx_bytes: self.session_outbound_bytes,
+            rx_bytes: self.session_inbound_bytes,
+        }
     }
 
     pub fn remembered_profile(&self) -> Option<RememberedProfile> {

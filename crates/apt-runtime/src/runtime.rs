@@ -3,6 +3,7 @@ use crate::{
         admission_path_profile, build_client_network_context, discover_client_network_context,
         AdaptiveDatapath, AdaptiveRuntimeConfig,
     },
+    client_runtime::ClientRuntimeHooks,
     config::{
         ClientPersistentState, PersistedNetworkProfile, ResolvedAuthorizedPeer,
         ResolvedClientConfig, ResolvedServerConfig, ServerSessionExtension,
@@ -310,7 +311,14 @@ struct MatchedServerPacket {
 }
 
 pub async fn run_client(config: ResolvedClientConfig) -> Result<ClientRuntimeResult, RuntimeError> {
-    client::run_client(config).await
+    client::run_client(config, ClientRuntimeHooks::default()).await
+}
+
+pub async fn run_client_with_hooks(
+    config: ResolvedClientConfig,
+    hooks: ClientRuntimeHooks,
+) -> Result<ClientRuntimeResult, RuntimeError> {
+    client::run_client(config, hooks).await
 }
 
 pub async fn run_server(config: ResolvedServerConfig) -> Result<ServerRuntimeResult, RuntimeError> {

@@ -394,7 +394,8 @@ pub(super) fn enable_d2_for_server(
         config_path.display()
     );
     println!("  3. On a client, test strict D2 with:");
-    println!("     sudo apt-client up --carrier d2");
+    println!("     sudo apt-client service install");
+    println!("     apt-client up --carrier d2");
     Ok(())
 }
 

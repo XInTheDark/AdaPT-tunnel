@@ -1,6 +1,7 @@
 //! Single-file client bundle support for the APT operator/client CLIs.
 #![allow(missing_docs)]
 
+mod client_override;
 mod import;
 
 use apt_runtime::{ClientConfig, Mode, RuntimeCarrierPreference, SessionPolicy};
@@ -27,6 +28,9 @@ pub const DEFAULT_CLIENT_BUNDLE_FILE_NAME: &str = "client.aptbundle";
 pub use self::import::{
     protect_client_bundle_for_import, unprotect_client_bundle_from_import, ClientBundleImportError,
     CLIENT_BUNDLE_IMPORT_KEY_LEN,
+};
+pub use client_override::{
+    apply_optional_client_override, ensure_client_override_file, ClientOverrideConfig,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,9 +238,6 @@ pub fn client_bundle_override_path(bundle_path: impl AsRef<Path>) -> PathBuf {
 
 pub fn client_bundle_state_path(bundle_path: impl AsRef<Path>) -> PathBuf {
     let bundle_path = bundle_path.as_ref();
-    if bundle_path == Path::new("/etc/adapt").join(DEFAULT_CLIENT_BUNDLE_FILE_NAME) {
-        return PathBuf::from("/var/lib/adapt/client-state.toml");
-    }
     let parent = bundle_path.parent().unwrap_or_else(|| Path::new("."));
     let stem = bundle_path
         .file_stem()
@@ -370,10 +371,10 @@ mod tests {
     }
 
     #[test]
-    fn default_install_path_uses_var_lib_state() {
+    fn default_install_path_uses_bundle_local_state() {
         assert_eq!(
             client_bundle_state_path("/etc/adapt/client.aptbundle"),
-            PathBuf::from("/var/lib/adapt/client-state.toml")
+            PathBuf::from("/etc/adapt/client.state.toml")
         );
     }
 

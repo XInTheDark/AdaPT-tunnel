@@ -38,4 +38,7 @@ handshake_timeout_secs = 5
 handshake_retries = 5
 udp_recv_buffer_bytes = 4194304
 udp_send_buffer_bytes = 4194304
-state_path = "/var/lib/adapt/client-state.toml"
+
+# Normally leave this unset so the installed client uses the bundle-local state
+# path automatically (for example `~/.adapt-tunnel/client.state.toml`).
+# state_path = "/custom/path/client.state.toml"

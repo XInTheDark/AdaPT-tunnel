@@ -186,7 +186,7 @@ pub(super) fn add_client(
         println!("  • expires in: {} seconds", import_offer.timeout_secs);
         println!("  • client command:");
         println!(
-            "     sudo apt-client import --server {} --key {}",
+            "     apt-client import --server {} --key {}",
             import_offer.endpoint, import_offer.temporary_key
         );
         println!(
@@ -205,15 +205,16 @@ pub(super) fn add_client(
     println!("  1. Copy this single bundle file to the client device:");
     println!("     {}", bundle_path.display());
     println!("  2. Recommended install path on the client:");
-    println!("     sudo mkdir -p /etc/adapt");
+    println!("     mkdir -p ~/.adapt-tunnel");
     println!(
-        "     sudo cp /path/to/{name}.aptbundle /etc/adapt/{}",
+        "     cp /path/to/{name}.aptbundle ~/.adapt-tunnel/{}",
         DEFAULT_CLIENT_BUNDLE_FILE_NAME
     );
-    println!("     sudo apt-client up");
-    println!("     # first run auto-creates /etc/adapt/client.override.toml (blank)");
+    println!("     sudo apt-client service install   # one-time setup");
+    println!("     apt-client up");
+    println!("     # first run auto-creates ~/.adapt-tunnel/client.override.toml (blank)");
     println!("     # or run it directly with:");
-    println!("     sudo apt-client up --bundle /path/to/{name}.aptbundle");
+    println!("     apt-client up --bundle /path/to/{name}.aptbundle");
     println!("  3. If the server is not already running, start it with:");
     println!(
         "     sudo apt-edge start --config {}",

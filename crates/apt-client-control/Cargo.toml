@@ -1,0 +1,11 @@
+[package]
+name = "apt-client-control"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+apt-types.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

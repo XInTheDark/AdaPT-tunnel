@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/apt-client-control",
   "crates/apt-bundle",
   "crates/apt-types",
   "crates/apt-crypto",
@@ -12,6 +13,7 @@ members = [
   "crates/apt-policy",
   "crates/apt-observability",
   "apps/apt-client",
+  "apps/apt-clientd",
   "apps/apt-edge",
   "apps/apt-tunneld",
 ]
@@ -25,6 +27,7 @@ authors = ["Jerry"]
 
 [workspace.dependencies]
 apt-bundle = { path = "crates/apt-bundle" }
+apt-client-control = { path = "crates/apt-client-control" }
 apt-types = { path = "crates/apt-types" }
 apt-crypto = { path = "crates/apt-crypto" }
 apt-admission = { path = "crates/apt-admission" }
@@ -42,6 +45,7 @@ blake2 = "0.10"
 bytes = "1.10"
 chacha20poly1305 = { version = "0.10", features = ["std"] }
 clap = { version = "=4.5.4", features = ["derive"] }
+crossterm = "0.28"
 futures-util = { version = "0.3", features = ["sink"] }
 hkdf = "0.12"
 ipnet = { version = "2.11", features = ["serde"] }
@@ -49,6 +53,7 @@ parking_lot = "0.12"
 quinn = { version = "0.11.9", default-features = false, features = ["runtime-tokio", "rustls-ring", "log"] }
 rand = "0.8"
 rand_chacha = "0.3"
+ratatui = { version = "=0.26.3", default-features = false, features = ["crossterm"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
 rcgen = "0.14.7"
 rustls = "0.23"

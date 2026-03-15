@@ -239,27 +239,28 @@ The bundle is a single compressed custom-format file containing:
 
 ## 6. Start the client
 
-Recommended: install the bundle into `/etc/adapt/client.aptbundle` on the client:
+Recommended: install the bundle into `~/.adapt-tunnel/client.aptbundle` on the client, then install the local daemon once:
 
 ```bash
-sudo mkdir -p /etc/adapt
-sudo cp /path/to/laptop.aptbundle /etc/adapt/client.aptbundle
+mkdir -p ~/.adapt-tunnel
+cp /path/to/laptop.aptbundle ~/.adapt-tunnel/client.aptbundle
+sudo ./target/release/apt-client service install
 ```
 
 Then start the client using the default config location:
 
 ```bash
-sudo ./target/release/apt-client up
+./target/release/apt-client up
 ```
 
 For a quick automated QA pass instead of a long-lived session, you can also run:
 
 ```bash
-sudo ./target/release/apt-client test
+./target/release/apt-client test
 ```
 
-When the bundle is installed at `/etc/adapt/client.aptbundle`, the client stores its persistent state in `/var/lib/adapt/client-state.toml`.
-On first run, it also creates a blank optional override file at `/etc/adapt/client.override.toml`.
+When the bundle is installed at `~/.adapt-tunnel/client.aptbundle`, the client stores its persistent state in `~/.adapt-tunnel/client.state.toml`.
+On first use, it also creates a blank optional override file at `~/.adapt-tunnel/client.override.toml`.
 
 Useful one-shot overrides:
 
@@ -276,7 +277,7 @@ Use the optional override file for local-only edits such as `interface_name`, ro
 Alternative: if you want to run the bundle directly from another directory:
 
 ```bash
-sudo ./target/release/apt-client up --bundle /path/to/laptop.aptbundle
+./target/release/apt-client up --bundle /path/to/laptop.aptbundle
 ```
 
 In that direct-launch mode, the client creates a blank sidecar override file next to the bundle, for example `/path/to/laptop.override.toml`.
