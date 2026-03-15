@@ -230,6 +230,7 @@ dependencies = [
  "rustls",
  "rustls-pemfile",
  "serde",
+ "sha2",
  "socket2 0.5.10",
  "thiserror",
  "tokio",

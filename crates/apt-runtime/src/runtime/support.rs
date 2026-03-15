@@ -16,8 +16,7 @@ pub(super) fn client_session_request(
     request.policy_flags.allow_hybrid_pq = config.session_policy.allow_hybrid_pq;
     request.path_profile = admission_path_profile(
         persistent_state
-            .network_profile
-            .as_ref()
+            .active_network_profile()
             .map(|profile| &profile.normality),
     );
     request.resume_ticket = resume_ticket;
@@ -91,8 +90,7 @@ fn carrier_attempt_order_without_strict_override(
         .or(persistent_state.last_successful_carrier)
         .or_else(|| {
             persistent_state
-                .network_profile
-                .as_ref()
+                .active_network_profile()
                 .and_then(|profile| profile.remembered_profile.as_ref())
                 .map(|profile| profile.preferred_carrier)
         });
@@ -170,15 +168,21 @@ pub(super) fn persist_client_learning(
     persistent_state: &mut ClientPersistentState,
     adaptive: &AdaptiveDatapath,
 ) {
-    persistent_state.network_profile =
-        adaptive
-            .local_normality_profile()
-            .map(|normality| PersistedNetworkProfile {
-                context: normality.context.clone(),
-                normality,
-                remembered_profile: adaptive.remembered_profile(),
-                last_mode: adaptive.current_mode().into(),
-            });
+    let Some(normality) = adaptive.local_normality_profile() else {
+        return;
+    };
+    let keepalive_learning = persistent_state
+        .active_network_profile()
+        .map(|profile| profile.keepalive_learning.clone())
+        .unwrap_or_default();
+    persistent_state.upsert_active_network_profile(PersistedNetworkProfile {
+        context: normality.context.clone(),
+        normality,
+        remembered_profile: adaptive.remembered_profile(),
+        last_mode: adaptive.current_mode().into(),
+        keepalive_learning,
+        last_seen_unix_secs: now_secs(),
+    });
 }
 
 pub(super) fn extract_destination_ip(packet: &[u8]) -> Option<IpAddr> {

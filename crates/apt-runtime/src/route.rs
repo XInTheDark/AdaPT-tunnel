@@ -138,11 +138,10 @@ fn host_prefix(ip: IpAddr) -> String {
     }
 }
 
-#[cfg(target_os = "linux")]
-#[derive(Debug)]
-struct ResolvedRoute {
-    interface_name: String,
-    gateway: Option<IpAddr>,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ResolvedRoute {
+    pub interface_name: Option<String>,
+    pub gateway: Option<IpAddr>,
 }
 
 #[cfg(target_os = "linux")]
@@ -178,17 +177,11 @@ fn linux_route_to(ip: IpAddr) -> Result<ResolvedRoute, RuntimeError> {
         index += 1;
     }
     Ok(ResolvedRoute {
-        interface_name: interface_name.ok_or_else(|| {
+        interface_name: Some(interface_name.ok_or_else(|| {
             RuntimeError::CommandFailed("unable to parse output from ip route get".to_string())
-        })?,
+        })?),
         gateway,
     })
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Debug)]
-struct ResolvedRoute {
-    gateway: Option<IpAddr>,
 }
 
 #[cfg(target_os = "macos")]
@@ -207,14 +200,32 @@ fn macos_route_to(ip: IpAddr) -> Result<ResolvedRoute, RuntimeError> {
         )));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut interface_name = None;
     let mut gateway = None;
     for line in stdout.lines() {
         let trimmed = line.trim();
         if let Some(value) = trimmed.strip_prefix("gateway:") {
             gateway = value.trim().parse().ok();
+        } else if let Some(value) = trimmed.strip_prefix("interface:") {
+            interface_name = Some(value.trim().to_string());
         }
     }
-    Ok(ResolvedRoute { gateway })
+    Ok(ResolvedRoute {
+        interface_name,
+        gateway,
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn resolved_route_to(ip: IpAddr) -> Result<ResolvedRoute, RuntimeError> {
+    #[cfg(target_os = "linux")]
+    {
+        linux_route_to(ip)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos_route_to(ip)
+    }
 }
 
 #[cfg(test)]

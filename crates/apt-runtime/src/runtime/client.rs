@@ -13,6 +13,8 @@ pub(super) async fn run_client(
     let carriers = RuntimeCarriers::new(1_380, false, config.d2.is_some());
 
     let mut persistent_state = ClientPersistentState::load(&config.state_path)?;
+    let network_context = discover_client_network_context(&config);
+    persistent_state.activate_network_profile(network_context, now_secs(), config.mode);
     persistent_state.last_status = Some(RuntimeStatus::Starting);
     persistent_state.store(&config.state_path)?;
 

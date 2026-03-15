@@ -154,7 +154,7 @@ fn macos_default_interface() -> Result<String, RuntimeError> {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_service_for_device(device: &str) -> Result<Option<String>, RuntimeError> {
+pub(crate) fn macos_service_for_device(device: &str) -> Result<Option<String>, RuntimeError> {
     let output = Command::new("networksetup")
         .arg("-listnetworkserviceorder")
         .output()?;

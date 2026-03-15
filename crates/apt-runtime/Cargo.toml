@@ -26,6 +26,7 @@ rcgen.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true
 serde.workspace = true
+sha2.workspace = true
 socket2.workspace = true
 tokio.workspace = true
 toml.workspace = true

@@ -19,8 +19,7 @@ pub(super) async fn run_client_session_loop(
         handshake.established.chosen_carrier,
         handshake.established.secrets.persona_seed,
         persistent_state
-            .network_profile
-            .as_ref()
+            .active_network_profile()
             .map(|profile| profile.context.clone())
             .unwrap_or_else(|| {
                 build_client_network_context(
@@ -29,19 +28,16 @@ pub(super) async fn run_client_session_loop(
                 )
             }),
         persistent_state
-            .network_profile
-            .as_ref()
+            .active_network_profile()
             .map(|profile| profile.normality.clone()),
         persistent_state
-            .network_profile
-            .as_ref()
+            .active_network_profile()
             .and_then(|profile| profile.remembered_profile.clone()),
         config.session_policy.initial_mode,
         config.session_policy.allow_speed_first,
         admission_path_profile(
             persistent_state
-                .network_profile
-                .as_ref()
+                .active_network_profile()
                 .map(|profile| &profile.normality),
         ),
         now_secs(),
