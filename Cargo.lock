@@ -116,6 +116,7 @@ dependencies = [
  "apt-runtime",
  "apt-types",
  "bincode",
+ "ipnet",
  "serde",
  "sha2",
  "thiserror",

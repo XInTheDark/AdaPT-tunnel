@@ -4,8 +4,8 @@ use crate::quic::{load_certificate_der, resolve_d2_remote_endpoint};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientConfig {
     pub server_addr: String,
-    #[serde(default)]
-    pub runtime_mode: RuntimeMode,
+    #[serde(default, alias = "runtime_mode")]
+    pub mode: Mode,
     #[serde(default = "default_preferred_carrier")]
     pub preferred_carrier: RuntimeCarrierPreference,
     #[serde(default = "default_auth_profile")]
@@ -99,10 +99,11 @@ impl ClientConfig {
             ));
         }
         let mut session_policy = self.session_policy.clone();
-        self.runtime_mode.apply_to(&mut session_policy);
+        session_policy.initial_mode = self.mode.policy_mode();
+        session_policy.allow_speed_first = self.mode.allow_speed_first();
         Ok(ResolvedClientConfig {
             server_addr: resolve_socket_addr(&self.server_addr)?,
-            runtime_mode: self.runtime_mode,
+            mode: self.mode,
             preferred_carrier: self.preferred_carrier,
             strict_preferred_carrier: false,
             auth_profile: self.auth_profile,
@@ -153,7 +154,7 @@ pub struct ResolvedClientD2Config {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedClientConfig {
     pub server_addr: SocketAddr,
-    pub runtime_mode: RuntimeMode,
+    pub mode: Mode,
     pub preferred_carrier: RuntimeCarrierPreference,
     pub strict_preferred_carrier: bool,
     pub auth_profile: AuthProfile,

@@ -1,9 +1,6 @@
 use super::*;
 
-pub(super) async fn start_server(
-    config: Option<PathBuf>,
-    mode: Option<CliRuntimeMode>,
-) -> CliResult {
+pub(super) async fn start_server(config: Option<PathBuf>, mode: Option<u8>) -> CliResult {
     let config_path = match config {
         Some(path) => path,
         None => match find_server_config() {
@@ -17,9 +14,10 @@ pub(super) async fn start_server(
     let _ = loaded.store(&config_path);
     let mut resolved = loaded.resolve()?;
     if let Some(mode) = mode {
-        let mode: RuntimeMode = mode.into();
-        resolved.runtime_mode = mode;
-        mode.apply_to(&mut resolved.session_policy);
+        let mode = Mode::try_from(mode).expect("clap validated mode range");
+        resolved.mode = mode;
+        resolved.session_policy.initial_mode = mode.policy_mode();
+        resolved.session_policy.allow_speed_first = mode.allow_speed_first();
     }
     let result = run_server(resolved).await?;
     println!("\nServer stopped.");

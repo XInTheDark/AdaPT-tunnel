@@ -1,11 +1,11 @@
 use super::*;
 use crate::config::{
     ResolvedAuthorizedPeer, ResolvedClientConfig, ResolvedClientD2Config, ResolvedRemoteEndpoint,
-    ResolvedServerConfig, RuntimeCarrierPreference, RuntimeMode,
+    ResolvedServerConfig, RuntimeCarrierPreference,
 };
 use apt_admission::{initiate_c0, ClientCredential, ClientSessionRequest};
 use apt_carriers::D1Carrier;
-use apt_types::{AuthProfile, EndpointId, RekeyLimits};
+use apt_types::{AuthProfile, EndpointId, Mode, RekeyLimits};
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::PathBuf,
@@ -54,7 +54,7 @@ fn test_tunnel_session() -> TunnelSession {
 fn test_client_config() -> ResolvedClientConfig {
     ResolvedClientConfig {
         server_addr: "198.51.100.10:51820".parse::<SocketAddr>().unwrap(),
-        runtime_mode: RuntimeMode::Stealth,
+        mode: Mode::STEALTH,
         preferred_carrier: RuntimeCarrierPreference::D1,
         strict_preferred_carrier: false,
         auth_profile: apt_types::AuthProfile::SharedDeployment,
@@ -88,7 +88,7 @@ fn test_server_config() -> ResolvedServerConfig {
     ResolvedServerConfig {
         bind: "0.0.0.0:51820".parse::<SocketAddr>().unwrap(),
         public_endpoint: "198.51.100.10:51820".to_string(),
-        runtime_mode: RuntimeMode::Stealth,
+        mode: Mode::STEALTH,
         d2: None,
         stream_bind: Some("0.0.0.0:443".parse::<SocketAddr>().unwrap()),
         stream_public_endpoint: Some("198.51.100.10:443".to_string()),

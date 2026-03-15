@@ -69,15 +69,15 @@ pub(super) async fn run_client(
         interface = %tun.interface_name,
         routes = ?effective_routes,
         carrier = %handshake.binding.as_str(),
-        requested_mode = ?config.session_policy.initial_mode,
-        negotiated_mode = ?handshake.established.policy_mode,
+        requested_mode = config.mode.value(),
+        negotiated_mode = Mode::from(handshake.established.policy_mode).value(),
         "client session established"
     );
     if handshake.established.policy_mode != config.session_policy.initial_mode {
         info!(
-            requested_mode = ?config.session_policy.initial_mode,
-            negotiated_mode = ?handshake.established.policy_mode,
-            "server negotiated a different policy mode than the client requested"
+            requested_mode = config.mode.value(),
+            negotiated_mode = Mode::from(handshake.established.policy_mode).value(),
+            "server negotiated a different mode anchor than the client requested"
         );
     }
 
@@ -97,7 +97,7 @@ pub(super) async fn run_client(
         &AptEvent::TunnelEstablished {
             session_id: handshake.established.session_id,
             carrier: handshake.established.chosen_carrier,
-            mode: config.session_policy.initial_mode,
+            mode: config.mode,
         },
         None,
         &observability,

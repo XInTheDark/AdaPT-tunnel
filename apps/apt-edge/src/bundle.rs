@@ -110,7 +110,7 @@ pub(super) fn add_client(
     let d2_bundle = build_client_d2_bundle_fields(&server_config)?;
     let client_config = ClientConfig {
         server_addr: server_config.public_endpoint.clone(),
-        runtime_mode: server_config.runtime_mode,
+        mode: server_config.mode,
         preferred_carrier: RuntimeCarrierPreference::D1,
         auth_profile,
         endpoint_id: server_config.endpoint_id.clone(),

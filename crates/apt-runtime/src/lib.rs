@@ -18,12 +18,12 @@ mod status;
 mod tun;
 mod wire;
 
-pub use apt_types::SessionPolicy;
+pub use apt_types::{Mode, SessionPolicy};
 pub use config::{
     encode_key_hex, load_key32, AuthorizedPeerConfig, ClientConfig, ClientPersistentState,
     ResolvedClientConfig, ResolvedClientD2Config, ResolvedRemoteEndpoint, ResolvedServerConfig,
-    ResolvedServerD2Config, RuntimeCarrierPreference, RuntimeMode, ServerConfig,
-    ServerSessionExtension, SessionTransportParameters,
+    ResolvedServerD2Config, RuntimeCarrierPreference, ServerConfig, ServerSessionExtension,
+    SessionTransportParameters,
 };
 pub use error::RuntimeError;
 pub use keys::{

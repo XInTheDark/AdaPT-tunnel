@@ -1,23 +1,6 @@
 use super::*;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
-pub(super) enum CliRuntimeMode {
-    Stealth,
-    Balanced,
-    Speed,
-}
-
-impl From<CliRuntimeMode> for RuntimeMode {
-    fn from(value: CliRuntimeMode) -> Self {
-        match value {
-            CliRuntimeMode::Stealth => Self::Stealth,
-            CliRuntimeMode::Balanced => Self::Balanced,
-            CliRuntimeMode::Speed => Self::Speed,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
 pub(super) enum CliAuthProfile {
     Shared,
     PerUser,
@@ -180,9 +163,9 @@ pub(super) enum Command {
         /// Path to the server config. If omitted, common default locations are searched.
         #[arg(long)]
         config: Option<PathBuf>,
-        /// Override the runtime mode for this launch only.
-        #[arg(long, value_enum)]
-        mode: Option<CliRuntimeMode>,
+        /// Override the numeric mode for this launch only (0 = speed, 100 = stealth).
+        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
+        mode: Option<u8>,
     },
     /// Operator utilities and maintenance helpers.
     Utils {

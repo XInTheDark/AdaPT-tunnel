@@ -1,4 +1,8 @@
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{self, Visitor},
+    Deserialize, Deserializer, Serialize, Serializer,
+};
+use std::{fmt, str::FromStr};
 
 /// Supported authentication profile for admission.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +144,205 @@ pub enum PolicyMode {
     /// Performance-favouring mode when policy allows.
     #[serde(rename = "speed-first", alias = "SpeedFirst")]
     SpeedFirst,
+}
+
+/// Operator-facing numeric runtime mode control.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Mode(u8);
+
+impl Mode {
+    /// Minimum allowed numeric mode value.
+    pub const MIN: u8 = 0;
+    /// Maximum allowed numeric mode value.
+    pub const MAX: u8 = 100;
+    /// Performance-oriented anchor matching the legacy `speed` preset.
+    pub const SPEED: Self = Self(0);
+    /// Midpoint anchor matching the legacy `balanced` preset.
+    pub const BALANCED: Self = Self(50);
+    /// Conservative anchor matching the legacy `stealth` preset.
+    pub const STEALTH: Self = Self(100);
+
+    /// Creates a validated mode value.
+    pub fn new(value: u8) -> Result<Self, String> {
+        if value <= Self::MAX {
+            Ok(Self(value))
+        } else {
+            Err(format!(
+                "mode must be between {} and {}, got {value}",
+                Self::MIN,
+                Self::MAX
+            ))
+        }
+    }
+
+    /// Returns the raw numeric value.
+    #[must_use]
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+
+    /// Maps the numeric control to the current coarse policy anchor.
+    #[must_use]
+    pub const fn policy_mode(self) -> PolicyMode {
+        if self.0 <= 34 {
+            PolicyMode::SpeedFirst
+        } else if self.0 <= 69 {
+            PolicyMode::Balanced
+        } else {
+            PolicyMode::StealthFirst
+        }
+    }
+
+    /// Returns whether the current coarse controller may enter speed-first mode.
+    #[must_use]
+    pub const fn allow_speed_first(self) -> bool {
+        self.0 <= 69
+    }
+
+    /// Converts legacy named presets into numeric anchors when loading old state.
+    #[must_use]
+    pub fn from_legacy_name(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "speed" | "speed-first" => Some(Self::SPEED),
+            "balanced" => Some(Self::BALANCED),
+            "stealth" | "stealth-first" => Some(Self::STEALTH),
+            _ => None,
+        }
+    }
+}
+
+impl Default for Mode {
+    fn default() -> Self {
+        Self::STEALTH
+    }
+}
+
+impl fmt::Debug for Mode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Mode({})", self.0)
+    }
+}
+
+impl fmt::Display for Mode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl TryFrom<u8> for Mode {
+    type Error = String;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<PolicyMode> for Mode {
+    fn from(value: PolicyMode) -> Self {
+        match value {
+            PolicyMode::SpeedFirst => Self::SPEED,
+            PolicyMode::Balanced => Self::BALANCED,
+            PolicyMode::StealthFirst => Self::STEALTH,
+        }
+    }
+}
+
+impl FromStr for Mode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some(mode) = Self::from_legacy_name(s) {
+            return Ok(mode);
+        }
+        let parsed = s
+            .trim()
+            .parse::<u8>()
+            .map_err(|_| format!("mode must be an integer between 0 and 100, got `{s}`"))?;
+        Self::new(parsed)
+    }
+}
+
+impl Serialize for Mode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u8(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Mode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ModeVisitor;
+
+        impl Visitor<'_> for ModeVisitor {
+            type Value = Mode;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(
+                    "an integer mode between 0 and 100, or a legacy mode name like `speed`, `balanced`, or `stealth`",
+                )
+            }
+
+            fn visit_u8<E>(self, value: u8) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Mode::new(value).map_err(E::custom)
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let value = u8::try_from(value).map_err(|_| {
+                    E::custom(format!(
+                        "mode must be between {} and {}",
+                        Mode::MIN,
+                        Mode::MAX
+                    ))
+                })?;
+                self.visit_u8(value)
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let value = u8::try_from(value).map_err(|_| {
+                    E::custom(format!(
+                        "mode must be between {} and {}",
+                        Mode::MIN,
+                        Mode::MAX
+                    ))
+                })?;
+                self.visit_u8(value)
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Mode::from_str(value).map_err(E::custom)
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                self.visit_str(&value)
+            }
+        }
+
+        if deserializer.is_human_readable() {
+            deserializer.deserialize_any(ModeVisitor)
+        } else {
+            deserializer.deserialize_u8(ModeVisitor)
+        }
+    }
 }
 
 /// Session role for directional key material.

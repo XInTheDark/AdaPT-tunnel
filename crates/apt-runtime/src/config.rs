@@ -3,7 +3,7 @@ use apt_persona::RememberedProfile;
 use apt_policy::LocalNormalityProfile;
 use apt_types::{
     AuthProfile, CarrierBinding, EndpointId, GatewayFingerprint, LinkType, LocalNetworkContext,
-    PolicyMode, PublicRouteHint, SessionPolicy,
+    Mode, PublicRouteHint, SessionPolicy,
 };
 use base64::Engine as _;
 use ipnet::IpNet;
@@ -102,34 +102,6 @@ fn default_preferred_carrier() -> RuntimeCarrierPreference {
 
 fn default_auth_profile() -> AuthProfile {
     AuthProfile::SharedDeployment
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "kebab-case")]
-pub enum RuntimeMode {
-    #[default]
-    Stealth,
-    Balanced,
-    Speed,
-}
-
-impl RuntimeMode {
-    pub fn apply_to(self, policy: &mut SessionPolicy) {
-        match self {
-            Self::Stealth => {
-                policy.initial_mode = PolicyMode::StealthFirst;
-                policy.allow_speed_first = false;
-            }
-            Self::Balanced => {
-                policy.initial_mode = PolicyMode::Balanced;
-                policy.allow_speed_first = true;
-            }
-            Self::Speed => {
-                policy.initial_mode = PolicyMode::SpeedFirst;
-                policy.allow_speed_first = true;
-            }
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]

@@ -346,7 +346,7 @@ fn install_server_session(
         &AptEvent::TunnelEstablished {
             session_id,
             carrier: session.chosen_carrier,
-            mode: session.policy_mode,
+            mode: session.policy_mode.into(),
         },
         None,
         observability,

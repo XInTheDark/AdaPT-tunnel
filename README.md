@@ -250,7 +250,7 @@ Start the combined server daemon.
 Useful option:
 
 - `--config` — server config path
-- `--mode stealth|balanced|speed` — one-shot runtime mode override
+- `--mode 0..100` — one-shot numeric mode override (`0` = speed, `50` = balanced, `100` = stealth)
 
 ### `apt-client`
 
@@ -260,7 +260,7 @@ Start the VPN using a generated client bundle.
 Useful option:
 
 - `--bundle` — path to the single-file client bundle
-- `--mode stealth|balanced|speed` — one-shot runtime mode override
+- `--mode 0..100` — one-shot numeric mode override (`0` = speed, `50` = balanced, `100` = stealth)
 - `--carrier auto|d1|d2|s1` — one-shot preferred-carrier override
 
 If omitted, the client tries common default locations first. It also auto-creates a blank optional override TOML next to the installed bundle so local client-only settings can be edited without changing the bundle itself.

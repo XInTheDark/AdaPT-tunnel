@@ -5,14 +5,13 @@ edition.workspace = true
 
 [dependencies]
 apt-runtime.workspace = true
+apt-types.workspace = true
 bincode.workspace = true
+ipnet.workspace = true
 serde.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 zstd.workspace = true
-
-[dev-dependencies]
-apt-types.workspace = true
 
 [lints]
 workspace = true

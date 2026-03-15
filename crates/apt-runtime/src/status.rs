@@ -1,4 +1,4 @@
-use apt_types::{CarrierBinding, PolicyMode};
+use apt_types::{CarrierBinding, Mode};
 use serde::{Deserialize, Serialize};
 use std::{net::IpAddr, time::SystemTime};
 
@@ -15,7 +15,8 @@ pub struct ClientStatus {
     pub server: String,
     pub active_carrier: Option<CarrierBinding>,
     pub standby_carrier: Option<CarrierBinding>,
-    pub policy_mode: Option<PolicyMode>,
+    #[serde(default, alias = "policy_mode")]
+    pub mode: Option<Mode>,
     pub tunnel_address: Option<IpAddr>,
     #[serde(default)]
     pub tunnel_addresses: Vec<IpAddr>,
@@ -33,7 +34,7 @@ impl ClientStatus {
         interface_name: Option<String>,
         active_carrier: Option<CarrierBinding>,
         standby_carrier: Option<CarrierBinding>,
-        policy_mode: Option<PolicyMode>,
+        mode: Option<Mode>,
     ) -> Self {
         Self {
             status,
@@ -43,7 +44,7 @@ impl ClientStatus {
             interface_name,
             active_carrier,
             standby_carrier,
-            policy_mode,
+            mode,
             last_transition_unix_secs: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -69,5 +70,6 @@ pub struct ServerStatus {
     pub active_sessions: usize,
     pub active_carrier: Option<CarrierBinding>,
     pub standby_carrier: Option<CarrierBinding>,
-    pub policy_mode: Option<PolicyMode>,
+    #[serde(default, alias = "policy_mode")]
+    pub mode: Option<Mode>,
 }

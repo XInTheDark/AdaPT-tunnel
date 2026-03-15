@@ -5,7 +5,7 @@ pub struct PersistedNetworkProfile {
     pub context: LocalNetworkContext,
     pub normality: LocalNormalityProfile,
     pub remembered_profile: Option<RememberedProfile>,
-    pub last_mode: PolicyMode,
+    pub last_mode: Mode,
 }
 
 impl PersistedNetworkProfile {
@@ -21,7 +21,7 @@ impl PersistedNetworkProfile {
             normality: LocalNormalityProfile::new(context.clone()),
             context,
             remembered_profile: None,
-            last_mode: PolicyMode::StealthFirst,
+            last_mode: Mode::STEALTH,
         }
     }
 }

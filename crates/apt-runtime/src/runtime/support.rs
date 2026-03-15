@@ -177,7 +177,7 @@ pub(super) fn persist_client_learning(
                 context: normality.context.clone(),
                 normality,
                 remembered_profile: adaptive.remembered_profile(),
-                last_mode: adaptive.current_mode(),
+                last_mode: adaptive.current_mode().into(),
             });
 }
 

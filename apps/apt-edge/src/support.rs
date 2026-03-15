@@ -254,7 +254,7 @@ mod tests {
         let config = ServerConfig {
             bind: "0.0.0.0:51820".parse().unwrap(),
             public_endpoint: "203.0.113.10:51820".to_string(),
-            runtime_mode: RuntimeMode::Stealth,
+            mode: Mode::STEALTH,
             d2_bind: None,
             d2_public_endpoint: None,
             d2_certificate: None,

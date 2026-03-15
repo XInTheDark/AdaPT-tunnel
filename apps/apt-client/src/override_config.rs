@@ -1,5 +1,5 @@
 use apt_bundle::client_bundle_override_path;
-use apt_runtime::{ClientConfig, RuntimeCarrierPreference, RuntimeMode, SessionPolicy};
+use apt_runtime::{ClientConfig, Mode, RuntimeCarrierPreference, SessionPolicy};
 use ipnet::IpNet;
 use serde::Deserialize;
 use std::{
@@ -13,7 +13,8 @@ use tracing::warn;
 #[serde(default)]
 pub(super) struct ClientOverrideConfig {
     pub server_addr: Option<String>,
-    pub runtime_mode: Option<RuntimeMode>,
+    #[serde(alias = "runtime_mode")]
+    pub mode: Option<Mode>,
     pub preferred_carrier: Option<RuntimeCarrierPreference>,
     pub bind: Option<SocketAddr>,
     pub interface_name: Option<String>,
@@ -82,8 +83,8 @@ impl ClientOverrideConfig {
                 config.server_addr = server_addr.to_string();
             }
         }
-        if let Some(runtime_mode) = self.runtime_mode {
-            config.runtime_mode = runtime_mode;
+        if let Some(mode) = self.mode {
+            config.mode = mode;
         }
         if let Some(preferred_carrier) = self.preferred_carrier {
             config.preferred_carrier = preferred_carrier;
@@ -185,7 +186,7 @@ mod tests {
     fn test_config() -> ClientConfig {
         ClientConfig {
             server_addr: "198.51.100.10:51820".to_string(),
-            runtime_mode: RuntimeMode::Stealth,
+            mode: Mode::STEALTH,
             preferred_carrier: RuntimeCarrierPreference::D1,
             auth_profile: AuthProfile::PerUser,
             endpoint_id: "adapt-demo".to_string(),
@@ -250,7 +251,7 @@ mod tests {
     fn explicit_override_fields_replace_bundle_defaults() {
         let mut config = test_config();
         ClientOverrideConfig {
-            runtime_mode: Some(RuntimeMode::Balanced),
+            mode: Some(Mode::BALANCED),
             preferred_carrier: Some(RuntimeCarrierPreference::D2),
             server_addr: Some("203.0.113.5:443".to_string()),
             enable_d2_fallback: Some(false),
@@ -260,7 +261,7 @@ mod tests {
             ..ClientOverrideConfig::default()
         }
         .apply_to(&mut config, Path::new("/etc/adapt/client.override.toml"));
-        assert_eq!(config.runtime_mode, RuntimeMode::Balanced);
+        assert_eq!(config.mode, Mode::BALANCED);
         assert_eq!(config.preferred_carrier, RuntimeCarrierPreference::D2);
         assert_eq!(config.server_addr, "203.0.113.5:443");
         assert!(!config.enable_d2_fallback);

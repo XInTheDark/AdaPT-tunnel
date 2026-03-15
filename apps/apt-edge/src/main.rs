@@ -4,7 +4,7 @@ use apt_runtime::{
     d2_certificate_subject_alt_names, d2_default_bind, derive_d2_public_endpoint, encode_key_hex,
     generate_client_identity, generate_d2_tls_identity, generate_server_keyset,
     load_certificate_der, load_key32, run_server, write_key_file, write_secret_file,
-    AuthorizedPeerConfig, ClientConfig, RuntimeCarrierPreference, RuntimeMode, ServerConfig,
+    AuthorizedPeerConfig, ClientConfig, Mode, RuntimeCarrierPreference, ServerConfig,
     SessionPolicy,
 };
 use apt_types::AuthProfile;
@@ -28,7 +28,7 @@ mod support;
 
 use self::{
     bundle::{add_client, list_clients, revoke_client, write_server_keyset},
-    cli::{Cli, CliAuthProfile, CliRuntimeMode, Command, UtilsCommand},
+    cli::{Cli, CliAuthProfile, Command, UtilsCommand},
     init::{enable_d2_for_server, init_server, install_systemd_service_for_server},
     start::start_server,
     support::*,

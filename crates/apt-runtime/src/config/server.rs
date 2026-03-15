@@ -20,8 +20,8 @@ pub struct AuthorizedPeerConfig {
 pub struct ServerConfig {
     pub bind: SocketAddr,
     pub public_endpoint: String,
-    #[serde(default)]
-    pub runtime_mode: RuntimeMode,
+    #[serde(default, alias = "runtime_mode")]
+    pub mode: Mode,
     #[serde(default)]
     pub d2_bind: Option<SocketAddr>,
     #[serde(default)]
@@ -124,7 +124,8 @@ impl ServerConfig {
         }
         validate_ipv6_config(self)?;
         let mut session_policy = self.session_policy.clone();
-        self.runtime_mode.apply_to(&mut session_policy);
+        session_policy.initial_mode = self.mode.policy_mode();
+        session_policy.allow_speed_first = self.mode.allow_speed_first();
         let peers = self
             .peers
             .iter()
@@ -134,7 +135,7 @@ impl ServerConfig {
         Ok(ResolvedServerConfig {
             bind: self.bind,
             public_endpoint: self.public_endpoint.clone(),
-            runtime_mode: self.runtime_mode,
+            mode: self.mode,
             d2: resolve_server_d2_config(self)?,
             stream_bind: self.stream_bind.or(Some(self.bind)),
             stream_public_endpoint: self
@@ -222,7 +223,7 @@ pub struct ResolvedServerD2Config {
 pub struct ResolvedServerConfig {
     pub bind: SocketAddr,
     pub public_endpoint: String,
-    pub runtime_mode: RuntimeMode,
+    pub mode: Mode,
     pub d2: Option<ResolvedServerD2Config>,
     pub stream_bind: Option<SocketAddr>,
     pub stream_public_endpoint: Option<String>,

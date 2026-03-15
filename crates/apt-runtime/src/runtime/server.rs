@@ -265,7 +265,7 @@ pub(super) async fn run_server(
             active_sessions: sessions.len(),
             active_carrier: None,
             standby_carrier: None,
-            policy_mode: None,
+            mode: None,
         },
         telemetry,
     })

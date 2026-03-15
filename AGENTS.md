@@ -10,6 +10,13 @@
 - New behavior must be added in focused modules, not by extending an existing oversized file.
 - If a touched file is already over the limit, the same change must reduce it materially instead of making it larger.
 
+
+## Planning
+
+- `PLAN.md` is the canonical living implementation plan for non-trivial work.
+- When scope, assumptions, status, or expected performance impact changes, update `PLAN.md` in the same task.
+- Keep `PLAN.md` forward-looking: current milestone, active/pending work, next tasks, assumptions, and expected performance notes only.
+
 ## Refactoring expectations
 
 - Prefer responsibility-based module splits over cosmetic extraction.

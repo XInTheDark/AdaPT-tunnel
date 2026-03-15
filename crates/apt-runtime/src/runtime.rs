@@ -34,8 +34,8 @@ use apt_crypto::{SealedEnvelope, SessionSecretsForRole, StaticKeypair};
 use apt_observability::{record_event, AptEvent, ObservabilityConfig, TelemetrySnapshot};
 use apt_tunnel::{Frame, RekeyStatus, TunnelSession};
 use apt_types::{
-    AuthProfile, CarrierBinding, CipherSuite, CredentialIdentity, PathSignalEvent, PolicyMode,
-    SessionId, SessionRole, DEFAULT_ADMISSION_EPOCH_SLOT_SECS, MINIMUM_REPLAY_WINDOW,
+    AuthProfile, CarrierBinding, CipherSuite, CredentialIdentity, Mode, PathSignalEvent,
+    PolicyMode, SessionId, SessionRole, DEFAULT_ADMISSION_EPOCH_SLOT_SECS, MINIMUM_REPLAY_WINDOW,
 };
 use serde::{Deserialize, Serialize};
 use socket2::{Domain, Protocol, Socket, Type};

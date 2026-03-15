@@ -32,7 +32,8 @@ pub use network::{
 };
 pub use protocol::{
     AuthProfile, CarrierBinding, CipherSuite, CloseCode, ControlReliability, IdleResumeBehavior,
-    InvalidInputBehavior, KeepaliveMode, PacingFamily, PolicyMode, SchedulerProfile, SessionRole,
+    InvalidInputBehavior, KeepaliveMode, Mode, PacingFamily, PolicyMode, SchedulerProfile,
+    SessionRole,
 };
 pub use runtime::{
     AdmissionTimeContext, CarrierBitmap, ControlFrameKind, KeyPhase, PacketFlags, PathClasses,

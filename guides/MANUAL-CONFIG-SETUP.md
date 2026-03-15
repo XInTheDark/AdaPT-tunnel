@@ -56,7 +56,7 @@ Key points:
 - `stream_bind` — optional TCP listen address for the `S1` fallback carrier
 - `stream_public_endpoint` — optional client-facing `S1` endpoint, usually `host:443`
 - `stream_decoy_surface` — whether invalid unauthenticated stream input gets a decoy-like HTTP surface
-- `runtime_mode` — default runtime preset (`stealth`, `balanced`, or `speed`)
+- `mode` — numeric runtime mode (`0` = speed, `50` = balanced, `100` = stealth)
 - `endpoint_id` — deployment identifier
 - the core 32-byte APT keys support either inline hex or `file:/path`
 - `tunnel_local_ipv4` + `tunnel_netmask` define the tunnel subnet
@@ -80,7 +80,7 @@ Key points:
 - `d2_server_addr` — optional `D2` QUIC endpoint, usually `host:443`
 - `d2_server_certificate` — pinned `D2` server certificate; supports `file:/path`, inline PEM, or base64-encoded DER
 - `stream_server_addr` — optional TCP `S1` endpoint for fallback, usually `host:443`
-- `runtime_mode` — default runtime preset (`stealth`, `balanced`, or `speed`)
+- `mode` — numeric runtime mode (`0` = speed, `50` = balanced, `100` = stealth)
 - `preferred_carrier` — `d1`, `d2`, `s1`, or `auto`
 - `endpoint_id` — must match the server
 - `auth_profile` — `shared-deployment` or `per-user`
@@ -103,7 +103,7 @@ If you prefer boot-persistent service management on Linux, `apt-edge init` can n
 
 Optional one-shot override:
 
-- `--mode stealth|balanced|speed`
+- `--mode 0..100`
 
 ## 5. Generate or install a client bundle
 
@@ -129,7 +129,7 @@ Use `/etc/adapt/client.override.toml` for client-local changes that should not r
 
 Optional one-shot overrides:
 
-- `--mode stealth|balanced|speed`
+- `--mode 0..100`
 - `--carrier auto|d1|d2|s1`
 
 To run a bundle from a non-default location:
@@ -147,7 +147,7 @@ Useful override fields include:
 - `d2_server_addr`
 - `d2_server_certificate`
 - `stream_server_addr`
-- `runtime_mode`
+- `mode`
 - `preferred_carrier`
 - `bind`
 - `interface_name`

@@ -2,10 +2,10 @@
 
 use apt_bundle::{client_bundle_state_path, load_client_bundle, DEFAULT_CLIENT_BUNDLE_FILE_NAME};
 use apt_runtime::{
-    generate_client_identity, run_client, write_key_file, ClientConfig, RuntimeCarrierPreference,
-    RuntimeMode,
+    generate_client_identity, run_client, write_key_file, ClientConfig, Mode,
+    RuntimeCarrierPreference,
 };
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{value_parser, Parser, Subcommand, ValueEnum};
 use std::{
     io::{self, Write},
     path::{Path, PathBuf},
@@ -15,23 +15,6 @@ use tracing_subscriber::{fmt, EnvFilter};
 mod override_config;
 
 use self::override_config::apply_optional_client_override;
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum CliRuntimeMode {
-    Stealth,
-    Balanced,
-    Speed,
-}
-
-impl From<CliRuntimeMode> for RuntimeMode {
-    fn from(value: CliRuntimeMode) -> Self {
-        match value {
-            CliRuntimeMode::Stealth => Self::Stealth,
-            CliRuntimeMode::Balanced => Self::Balanced,
-            CliRuntimeMode::Speed => Self::Speed,
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum CliCarrier {
@@ -71,9 +54,9 @@ enum Command {
         /// Path to the client bundle file. If omitted, common default locations are searched.
         #[arg(long)]
         bundle: Option<PathBuf>,
-        /// Override the runtime mode for this launch only.
-        #[arg(long, value_enum)]
-        mode: Option<CliRuntimeMode>,
+        /// Override the numeric mode for this launch only (0 = speed, 100 = stealth).
+        #[arg(long, value_parser = value_parser!(u8).range(0..=100))]
+        mode: Option<u8>,
         /// Override the preferred carrier for this launch only.
         #[arg(long, value_enum)]
         carrier: Option<CliCarrier>,
@@ -109,7 +92,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn start_client(
     bundle: Option<PathBuf>,
-    mode: Option<CliRuntimeMode>,
+    mode: Option<u8>,
     carrier: Option<CliCarrier>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let bundle_path = match bundle {
@@ -121,9 +104,10 @@ async fn start_client(
     let loaded = load_bundle_config(&bundle_path)?;
     let mut resolved = loaded.resolve()?;
     if let Some(mode) = mode {
-        let mode: RuntimeMode = mode.into();
-        resolved.runtime_mode = mode;
-        mode.apply_to(&mut resolved.session_policy);
+        let mode = Mode::try_from(mode).expect("clap validated mode range");
+        resolved.mode = mode;
+        resolved.session_policy.initial_mode = mode.policy_mode();
+        resolved.session_policy.allow_speed_first = mode.allow_speed_first();
     }
     if let Some(carrier) = carrier {
         resolved.preferred_carrier = carrier.into();

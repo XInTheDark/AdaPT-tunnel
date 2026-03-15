@@ -66,9 +66,9 @@ pub(super) async fn run_tick(
         if let Some(mode) = session.adaptive.maybe_observe_stability(now) {
             record_event(
                 telemetry,
-                &AptEvent::PolicyModeChanged {
+                &AptEvent::ModeChanged {
                     session_id: *session_id,
-                    mode,
+                    mode: mode.into(),
                 },
                 None,
                 observability,
@@ -80,9 +80,9 @@ pub(super) async fn run_tick(
         {
             record_event(
                 telemetry,
-                &AptEvent::PolicyModeChanged {
+                &AptEvent::ModeChanged {
                     session_id: *session_id,
-                    mode,
+                    mode: mode.into(),
                 },
                 None,
                 observability,

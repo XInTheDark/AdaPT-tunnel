@@ -213,9 +213,9 @@ sudo journalctl -u apt-edge -f
 
 Useful one-shot overrides:
 
-- `--mode stealth` — most conservative behavior and the default
-- `--mode balanced` — less conservative pacing/fallback behavior
-- `--mode speed` — fastest policy preset
+- `--mode 100` — most conservative behavior and the default
+- `--mode 50` — balanced midpoint
+- `--mode 0` — fastest / lowest-shaping anchor
 
 When `d2_bind` and/or `stream_bind` are configured, the server listens on the UDP `D1` address plus the optional `D2` QUIC and `S1` fallback addresses.
 
@@ -257,7 +257,7 @@ On first run, it also creates a blank optional override file at `/etc/adapt/clie
 
 Useful one-shot overrides:
 
-- `--mode stealth|balanced|speed` — temporary runtime-mode override
+- `--mode 0..100` — temporary numeric mode override (`0` = speed, `50` = balanced, `100` = stealth)
 - `--carrier auto|d1|d2|s1` — temporary carrier preference override
 
 The generated bundle keeps `D1` as the normal first choice. When `D2` and/or `S1` are present, the conservative automatic order is `D1 -> D2 -> S1`.

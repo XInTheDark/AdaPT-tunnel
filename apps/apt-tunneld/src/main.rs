@@ -1,26 +1,9 @@
 //! Compatibility entrypoint that runs the same combined server daemon as `apt-edge`.
 
-use apt_runtime::{run_server, RuntimeMode, ServerConfig};
-use clap::{Parser, ValueEnum};
+use apt_runtime::{run_server, Mode, ServerConfig};
+use clap::{value_parser, Parser};
 use std::path::PathBuf;
 use tracing_subscriber::{fmt, EnvFilter};
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum CliRuntimeMode {
-    Stealth,
-    Balanced,
-    Speed,
-}
-
-impl From<CliRuntimeMode> for RuntimeMode {
-    fn from(value: CliRuntimeMode) -> Self {
-        match value {
-            CliRuntimeMode::Stealth => Self::Stealth,
-            CliRuntimeMode::Balanced => Self::Balanced,
-            CliRuntimeMode::Speed => Self::Speed,
-        }
-    }
-}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -31,9 +14,9 @@ struct Cli {
     /// Path to the server config. If omitted, /etc/adapt/server.toml is used.
     #[arg(long)]
     config: Option<PathBuf>,
-    /// Override the runtime mode for this launch only.
-    #[arg(long, value_enum)]
-    mode: Option<CliRuntimeMode>,
+    /// Override the numeric mode for this launch only (0 = speed, 100 = stealth).
+    #[arg(long, value_parser = value_parser!(u8).range(0..=100))]
+    mode: Option<u8>,
 }
 
 #[tokio::main]
@@ -54,9 +37,10 @@ async fn main() {
                 }
             };
             if let Some(mode) = cli.mode {
-                let mode: RuntimeMode = mode.into();
-                config.runtime_mode = mode;
-                mode.apply_to(&mut config.session_policy);
+                let mode = Mode::try_from(mode).expect("clap validated mode range");
+                config.mode = mode;
+                config.session_policy.initial_mode = mode.policy_mode();
+                config.session_policy.allow_speed_first = mode.allow_speed_first();
             }
             match run_server(config).await {
                 Ok(result) => {

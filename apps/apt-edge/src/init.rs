@@ -236,7 +236,7 @@ pub(super) fn init_server(
     let config = ServerConfig {
         bind,
         public_endpoint,
-        runtime_mode: RuntimeMode::Stealth,
+        mode: Mode::STEALTH,
         d2_bind: d2.as_ref().map(|value| value.bind),
         d2_public_endpoint: d2.as_ref().map(|value| value.public_endpoint.clone()),
         d2_certificate: d2.as_ref().map(|value| value.certificate_spec.clone()),

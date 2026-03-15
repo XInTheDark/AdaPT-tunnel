@@ -3,7 +3,7 @@
 //! The crate keeps observability coarse by default: enough to debug deployments,
 //! but not enough to recreate a fingerprint of user traffic.
 
-use apt_types::{CarrierBinding, CredentialIdentity, PathProfile, PolicyMode, SessionId};
+use apt_types::{CarrierBinding, CredentialIdentity, Mode, PathProfile, SessionId};
 use serde::{Deserialize, Serialize};
 use tracing::{info, info_span};
 use tracing_subscriber::{fmt, EnvFilter};
@@ -48,13 +48,10 @@ pub enum AptEvent {
     TunnelEstablished {
         session_id: SessionId,
         carrier: CarrierBinding,
-        mode: PolicyMode,
+        mode: Mode,
     },
-    /// Policy mode changed.
-    PolicyModeChanged {
-        session_id: SessionId,
-        mode: PolicyMode,
-    },
+    /// Numeric mode changed.
+    ModeChanged { session_id: SessionId, mode: Mode },
     /// The runtime switched carriers for the session.
     CarrierSwitched {
         session_id: SessionId,
@@ -118,7 +115,7 @@ impl TelemetrySnapshot {
             AptEvent::AdmissionAccepted { .. } => self.accepted_admissions += 1,
             AptEvent::AdmissionRejected { .. } => self.rejected_admissions += 1,
             AptEvent::TunnelEstablished { .. } => self.established_sessions += 1,
-            AptEvent::PolicyModeChanged { .. }
+            AptEvent::ModeChanged { .. }
             | AptEvent::CarrierSwitched { .. }
             | AptEvent::CarrierFallback { .. }
             | AptEvent::CarrierMigrated { .. }
@@ -164,13 +161,13 @@ pub fn record_event(
             mode,
         } => {
             if config.include_path_profile {
-                info!(session = %session_id, carrier = %carrier.as_str(), mode = ?mode, path = ?path_profile, "tunnel established");
+                info!(session = %session_id, carrier = %carrier.as_str(), mode = mode.value(), path = ?path_profile, "tunnel established");
             } else {
-                info!(session = %session_id, carrier = %carrier.as_str(), mode = ?mode, "tunnel established");
+                info!(session = %session_id, carrier = %carrier.as_str(), mode = mode.value(), "tunnel established");
             }
         }
-        AptEvent::PolicyModeChanged { session_id, mode } => {
-            info!(session = %session_id, mode = ?mode, "policy mode changed");
+        AptEvent::ModeChanged { session_id, mode } => {
+            info!(session = %session_id, mode = mode.value(), "mode changed");
         }
         AptEvent::CarrierSwitched {
             session_id,
@@ -252,7 +249,7 @@ mod tests {
         snapshot.apply(&AptEvent::TunnelEstablished {
             session_id: SessionId([1_u8; 16]),
             carrier: CarrierBinding::D1DatagramUdp,
-            mode: PolicyMode::Balanced,
+            mode: Mode::BALANCED,
         });
         assert_eq!(snapshot.rejected_admissions, 1);
         assert_eq!(snapshot.established_sessions, 1);

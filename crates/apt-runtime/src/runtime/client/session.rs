@@ -158,7 +158,7 @@ pub(super) async fn run_client_session_loop(
                                         Some(tun.interface_name.clone()),
                                         Some(paths.get(&active_path_id).map(|state| state.binding).unwrap_or(handshake.binding)),
                                         standby_path_id.and_then(|id| paths.get(&id).map(|state| state.binding)),
-                                        Some(adaptive.current_mode()),
+                                        Some(adaptive.current_mode().into()),
                                     );
                                     return Ok(status);
                                 }
@@ -213,7 +213,10 @@ pub(super) async fn run_client_session_loop(
                             if let Some(mode) = adaptive.apply_signal(PathSignalEvent::ImmediateReset, now_secs()) {
                                 record_event(
                                     telemetry,
-                                    &AptEvent::PolicyModeChanged { session_id, mode },
+                                    &AptEvent::ModeChanged {
+                                        session_id,
+                                        mode: mode.into(),
+                                    },
                                     None,
                                     observability,
                                 );
@@ -288,7 +291,10 @@ pub(super) async fn run_client_session_loop(
                     migration_pressure = migration_pressure.saturating_sub(1);
                     record_event(
                         telemetry,
-                        &AptEvent::PolicyModeChanged { session_id, mode },
+                        &AptEvent::ModeChanged {
+                            session_id,
+                            mode: mode.into(),
+                        },
                         None,
                         observability,
                     );
@@ -302,7 +308,10 @@ pub(super) async fn run_client_session_loop(
                     migration_pressure = migration_pressure.saturating_add(1);
                     record_event(
                         telemetry,
-                        &AptEvent::PolicyModeChanged { session_id, mode },
+                        &AptEvent::ModeChanged {
+                            session_id,
+                            mode: mode.into(),
+                        },
                         None,
                         observability,
                     );
@@ -404,7 +413,10 @@ pub(super) async fn run_client_session_loop(
                                 if let Some(mode) = adaptive.apply_signal(PathSignalEvent::FallbackFailure, now) {
                                     record_event(
                                         telemetry,
-                                        &AptEvent::PolicyModeChanged { session_id, mode },
+                                        &AptEvent::ModeChanged {
+                                            session_id,
+                                            mode: mode.into(),
+                                        },
                                         None,
                                         observability,
                                     );
@@ -486,7 +498,7 @@ pub(super) async fn run_client_session_loop(
         Some(tun.interface_name),
         paths.get(&active_path_id).map(|state| state.binding),
         standby_path_id.and_then(|id| paths.get(&id).map(|state| state.binding)),
-        Some(adaptive.current_mode()),
+        Some(adaptive.current_mode().into()),
     );
     persistent_state.last_status = Some(status.status.clone());
     Ok(status)
