@@ -1,10 +1,10 @@
 use apt_persona::{PersonaEngine, PersonaInputs, PersonaProfile, RememberedProfile};
-use apt_policy::{LocalNormalityProfile, PolicyController};
+use apt_policy::{inferred_path_profile, LocalNormalityProfile, PolicyController};
 use apt_tunnel::Frame;
 use apt_types::{
     CarrierBinding, ConnectionLongevityClass, GatewayFingerprint, KeepaliveMode, LinkType,
-    LocalNetworkContext, LossClass, MtuClass, NatClass, NetworkMetadataObservation, PathClass,
-    PathProfile, PathSignalEvent, PolicyMode, PublicRouteHint, RttClass,
+    LocalNetworkContext, NetworkMetadataObservation, PathClass, PathProfile, PathSignalEvent,
+    PolicyMode, PublicRouteHint,
 };
 
 mod context;

@@ -13,9 +13,8 @@
 ## Current milestone
 
 - **Milestone:** Phase 3 adaptive/persona/local-normality rewrite
-- **Status:** chunk 2 shipped, plus a runtime hot-path CPU hardening checkpoint for the existing tunnel fast path
+- **Status:** chunk 2 shipped, plus a runtime hot-path CPU hardening checkpoint, plus the bounded histogram local-normality rewrite
 - **Primary remaining goal:** finish the spec-credible adaptive runtime by:
-  - replacing placeholder local-normality tracking with a compact bounded histogram model
   - making adaptive keepalive a real persisted runtime path
   - wiring persona outputs into live scheduler/runtime behavior so numeric `mode` scales continuously rather than behaving like a renamed enum
   - upgrading the controller to consume richer signals and apply bounded `mode` adjustments
@@ -26,11 +25,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** tunnel runtime CPU hardening for the existing fast path
-- **Latency impact:** none expected; the direct-inner-only path now avoids extra send/decode copies
+- **Chunk:** bounded histogram local-normality model rewrite
+- **Latency impact:** negligible
 - **Bandwidth impact:** none
-- **CPU impact:** lower in steady-state tunnel traffic, especially for wrapped carriers and `mode≈0` / direct-inner-only sessions
-- **Notes:** runtime tunnel sessions now cache outer AEAD instances plus precomputed AAD per carrier/direction, direct-inner-only now reuses owned packet buffers on both encode and known-session decode paths, and S1 writes now use the single-record carrier encode path instead of allocating/draining a temporary record vector
+- **CPU impact:** negligible steady-state cost; still within the `<1%` target envelope for the model itself
+- **Notes:** local-normality now uses persisted bounded histograms/counters instead of raw sample deques, applies explicit per-session clipping budgets, tracks per-carrier success/failure/rebinding/idle-timeout evidence, derives richer path/MTU/RTT/loss/NAT/permissiveness summaries, and refreshes remembered carrier/permissiveness hints from learned profile evidence
 
 ## Numeric mode model
 
@@ -67,7 +66,6 @@ The Phase 3 end state remains **`mode`-only** across operator-facing config, CLI
 | Chunk | Status | Scope | Estimated impact |
 |---|---|---|---|
 | Planning/docs maintenance | active | Keep `PLAN.md` current after each shipped chunk; keep assumptions, scope, status, and expected performance notes aligned with the live code | No runtime impact |
-| Histogram local-normality model | pending | Replace the raw sample deque with bounded counters/histograms, bootstrap thresholds, and explicit poisoning resistance | Negligible latency/bandwidth; target `<1%` steady CPU |
 | Adaptive keepalive learning | pending | Persist learned idle interval state and make adaptive keepalive a real runtime path | No latency impact; bandwidth neutral-to-lower on permissive paths; negligible CPU |
 | Persona/scheduler runtime wiring + soft packing | pending | Consume persona outputs live, derive shaping behavior continuously from numeric `mode`, and add soft MTU-aware packing behavior | `mode=0`: `~0` latency / `~0` padding / `~0-1%` CPU; `mode≈50`: `+0-3 ms` interactive / `+0-10 ms` bulk / `+0-2%` bandwidth / `+0-2%` CPU; `mode=100`: `+0-10 ms` interactive / `+0-40 ms` bulk / `+2-8%` steady bandwidth with up to `15-20%` during probation / `+1-5%` CPU |
 | Policy/controller follow-up | pending | Feed richer signals into the controller, remember per-profile carrier preference/permissiveness, and apply bounded numeric `mode` increases/decreases | Negligible runtime overhead |
@@ -75,55 +73,14 @@ The Phase 3 end state remains **`mode`-only** across operator-facing config, CLI
 
 ## Next tasks
 
-1. Replace the current local-normality sample storage with the bounded histogram/counter model and keep the profile compact enough to persist per network context.
-2. Add the dedicated adaptive keepalive learning controller and persist its learned interval/confidence state inside each stored network profile.
-3. Rework persona generation and runtime scheduling so pacing, padding, keepalive style, soft packing, and idle-resume behavior scale continuously from numeric `mode` instead of coarse anchor buckets.
-4. Expand the controller to consume richer delivery/impairment/rebinding/idle-timeout signals and to adjust `mode` conservatively with remembered per-profile preferences.
-5. Run workspace tests plus mode-by-mode smoke/perf checks, with special attention to CPU under `mode=0`, then update this file again with the next shipped chunk and impact note.
+1. Add the dedicated adaptive keepalive learning controller and persist its learned interval/confidence state inside each stored network profile.
+2. Rework persona generation and runtime scheduling so pacing, padding, keepalive style, soft packing, and idle-resume behavior scale continuously from numeric `mode` instead of coarse anchor buckets.
+3. Expand the controller to consume richer delivery/impairment/rebinding/idle-timeout signals and to adjust `mode` conservatively with remembered per-profile preferences.
+4. Run workspace tests plus mode-by-mode smoke/perf checks, with special attention to CPU under `mode=0`, then update this file again with the next shipped chunk and impact note.
 
 ## Detailed implementation requirements for remaining chunks
 
-### 1) Histogram local-normality model
-
-Replace the current raw sample deque approach with a bounded, compact statistical model.
-
-Rules:
-
-- no ML model
-- no learned neural scorer
-- use explicit counters/histograms only
-
-Track bounded histograms/counters for:
-
-- packet-size buckets
-- inter-send-gap buckets
-- burst-length buckets
-- upstream/downstream ratio buckets
-- RTT class counts
-- loss class counts
-- MTU class counts
-- NAT class counts
-- connection longevity counts
-- per-carrier success/failure/rebinding/idle-timeout counters
-
-Poisoning resistance must be explicit:
-
-- clipped per-session update amounts
-- slower promotion of failure signals than success signals
-- profile changes only affect path classification/`mode` after bounded evidence thresholds
-
-Bootstrap rule:
-
-- stay conservative until either 3 successful sessions exist for the active profile or the minimum histogram evidence threshold is met
-
-Derived outputs must include:
-
-- richer `PathProfile`
-- remembered preferred carrier / permissiveness hints
-- learned keepalive interval state inputs
-- bounded `mode` floor/ceiling hints for the controller
-
-### 2) Adaptive keepalive: make adaptive real
+### 1) Adaptive keepalive: make adaptive real
 
 Implement a dedicated adaptive keepalive controller and persist it per network profile.
 
@@ -152,7 +109,7 @@ Exact interval update rules:
   - SuppressWhenActive: configured base interval only
 - keepalive learning updates only from idle-related signals, never from busy periods
 
-### 3) Persona / scheduler runtime rewrite
+### 2) Persona / scheduler runtime rewrite
 
 Keep persona generation deterministic per session, but make the important outputs live in the runtime.
 
@@ -192,7 +149,7 @@ Hard performance caps:
 - stealth end (`mode≈100`): up to `10 ms` interactive, up to `40 ms` bulk
 - never exceed the repo's existing global scheduler latency budgets
 
-### 4) Policy / controller follow-up
+### 3) Policy / controller follow-up
 
 Keep the controller explicit and rule-based.
 
@@ -221,7 +178,7 @@ Carrier ordering must be:
 4. conservative binding order
 5. always filtered by actually enabled carriers
 
-### 5) QA / perf validation
+### 4) QA / perf validation
 
 Run lightweight real-traffic QA for all three anchor points (`mode=0`, `mode=50`, `mode=100`):
 

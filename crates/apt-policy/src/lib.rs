@@ -11,4 +11,4 @@ mod normality;
 mod tests;
 
 pub use controller::PolicyController;
-pub use normality::{LocalNormalityProfile, PolicyError, ProfileSummary};
+pub use normality::{inferred_path_profile, LocalNormalityProfile, PolicyError, ProfileSummary};

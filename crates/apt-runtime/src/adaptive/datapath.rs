@@ -17,6 +17,9 @@ pub struct AdaptiveDatapath {
     pub(super) last_send_millis: Option<u64>,
     pub(super) last_recv_millis: Option<u64>,
     pub(super) observations_since_path_refresh: u16,
+    pub(super) session_started_millis: u64,
+    pub(super) session_outbound_bytes: u64,
+    pub(super) session_inbound_bytes: u64,
 }
 
 impl AdaptiveDatapath {
@@ -31,7 +34,9 @@ impl AdaptiveDatapath {
         initial_path_profile: PathProfile,
         now_secs: u64,
     ) -> Self {
-        let local_normality = stored_profile.unwrap_or_else(|| LocalNormalityProfile::new(context));
+        let mut local_normality =
+            stored_profile.unwrap_or_else(|| LocalNormalityProfile::new(context));
+        local_normality.begin_new_session();
         let path_profile =
             super::normality::infer_path_profile(&local_normality).unwrap_or(initial_path_profile);
         let allow_speed_first = allow_speed_first_by_policy && local_normality.is_bootstrapped();
@@ -59,6 +64,9 @@ impl AdaptiveDatapath {
             last_send_millis: None,
             last_recv_millis: None,
             observations_since_path_refresh: 0,
+            session_started_millis: now_secs.saturating_mul(1_000),
+            session_outbound_bytes: 0,
+            session_inbound_bytes: 0,
         };
         state.reschedule_keepalive(now_secs);
         state
@@ -96,6 +104,9 @@ impl AdaptiveDatapath {
             last_send_millis: None,
             last_recv_millis: None,
             observations_since_path_refresh: 0,
+            session_started_millis: now_secs.saturating_mul(1_000),
+            session_outbound_bytes: 0,
+            session_inbound_bytes: 0,
         };
         state.reschedule_keepalive(now_secs);
         state

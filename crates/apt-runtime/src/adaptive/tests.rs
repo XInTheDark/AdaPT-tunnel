@@ -97,3 +97,51 @@ fn local_network_profile_key_is_stable_for_equivalent_contexts() {
     };
     assert_eq!(local_network_profile_key(&a), local_network_profile_key(&b));
 }
+
+#[test]
+fn quiet_impairment_records_idle_timeout_evidence() {
+    let context = build_client_network_context("edge-a", "route-a");
+    let mut adaptive = AdaptiveDatapath::new_client(
+        CarrierBinding::D1DatagramUdp,
+        [29_u8; 32],
+        context,
+        None,
+        None,
+        PolicyMode::Balanced,
+        true,
+        PathProfile::unknown(),
+        0,
+    );
+    let _ = adaptive.maybe_observe_quiet_impairment(60, 0);
+    let profile = adaptive.local_normality_profile().unwrap();
+    assert_eq!(
+        profile
+            .carrier_counters(CarrierBinding::D1DatagramUdp)
+            .idle_timeouts,
+        1
+    );
+}
+
+#[test]
+fn remembered_profile_comes_from_learned_local_summary_when_available() {
+    let context = build_client_network_context("edge-a", "route-a");
+    let mut adaptive = AdaptiveDatapath::new_client(
+        CarrierBinding::D1DatagramUdp,
+        [31_u8; 32],
+        context,
+        None,
+        None,
+        PolicyMode::Balanced,
+        true,
+        PathProfile::unknown(),
+        0,
+    );
+    for sample in 0..24 {
+        adaptive.record_outbound(1_350, 3, sample * 20);
+    }
+    adaptive.note_successful_session();
+    adaptive.note_successful_session();
+    let remembered = adaptive.remembered_profile().unwrap();
+    assert_eq!(remembered.preferred_carrier, CarrierBinding::D1DatagramUdp);
+    assert!(remembered.permissiveness_score >= 128);
+}
