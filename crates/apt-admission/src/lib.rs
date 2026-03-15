@@ -12,7 +12,7 @@ use apt_crypto::{
 };
 use apt_types::{
     AdmissionDefaults, AuthProfile, CarrierBinding, CipherSuite, ClientNonce, CredentialIdentity,
-    EndpointId, PathProfile, PolicyMode, RekeyLimits, SessionId, SessionRole,
+    EndpointId, Mode, PathProfile, RekeyLimits, SessionId, SessionRole,
 };
 use rand::RngCore;
 use serde::{Deserialize, Serialize};

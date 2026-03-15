@@ -290,9 +290,9 @@ fn install_server_session(
         session.chosen_carrier,
         session.secrets.persona_seed,
         AdaptiveRuntimeConfig {
-            initial_mode: session.policy_mode,
-            operator_mode: config.mode,
-            allow_speed_first_by_policy: config.session_policy.allow_speed_first,
+            negotiated_mode: session.mode,
+            persisted_mode: None,
+            preferred_carrier: None,
             keepalive_base_interval_secs: config.keepalive_secs,
         },
         admission_path_profile(None),
@@ -320,7 +320,7 @@ fn install_server_session(
                 derive_d2_tunnel_outer_keys(&session.secrets)?,
                 derive_s1_tunnel_outer_keys(&session.secrets)?,
             )?,
-            encapsulation: TunnelEncapsulation::for_policy(session.policy_mode),
+            encapsulation: TunnelEncapsulation::for_mode(session.mode),
             primary_path,
             standby_path: None,
             pending_validation: None,
@@ -334,7 +334,7 @@ fn install_server_session(
         assigned_ipv6 = ?peer.tunnel_ipv6,
         credential = %credential_label,
         carrier = %binding.as_str(),
-        encapsulation = TunnelEncapsulation::for_policy(session.policy_mode).as_str(),
+        encapsulation = TunnelEncapsulation::for_mode(session.mode).as_str(),
         "server session established"
     );
     record_event(
@@ -352,7 +352,7 @@ fn install_server_session(
         &AptEvent::TunnelEstablished {
             session_id,
             carrier: session.chosen_carrier,
-            mode: session.policy_mode.into(),
+            mode: session.mode,
         },
         None,
         observability,

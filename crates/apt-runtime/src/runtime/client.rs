@@ -1,6 +1,7 @@
 use super::*;
 use crate::dns::{configure_client_dns, DnsGuard};
 
+mod helpers;
 mod session;
 
 use session::run_client_session_loop;
@@ -26,7 +27,7 @@ pub(super) async fn run_client(
         &observability,
     )
     .await?;
-    let encapsulation = TunnelEncapsulation::for_policy(handshake.established.policy_mode);
+    let encapsulation = TunnelEncapsulation::for_mode(handshake.established.mode);
     let transport = extract_tunnel_parameters(&handshake.established)?;
     let tun = spawn_tun_worker(TunInterfaceConfig {
         name: config.interface_name.clone(),
@@ -74,14 +75,14 @@ pub(super) async fn run_client(
         carrier = %handshake.binding.as_str(),
         encapsulation = encapsulation.as_str(),
         requested_mode = config.mode.value(),
-        negotiated_mode = Mode::from(handshake.established.policy_mode).value(),
+        negotiated_mode = handshake.established.mode.value(),
         "client session established"
     );
-    if handshake.established.policy_mode != config.session_policy.initial_mode {
+    if handshake.established.mode != config.mode {
         info!(
             requested_mode = config.mode.value(),
-            negotiated_mode = Mode::from(handshake.established.policy_mode).value(),
-            "server negotiated a different mode anchor than the client requested"
+            negotiated_mode = handshake.established.mode.value(),
+            "server negotiated a different numeric mode than the client requested"
         );
     }
 

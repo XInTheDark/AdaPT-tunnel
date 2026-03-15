@@ -5,7 +5,7 @@ use crate::{
         DEFAULT_REPLAY_RETENTION_SECS,
     },
     network::PathProfile,
-    protocol::{CarrierBinding, CipherSuite, PolicyMode},
+    protocol::{CarrierBinding, CipherSuite, Mode},
 };
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -228,8 +228,8 @@ impl FromIterator<CarrierBinding> for CarrierBitmap {
 /// Aggregate defaults frequently shared across higher-level configuration code.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProtocolDefaults {
-    /// Initial policy mode.
-    pub initial_policy_mode: PolicyMode,
+    /// Initial numeric runtime mode.
+    pub initial_mode: Mode,
     /// Admission epoch-slot length.
     pub admission_epoch_length: Duration,
     /// Replay-cache retention.
@@ -251,7 +251,7 @@ pub struct ProtocolDefaults {
 impl Default for ProtocolDefaults {
     fn default() -> Self {
         Self {
-            initial_policy_mode: PolicyMode::StealthFirst,
+            initial_mode: Mode::STEALTH,
             admission_epoch_length: Duration::from_secs(DEFAULT_ADMISSION_EPOCH_SLOT_SECS),
             replay_cache_retention: Duration::from_secs(DEFAULT_REPLAY_RETENTION_SECS),
             cookie_lifetime: Duration::from_secs(DEFAULT_COOKIE_LIFETIME_SECS),

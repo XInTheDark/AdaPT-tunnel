@@ -1,6 +1,5 @@
 use super::*;
 use crate::{generate_d2_tls_identity, load_certificate_der};
-use apt_types::PolicyMode;
 use std::{
     fs,
     time::{SystemTime, UNIX_EPOCH},
@@ -300,8 +299,6 @@ fn client_resolve_rejects_unimplemented_hybrid_pq() {
         d2_server_addr: None,
         d2_server_certificate: None,
         session_policy: SessionPolicy {
-            initial_mode: PolicyMode::StealthFirst,
-            allow_speed_first: false,
             allow_hybrid_pq: true,
         },
         enable_s1_fallback: true,
@@ -493,8 +490,6 @@ fn server_resolve_rejects_unimplemented_hybrid_pq() {
         push_routes: Vec::new(),
         push_dns: Vec::new(),
         session_policy: SessionPolicy {
-            initial_mode: PolicyMode::StealthFirst,
-            allow_speed_first: false,
             allow_hybrid_pq: true,
         },
         allow_session_migration: true,

@@ -37,7 +37,7 @@ use apt_observability::{record_event, AptEvent, ObservabilityConfig, TelemetrySn
 use apt_tunnel::{Frame, RekeyStatus, TunnelSession};
 use apt_types::{
     AuthProfile, CarrierBinding, CipherSuite, CredentialIdentity, EndpointId, Mode,
-    PathSignalEvent, PolicyMode, SessionId, SessionRole, DEFAULT_ADMISSION_EPOCH_SLOT_SECS,
+    PathSignalEvent, SessionId, SessionRole, DEFAULT_ADMISSION_EPOCH_SLOT_SECS,
     MINIMUM_REPLAY_WINDOW,
 };
 use serde::{Deserialize, Serialize};
@@ -162,8 +162,8 @@ enum TunnelEncapsulation {
 }
 
 impl TunnelEncapsulation {
-    const fn for_policy(mode: PolicyMode) -> Self {
-        if matches!(mode, PolicyMode::SpeedFirst) {
+    const fn for_mode(mode: Mode) -> Self {
+        if mode.allows_direct_inner_fast_path() {
             Self::DirectInnerOnly
         } else {
             Self::Wrapped

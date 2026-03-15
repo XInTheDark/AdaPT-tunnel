@@ -1,13 +1,22 @@
 use super::*;
 use crate::config::{PersistedIdleOutcomeSummary, PersistedKeepaliveLearningState};
 
-fn runtime_config(initial_mode: PolicyMode, operator_mode: Mode) -> AdaptiveRuntimeConfig {
+fn runtime_config(mode: Mode) -> AdaptiveRuntimeConfig {
     AdaptiveRuntimeConfig {
-        initial_mode,
-        operator_mode,
-        allow_speed_first_by_policy: true,
+        negotiated_mode: mode,
+        persisted_mode: None,
+        preferred_carrier: None,
         keepalive_base_interval_secs: 25,
     }
+}
+
+fn bootstrapped_profile(context: LocalNetworkContext) -> LocalNormalityProfile {
+    let mut profile = LocalNormalityProfile::new(context);
+    for _ in 0..3 {
+        profile.note_successful_session();
+        profile.begin_new_session();
+    }
+    profile
 }
 
 #[test]
@@ -19,7 +28,7 @@ fn client_datapath_bootstraps_and_persists_learning() {
         context,
         None,
         None,
-        runtime_config(PolicyMode::StealthFirst, Mode::STEALTH),
+        runtime_config(Mode::STEALTH),
         PathProfile::unknown(),
         None,
         0,
@@ -40,7 +49,7 @@ fn keepalive_frames_include_cover_padding_when_sparse_cover_is_active() {
         context,
         None,
         None,
-        runtime_config(PolicyMode::StealthFirst, Mode::STEALTH),
+        runtime_config(Mode::STEALTH),
         PathProfile::unknown(),
         None,
         0,
@@ -54,39 +63,47 @@ fn keepalive_frames_include_cover_padding_when_sparse_cover_is_active() {
 }
 
 #[test]
-fn stable_delivery_can_change_policy_mode() {
+fn stable_delivery_reduces_seeded_conservative_bias() {
     let context = build_client_network_context("edge-a", "route-a");
     let mut adaptive = AdaptiveDatapath::new_client(
         CarrierBinding::D1DatagramUdp,
         [19_u8; 32],
-        context,
+        context.clone(),
+        Some(bootstrapped_profile(context)),
         None,
-        None,
-        runtime_config(PolicyMode::StealthFirst, Mode::STEALTH),
+        AdaptiveRuntimeConfig {
+            negotiated_mode: Mode::BALANCED,
+            persisted_mode: Some(Mode::new(72).unwrap()),
+            preferred_carrier: None,
+            keepalive_base_interval_secs: 25,
+        },
         PathProfile::unknown(),
         None,
         0,
     );
+    let initial_mode = adaptive.current_mode().value();
     for tick in [15, 30, 45, 60, 75] {
         let _ = adaptive.maybe_observe_stability(tick);
     }
-    assert_eq!(adaptive.current_mode(), PolicyMode::Balanced);
+    assert!(adaptive.current_mode().value() < initial_mode);
+    assert!(adaptive.current_mode().value() >= Mode::BALANCED.value());
 }
 
 #[test]
-fn speed_first_mode_disables_cover_padding() {
+fn bootstrapped_speed_mode_disables_cover_padding() {
     let context = build_client_network_context("edge-a", "route-a");
     let mut adaptive = AdaptiveDatapath::new_client(
         CarrierBinding::D1DatagramUdp,
         [23_u8; 32],
-        context,
+        context.clone(),
+        Some(bootstrapped_profile(context)),
         None,
-        None,
-        runtime_config(PolicyMode::SpeedFirst, Mode::SPEED),
+        runtime_config(Mode::SPEED),
         PathProfile::unknown(),
         None,
         0,
     );
+    assert_eq!(adaptive.current_mode(), Mode::SPEED);
     assert!(adaptive.maybe_padding_frame(128, false, 10_000).is_none());
     assert_eq!(
         adaptive.build_keepalive_frames(96, 10_000),
@@ -121,7 +138,7 @@ fn quiet_impairment_records_idle_timeout_evidence() {
         context,
         None,
         None,
-        runtime_config(PolicyMode::Balanced, Mode::BALANCED),
+        runtime_config(Mode::BALANCED),
         PathProfile::unknown(),
         None,
         0,
@@ -151,7 +168,7 @@ fn remembered_profile_comes_from_learned_local_summary_when_available() {
         context,
         None,
         None,
-        runtime_config(PolicyMode::Balanced, Mode::BALANCED),
+        runtime_config(Mode::BALANCED),
         PathProfile::unknown(),
         None,
         0,
@@ -175,7 +192,7 @@ fn adaptive_keepalive_success_grows_target_interval_by_ten_percent() {
         context,
         None,
         None,
-        runtime_config(PolicyMode::Balanced, Mode::BALANCED),
+        runtime_config(Mode::BALANCED),
         PathProfile::unknown(),
         None,
         0,
@@ -198,7 +215,7 @@ fn persisted_keepalive_learning_state_is_reused() {
         context,
         None,
         None,
-        runtime_config(PolicyMode::StealthFirst, Mode::STEALTH),
+        runtime_config(Mode::STEALTH),
         PathProfile::unknown(),
         Some(PersistedKeepaliveLearningState {
             current_target_interval_secs: 60,
@@ -224,7 +241,7 @@ fn non_speed_modes_use_real_adaptive_keepalive_paths() {
         context.clone(),
         None,
         None,
-        runtime_config(PolicyMode::Balanced, Mode::BALANCED),
+        runtime_config(Mode::BALANCED),
         PathProfile::unknown(),
         None,
         0,
@@ -238,7 +255,7 @@ fn non_speed_modes_use_real_adaptive_keepalive_paths() {
         context,
         None,
         None,
-        runtime_config(PolicyMode::StealthFirst, Mode::STEALTH),
+        runtime_config(Mode::STEALTH),
         PathProfile::unknown(),
         None,
         0,
@@ -256,7 +273,7 @@ fn constrained_high_mode_prefers_smaller_bursts_and_packing_targets() {
         context,
         None,
         None,
-        runtime_config(PolicyMode::StealthFirst, Mode::STEALTH),
+        runtime_config(Mode::STEALTH),
         PathProfile::unknown(),
         None,
         0,
@@ -271,14 +288,14 @@ fn constrained_high_mode_prefers_smaller_bursts_and_packing_targets() {
 
 #[test]
 fn pacing_delay_respects_mode_caps() {
-    let context = build_client_network_context("edge-a", "route-a");
+    let balanced_context = build_client_network_context("edge-a", "route-a");
     let mut balanced = AdaptiveDatapath::new_client(
         CarrierBinding::S1EncryptedStream,
         [59_u8; 32],
-        context.clone(),
+        balanced_context.clone(),
+        Some(bootstrapped_profile(balanced_context)),
         None,
-        None,
-        runtime_config(PolicyMode::Balanced, Mode::BALANCED),
+        runtime_config(Mode::BALANCED),
         PathProfile::unknown(),
         None,
         0,
@@ -288,13 +305,14 @@ fn pacing_delay_respects_mode_caps() {
         balanced.pacing_delay_ms(&[Frame::IpData(vec![0_u8; 200])], 1, 0, 1_000);
     assert!(interactive_delay <= 3);
 
+    let stealth_context = build_client_network_context("edge-a", "route-a");
     let mut stealth = AdaptiveDatapath::new_client(
         CarrierBinding::S1EncryptedStream,
         [61_u8; 32],
-        context,
+        stealth_context,
         None,
         None,
-        runtime_config(PolicyMode::StealthFirst, Mode::STEALTH),
+        runtime_config(Mode::STEALTH),
         PathProfile::unknown(),
         None,
         0,

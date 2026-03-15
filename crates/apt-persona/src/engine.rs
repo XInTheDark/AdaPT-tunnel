@@ -13,11 +13,6 @@ impl PersonaEngine {
         seed_material.extend_from_slice(&inputs.persona_seed);
         seed_material.push(inputs.mode.value());
         seed_material.push(inputs.chosen_carrier.code());
-        seed_material.push(match inputs.policy_mode {
-            PolicyMode::StealthFirst => 1,
-            PolicyMode::Balanced => 2,
-            PolicyMode::SpeedFirst => 3,
-        });
         seed_material.push(inputs.path_profile.path as u8);
         seed_material.push(inputs.path_profile.mtu as u8);
         seed_material.push(inputs.path_profile.rtt as u8);
@@ -75,11 +70,6 @@ impl PersonaEngine {
 
 fn effective_mode_value(inputs: &PersonaInputs) -> u8 {
     let mut effective = i16::from(inputs.mode.value());
-    effective += match inputs.policy_mode {
-        PolicyMode::SpeedFirst => -12,
-        PolicyMode::Balanced => 0,
-        PolicyMode::StealthFirst => 12,
-    };
     effective += match inputs.path_profile.path {
         PathClass::Hostile => 10,
         PathClass::Constrained => 6,

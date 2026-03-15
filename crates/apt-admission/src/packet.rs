@@ -107,8 +107,6 @@ impl ServerConfirmationPacket {
 /// Policy flags offered during `C0`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyFlags {
-    /// Whether speed-first mode is allowed by local policy.
-    pub allow_speed_first: bool,
     /// Whether hybrid PQ mode is permitted by local policy.
     pub allow_hybrid_pq: bool,
 }
@@ -126,8 +124,8 @@ pub struct C0 {
     pub carrier_bitmap: Vec<CarrierBinding>,
     /// Offered policy flags.
     pub policy_flags: PolicyFlags,
-    /// Requested policy mode.
-    pub policy_mode: PolicyMode,
+    /// Requested numeric mode.
+    pub mode: Mode,
     /// Coarse admission epoch slot.
     pub epoch_slot: u64,
     /// Per-attempt client nonce.
@@ -153,8 +151,8 @@ pub struct S1 {
     pub chosen_suite: CipherSuite,
     /// Chosen carrier family.
     pub chosen_carrier: CarrierBinding,
-    /// Chosen policy mode.
-    pub chosen_policy: PolicyMode,
+    /// Chosen numeric mode.
+    pub chosen_mode: Mode,
     /// Cookie expiry timestamp.
     pub cookie_expiry: u64,
     /// Stateless anti-amplification cookie.
@@ -232,7 +230,7 @@ pub(super) struct CookiePayload {
     pub noise_msg1: Vec<u8>,
     pub chosen_suite: CipherSuite,
     pub chosen_carrier: CarrierBinding,
-    pub chosen_policy: PolicyMode,
+    pub chosen_mode: Mode,
     pub credential_label: String,
     pub lookup_hint: Option<[u8; 8]>,
     pub path_profile: PathProfile,

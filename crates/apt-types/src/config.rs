@@ -1,13 +1,10 @@
-use crate::{
-    defaults::{
-        DEFAULT_ADMISSION_EPOCH_SLOT_SECS, DEFAULT_BULK_QUEUE_BUDGET_MS,
-        DEFAULT_COOKIE_LIFETIME_SECS, DEFAULT_HARD_REKEY_AGE_SECS, DEFAULT_HARD_REKEY_BYTES,
-        DEFAULT_IDLE_KEEPALIVE_BASE_SECS, DEFAULT_IDLE_KEEPALIVE_JITTER_PERCENT,
-        DEFAULT_INTERACTIVE_QUEUE_BUDGET_MS, DEFAULT_MIN_REPLAY_WINDOW,
-        DEFAULT_PROBATION_PADDING_BPS, DEFAULT_REPLAY_RETENTION_SECS, DEFAULT_SOFT_REKEY_AGE_SECS,
-        DEFAULT_SOFT_REKEY_BYTES, DEFAULT_STEADY_PADDING_BPS, DEFAULT_TUNNEL_MTU,
-    },
-    protocol::PolicyMode,
+use crate::defaults::{
+    DEFAULT_ADMISSION_EPOCH_SLOT_SECS, DEFAULT_BULK_QUEUE_BUDGET_MS, DEFAULT_COOKIE_LIFETIME_SECS,
+    DEFAULT_HARD_REKEY_AGE_SECS, DEFAULT_HARD_REKEY_BYTES, DEFAULT_IDLE_KEEPALIVE_BASE_SECS,
+    DEFAULT_IDLE_KEEPALIVE_JITTER_PERCENT, DEFAULT_INTERACTIVE_QUEUE_BUDGET_MS,
+    DEFAULT_MIN_REPLAY_WINDOW, DEFAULT_PROBATION_PADDING_BPS, DEFAULT_REPLAY_RETENTION_SECS,
+    DEFAULT_SOFT_REKEY_AGE_SECS, DEFAULT_SOFT_REKEY_BYTES, DEFAULT_STEADY_PADDING_BPS,
+    DEFAULT_TUNNEL_MTU,
 };
 use serde::{Deserialize, Serialize};
 
@@ -186,10 +183,6 @@ pub enum CredentialIdentity {
 /// Session-wide policy and default knobs chosen for a deployment.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionPolicy {
-    /// Initial policy mode.
-    pub initial_mode: PolicyMode,
-    /// Whether speed-first mode may ever be entered automatically.
-    pub allow_speed_first: bool,
     /// Whether hybrid PQ may be negotiated if both sides support it.
     pub allow_hybrid_pq: bool,
 }
@@ -197,8 +190,6 @@ pub struct SessionPolicy {
 impl Default for SessionPolicy {
     fn default() -> Self {
         Self {
-            initial_mode: PolicyMode::StealthFirst,
-            allow_speed_first: false,
             allow_hybrid_pq: false,
         }
     }

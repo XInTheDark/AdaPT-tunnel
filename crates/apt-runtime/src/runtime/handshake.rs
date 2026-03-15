@@ -505,7 +505,7 @@ pub(super) fn admission_config(
     admission
         .allowed_carriers
         .push(CarrierBinding::S1EncryptedStream);
-    admission.default_policy = config.session_policy.initial_mode;
+    admission.default_mode = config.mode;
     admission.max_record_size = carriers.d1().max_record_size();
     admission.tunnel_mtu = effective_tunnel_mtu;
     admission.allowed_suites = vec![CipherSuite::NoiseXxPsk2X25519ChaChaPolyBlake2s];

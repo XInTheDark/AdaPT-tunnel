@@ -17,7 +17,7 @@ struct PendingIdleProbe {
 #[derive(Clone, Debug)]
 pub(super) struct AdaptiveKeepaliveController {
     persona_seed: [u8; 32],
-    operator_mode: Mode,
+    current_mode: Mode,
     base_interval_secs: u64,
     min_interval_secs: u64,
     max_interval_secs: u64,
@@ -32,7 +32,7 @@ pub(super) struct AdaptiveKeepaliveController {
 impl AdaptiveKeepaliveController {
     pub(super) fn new(
         persona_seed: [u8; 32],
-        operator_mode: Mode,
+        current_mode: Mode,
         base_interval_secs: u64,
         persisted: Option<PersistedKeepaliveLearningState>,
         now_secs: u64,
@@ -53,7 +53,7 @@ impl AdaptiveKeepaliveController {
         };
         Self {
             persona_seed,
-            operator_mode,
+            current_mode,
             base_interval_secs,
             min_interval_secs,
             max_interval_secs,
@@ -67,9 +67,9 @@ impl AdaptiveKeepaliveController {
     }
 
     pub(super) fn effective_mode(&self, persona_mode: KeepaliveMode) -> KeepaliveMode {
-        if self.operator_mode == Mode::SPEED {
+        if self.current_mode == Mode::SPEED {
             KeepaliveMode::SuppressWhenActive
-        } else if self.operator_mode.value() >= SPARSE_COVER_MIN_MODE
+        } else if self.current_mode.value() >= SPARSE_COVER_MIN_MODE
             && matches!(persona_mode, KeepaliveMode::SparseCover)
         {
             KeepaliveMode::SparseCover
@@ -135,6 +135,10 @@ impl AdaptiveKeepaliveController {
         self.learning.clone()
     }
 
+    pub(super) fn set_mode(&mut self, mode: Mode) {
+        self.current_mode = mode;
+    }
+
     pub(super) fn target_interval_secs(&self) -> u64 {
         self.learning
             .current_target_interval_secs
@@ -165,7 +169,7 @@ impl AdaptiveKeepaliveController {
         interpolate_interval(
             self.base_interval_secs,
             self.target_interval_secs(),
-            self.operator_mode.value(),
+            self.current_mode.value(),
         )
         .clamp(self.min_interval_secs, self.max_interval_secs)
     }
@@ -211,15 +215,15 @@ impl AdaptiveKeepaliveController {
         match self.effective_mode(persona_mode) {
             KeepaliveMode::SuppressWhenActive => (100, 100),
             KeepaliveMode::Adaptive => {
-                let spread = scaled_percent_cap(self.operator_mode.value(), 15);
+                let spread = scaled_percent_cap(self.current_mode.value(), 15);
                 (
                     100_u16.saturating_sub(spread),
                     100_u16.saturating_add(spread),
                 )
             }
             KeepaliveMode::SparseCover => {
-                let low_spread = scaled_percent_cap(self.operator_mode.value(), 20);
-                let high_spread = scaled_percent_cap(self.operator_mode.value(), 10);
+                let low_spread = scaled_percent_cap(self.current_mode.value(), 20);
+                let high_spread = scaled_percent_cap(self.current_mode.value(), 10);
                 (
                     100_u16.saturating_sub(low_spread),
                     100_u16.saturating_add(high_spread),

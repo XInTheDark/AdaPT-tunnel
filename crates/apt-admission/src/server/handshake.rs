@@ -32,8 +32,7 @@ impl AdmissionServer {
             )?;
             let chosen_suite = self.choose_suite(&c0.suite_bitmap)?;
             let chosen_carrier = self.choose_carrier(&c0.carrier_bitmap, carrier.binding())?;
-            let chosen_policy =
-                self.choose_policy_mode(c0.policy_mode, c0.policy_flags.allow_speed_first);
+            let chosen_mode = self.choose_mode(c0.mode);
 
             let resume_accepted = c0
                 .optional_resume_ticket
@@ -51,7 +50,7 @@ impl AdmissionServer {
                 noise_msg1: c0.noise_msg1.clone(),
                 chosen_suite,
                 chosen_carrier,
-                chosen_policy,
+                chosen_mode,
                 credential_label: resolved.label(),
                 lookup_hint: resolved.lookup_hint,
                 path_profile: c0.path_profile,
@@ -81,7 +80,7 @@ impl AdmissionServer {
                 version: VERSION.to_string(),
                 chosen_suite,
                 chosen_carrier,
-                chosen_policy,
+                chosen_mode,
                 cookie_expiry: cookie_payload.expires_at_secs,
                 anti_amplification_cookie: cookie,
                 noise_msg2,
@@ -244,7 +243,7 @@ impl AdmissionServer {
                 role: SessionRole::Responder,
                 chosen_carrier: cookie_payload.chosen_carrier,
                 chosen_suite: cookie_payload.chosen_suite,
-                policy_mode: cookie_payload.chosen_policy,
+                mode: cookie_payload.chosen_mode,
                 credential_identity: resolved.identity.clone(),
                 secrets,
                 tunnel_mtu: self.config.tunnel_mtu,
@@ -276,7 +275,7 @@ impl AdmissionServer {
                 role: SessionRole::Responder,
                 chosen_carrier: cookie_payload.chosen_carrier,
                 chosen_suite: cookie_payload.chosen_suite,
-                policy_mode: cookie_payload.chosen_policy,
+                mode: cookie_payload.chosen_mode,
                 credential_identity: resolved.identity,
                 secrets,
                 tunnel_mtu: self.config.tunnel_mtu,

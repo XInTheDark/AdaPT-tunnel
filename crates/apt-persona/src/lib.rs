@@ -4,8 +4,7 @@
 //! now scale continuously from the operator-facing numeric `mode` value.
 
 use apt_types::{
-    CarrierBinding, IdleResumeBehavior, KeepaliveMode, Mode, PathProfile, PolicyMode,
-    SchedulerProfile,
+    CarrierBinding, IdleResumeBehavior, KeepaliveMode, Mode, PathProfile, SchedulerProfile,
 };
 use serde::{Deserialize, Serialize};
 
@@ -34,8 +33,6 @@ pub struct PersonaInputs {
     pub path_profile: PathProfile,
     /// Chosen carrier family.
     pub chosen_carrier: CarrierBinding,
-    /// Current policy mode, used only as a bounded internal bias.
-    pub policy_mode: PolicyMode,
     /// Optional remembered profile for this local network.
     pub remembered_profile: Option<RememberedProfile>,
 }

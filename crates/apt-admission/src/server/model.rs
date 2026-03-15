@@ -129,8 +129,8 @@ pub struct AdmissionConfig {
     pub allowed_suites: Vec<CipherSuite>,
     /// Offered/allowed carriers.
     pub allowed_carriers: Vec<CarrierBinding>,
-    /// Default policy mode.
-    pub default_policy: PolicyMode,
+    /// Default numeric mode.
+    pub default_mode: Mode,
     /// Timing defaults.
     pub defaults: AdmissionDefaults,
     /// Max carrier record size to advertise.
@@ -159,7 +159,7 @@ impl AdmissionConfig {
                 CarrierBinding::D2EncryptedDatagram,
                 CarrierBinding::S1EncryptedStream,
             ],
-            default_policy: PolicyMode::StealthFirst,
+            default_mode: Mode::STEALTH,
             defaults: AdmissionDefaults::default(),
             max_record_size: 1_200,
             idle_binding_hint_secs: 25,
@@ -182,8 +182,8 @@ pub struct EstablishedSession {
     pub chosen_carrier: CarrierBinding,
     /// Chosen suite.
     pub chosen_suite: CipherSuite,
-    /// Active policy mode.
-    pub policy_mode: PolicyMode,
+    /// Active numeric mode.
+    pub mode: Mode,
     /// Authenticated credential identity.
     pub credential_identity: CredentialIdentity,
     /// Role-oriented session secrets.
@@ -285,36 +285,8 @@ impl AdmissionServer {
         }
     }
 
-    pub(crate) fn choose_policy_mode(
-        &self,
-        requested: PolicyMode,
-        allow_speed_first: bool,
-    ) -> PolicyMode {
-        fn rank(mode: PolicyMode) -> u8 {
-            match mode {
-                PolicyMode::StealthFirst => 0,
-                PolicyMode::Balanced => 1,
-                PolicyMode::SpeedFirst => 2,
-            }
-        }
-
-        fn from_rank(rank: u8) -> PolicyMode {
-            match rank {
-                0 => PolicyMode::StealthFirst,
-                1 => PolicyMode::Balanced,
-                _ => PolicyMode::SpeedFirst,
-            }
-        }
-
-        let server_rank = rank(self.config.default_policy);
-        let requested_rank = rank(requested);
-        let client_rank = if allow_speed_first {
-            requested_rank
-        } else {
-            requested_rank.min(rank(PolicyMode::Balanced))
-        };
-
-        from_rank(server_rank.min(client_rank))
+    pub(crate) fn choose_mode(&self, requested: Mode) -> Mode {
+        self.config.default_mode.conservative(requested)
     }
 
     pub(super) fn validate_epoch_slot(

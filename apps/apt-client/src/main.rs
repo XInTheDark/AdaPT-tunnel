@@ -106,8 +106,6 @@ async fn start_client(
     if let Some(mode) = mode {
         let mode = Mode::try_from(mode).expect("clap validated mode range");
         resolved.mode = mode;
-        resolved.session_policy.initial_mode = mode.policy_mode();
-        resolved.session_policy.allow_speed_first = mode.allow_speed_first();
     }
     if let Some(carrier) = carrier {
         resolved.preferred_carrier = carrier.into();

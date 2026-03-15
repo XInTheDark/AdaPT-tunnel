@@ -1,3 +1,7 @@
+use super::helpers::{
+    disconnected_client_status, promote_client_path, promote_standby_if_available,
+    record_mode_change,
+};
 use super::*;
 
 pub(super) async fn run_client_session_loop(
@@ -35,9 +39,11 @@ pub(super) async fn run_client_session_loop(
             .active_network_profile()
             .and_then(|profile| profile.remembered_profile.clone()),
         AdaptiveRuntimeConfig {
-            initial_mode: config.session_policy.initial_mode,
-            operator_mode: config.mode,
-            allow_speed_first_by_policy: config.session_policy.allow_speed_first,
+            negotiated_mode: handshake.established.mode,
+            persisted_mode: persistent_state
+                .active_network_profile()
+                .map(|profile| profile.last_mode),
+            preferred_carrier: config.preferred_carrier.binding(),
             keepalive_base_interval_secs: config.keepalive_secs,
         },
         admission_path_profile(
@@ -56,7 +62,7 @@ pub(super) async fn run_client_session_loop(
     persistent_state.store(&config.state_path)?;
 
     let session_id = handshake.established.session_id;
-    let encapsulation = TunnelEncapsulation::for_policy(handshake.established.policy_mode);
+    let encapsulation = TunnelEncapsulation::for_mode(handshake.established.mode);
     let mut tunnel = TunnelSession::new(
         handshake.established.session_id,
         SessionRole::Initiator,
@@ -106,17 +112,16 @@ pub(super) async fn run_client_session_loop(
                         adaptive.record_inbound(tunnel_bytes.len(), now_millis());
                         adaptive.note_activity(path.last_recv_secs);
                         if path_id != active_path_id && path.validated {
-                            active_path_id = path_id;
-                            persistent_state.last_successful_carrier = Some(path.binding);
-                            record_event(
-                                telemetry,
-                                &AptEvent::CarrierMigrated {
-                                    session_id,
-                                    from: None,
-                                    to: path.binding,
-                                },
+                            promote_client_path(
+                                &mut active_path_id,
+                                path_id,
+                                path.binding,
                                 None,
+                                &mut adaptive,
+                                persistent_state,
+                                telemetry,
                                 observability,
+                                session_id,
                             );
                         }
                         let mut response_frames = decoded.ack_suggestions;
@@ -138,6 +143,18 @@ pub(super) async fn run_client_session_loop(
                                         path.pending_probe_challenge = None;
                                         standby_path_id = Some(path_id).filter(|id| *id != active_path_id);
                                         saw_probe_response = true;
+                                        if let Some(mode) = adaptive.apply_signal_for_carrier(
+                                            PathSignalEvent::FallbackSuccess,
+                                            path.binding,
+                                            now_secs(),
+                                        ) {
+                                            record_mode_change(
+                                                telemetry,
+                                                observability,
+                                                session_id,
+                                                mode,
+                                            );
+                                        }
                                         record_event(
                                             telemetry,
                                             &AptEvent::StandbyProbeResult {
@@ -154,15 +171,13 @@ pub(super) async fn run_client_session_loop(
                                     persist_client_learning(persistent_state, &adaptive);
                                     persistent_state.last_status = Some(RuntimeStatus::Disconnected);
                                     persistent_state.store(&config.state_path)?;
-                                    let status = ClientStatus::new(
-                                        RuntimeStatus::Disconnected,
-                                        config.server_addr.to_string(),
-                                        Some(IpAddr::V4(transport.client_ipv4)),
-                                        tunnel_addresses(&transport),
-                                        Some(tun.interface_name.clone()),
+                                    let status = disconnected_client_status(
+                                        config,
+                                        &transport,
+                                        &tun.interface_name,
                                         Some(paths.get(&active_path_id).map(|state| state.binding).unwrap_or(handshake.binding)),
                                         standby_path_id.and_then(|id| paths.get(&id).map(|state| state.binding)),
-                                        Some(adaptive.current_mode().into()),
+                                        adaptive.current_mode(),
                                     );
                                     return Ok(status);
                                 }
@@ -170,17 +185,16 @@ pub(super) async fn run_client_session_loop(
                             }
                         }
                         if saw_data && path_id != active_path_id {
-                            active_path_id = path_id;
-                            persistent_state.last_successful_carrier = Some(path.binding);
-                            record_event(
-                                telemetry,
-                                &AptEvent::CarrierMigrated {
-                                    session_id,
-                                    from: None,
-                                    to: path.binding,
-                                },
+                            promote_client_path(
+                                &mut active_path_id,
+                                path_id,
+                                path.binding,
                                 None,
+                                &mut adaptive,
+                                persistent_state,
+                                telemetry,
                                 observability,
+                                session_id,
                             );
                         }
                         if saw_probe_response {
@@ -216,32 +230,19 @@ pub(super) async fn run_client_session_loop(
                         if Some(path_id) == Some(active_path_id) {
                             migration_pressure = migration_pressure.saturating_add(1);
                             if let Some(mode) = adaptive.apply_signal(PathSignalEvent::ImmediateReset, now_secs()) {
-                                record_event(
-                                    telemetry,
-                                    &AptEvent::ModeChanged {
-                                        session_id,
-                                        mode: mode.into(),
-                                    },
-                                    None,
-                                    observability,
-                                );
+                                record_mode_change(telemetry, observability, session_id, mode);
                             }
-                            if let Some(standby_id) = standby_path_id {
-                                if let Some(standby) = paths.get(&standby_id) {
-                                    active_path_id = standby.id;
-                                    persistent_state.last_successful_carrier = Some(standby.binding);
-                                    record_event(
-                                        telemetry,
-                                        &AptEvent::CarrierMigrated {
-                                            session_id,
-                                            from: binding,
-                                            to: standby.binding,
-                                        },
-                                        None,
-                                        observability,
-                                    );
-                                }
-                            } else if reason == "stream closed" {
+                            if !promote_standby_if_available(
+                                standby_path_id,
+                                &paths,
+                                binding,
+                                &mut active_path_id,
+                                &mut adaptive,
+                                persistent_state,
+                                telemetry,
+                                observability,
+                                session_id,
+                            ) && reason == "stream closed" {
                                 record_event(
                                     telemetry,
                                     &AptEvent::CarrierFallback {
@@ -300,15 +301,7 @@ pub(super) async fn run_client_session_loop(
                 let now = now_secs();
                 if let Some(mode) = adaptive.maybe_observe_stability(now) {
                     migration_pressure = migration_pressure.saturating_sub(1);
-                    record_event(
-                        telemetry,
-                        &AptEvent::ModeChanged {
-                            session_id,
-                            mode: mode.into(),
-                        },
-                        None,
-                        observability,
-                    );
+                    record_mode_change(telemetry, observability, session_id, mode);
                     persist_client_learning(persistent_state, &adaptive);
                     persistent_state.store(&config.state_path)?;
                 }
@@ -318,58 +311,41 @@ pub(super) async fn run_client_session_loop(
                     paths.get(&active_path_id).map_or(now, |path| path.last_recv_secs),
                 ) {
                     migration_pressure = migration_pressure.saturating_add(1);
-                    record_event(
-                        telemetry,
-                        &AptEvent::ModeChanged {
-                            session_id,
-                            mode: mode.into(),
-                        },
-                        None,
-                        observability,
-                    );
+                    record_mode_change(telemetry, observability, session_id, mode);
                     persist_client_learning(persistent_state, &adaptive);
                     persistent_state.store(&config.state_path)?;
                 }
                 let active_last_recv = paths.get(&active_path_id).map_or(0, |path| path.last_recv_secs);
                 if active_last_recv > 0 && now.saturating_sub(active_last_recv) > config.session_idle_timeout_secs {
-                    if let Some(standby_id) = standby_path_id {
-                        if let Some(standby) = paths.get(&standby_id) {
-                            active_path_id = standby.id;
-                            persistent_state.last_successful_carrier = Some(standby.binding);
-                            record_event(
-                                telemetry,
-                                &AptEvent::CarrierMigrated {
-                                    session_id,
-                                    from: None,
-                                    to: standby.binding,
-                                },
-                                None,
-                                observability,
-                            );
-                        }
-                    } else {
+                    if !promote_standby_if_available(
+                        standby_path_id,
+                        &paths,
+                        None,
+                        &mut active_path_id,
+                        &mut adaptive,
+                        persistent_state,
+                        telemetry,
+                        observability,
+                        session_id,
+                    ) {
                         persist_client_learning(persistent_state, &adaptive);
                         persistent_state.store(&config.state_path)?;
                         return Err(RuntimeError::Timeout("live session"));
                     }
                 }
                 if migration_pressure >= adaptive.migration_threshold() {
-                    if let Some(standby_id) = standby_path_id {
-                        if let Some(standby) = paths.get(&standby_id) {
-                            active_path_id = standby.id;
-                            migration_pressure = 0;
-                            persistent_state.last_successful_carrier = Some(standby.binding);
-                            record_event(
-                                telemetry,
-                                &AptEvent::CarrierMigrated {
-                                    session_id,
-                                    from: None,
-                                    to: standby.binding,
-                                },
-                                None,
-                                observability,
-                            );
-                        }
+                    if promote_standby_if_available(
+                        standby_path_id,
+                        &paths,
+                        None,
+                        &mut active_path_id,
+                        &mut adaptive,
+                        persistent_state,
+                        telemetry,
+                        observability,
+                        session_id,
+                    ) {
+                        migration_pressure = 0;
                     }
                 }
                 let should_attempt_standby_probe =
@@ -423,15 +399,16 @@ pub(super) async fn run_client_session_loop(
                             Err(error) => {
                                 warn!(carrier = %binding.as_str(), error = %error, "standby path open failed");
                                 migration_pressure = migration_pressure.saturating_add(1);
-                                if let Some(mode) = adaptive.apply_signal(PathSignalEvent::FallbackFailure, now) {
-                                    record_event(
+                                if let Some(mode) = adaptive.apply_signal_for_carrier(
+                                    PathSignalEvent::FallbackFailure,
+                                    binding,
+                                    now,
+                                ) {
+                                    record_mode_change(
                                         telemetry,
-                                        &AptEvent::ModeChanged {
-                                            session_id,
-                                            mode: mode.into(),
-                                        },
-                                        None,
                                         observability,
+                                        session_id,
+                                        mode,
                                     );
                                 }
                                 record_event(
@@ -506,15 +483,13 @@ pub(super) async fn run_client_session_loop(
     }
 
     persist_client_learning(persistent_state, &adaptive);
-    let status = ClientStatus::new(
-        RuntimeStatus::Disconnected,
-        config.server_addr.to_string(),
-        Some(IpAddr::V4(transport.client_ipv4)),
-        tunnel_addresses(&transport),
-        Some(tun.interface_name),
+    let status = disconnected_client_status(
+        config,
+        &transport,
+        &tun.interface_name,
         paths.get(&active_path_id).map(|state| state.binding),
         standby_path_id.and_then(|id| paths.get(&id).map(|state| state.binding)),
-        Some(adaptive.current_mode().into()),
+        adaptive.current_mode(),
     );
     persistent_state.last_status = Some(status.status.clone());
     Ok(status)

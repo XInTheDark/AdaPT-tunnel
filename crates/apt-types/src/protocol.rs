@@ -132,20 +132,6 @@ impl CarrierBinding {
     pub const H1: Self = Self::H1RequestResponse;
 }
 
-/// Policy mode exposed to persona and scheduler subsystems.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PolicyMode {
-    /// Maximum camouflage within safe bounds.
-    #[serde(rename = "stealth-first", alias = "StealthFirst")]
-    StealthFirst,
-    /// Balanced latency and camouflage.
-    #[serde(rename = "balanced", alias = "Balanced")]
-    Balanced,
-    /// Performance-favouring mode when policy allows.
-    #[serde(rename = "speed-first", alias = "SpeedFirst")]
-    SpeedFirst,
-}
-
 /// Operator-facing numeric runtime mode control.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Mode(u8);
@@ -155,11 +141,11 @@ impl Mode {
     pub const MIN: u8 = 0;
     /// Maximum allowed numeric mode value.
     pub const MAX: u8 = 100;
-    /// Performance-oriented anchor matching the legacy `speed` preset.
+    /// Low-end reference point matching the legacy `speed` preset.
     pub const SPEED: Self = Self(0);
-    /// Midpoint anchor matching the legacy `balanced` preset.
+    /// Mid-range reference point matching the legacy `balanced` preset.
     pub const BALANCED: Self = Self(50);
-    /// Conservative anchor matching the legacy `stealth` preset.
+    /// High-end reference point matching the legacy `stealth` preset.
     pub const STEALTH: Self = Self(100);
 
     /// Creates a validated mode value.
@@ -181,25 +167,37 @@ impl Mode {
         self.0
     }
 
-    /// Maps the numeric control to the current coarse policy anchor.
+    /// Returns the more conservative of two modes.
     #[must_use]
-    pub const fn policy_mode(self) -> PolicyMode {
-        if self.0 <= 34 {
-            PolicyMode::SpeedFirst
-        } else if self.0 <= 69 {
-            PolicyMode::Balanced
+    pub const fn conservative(self, other: Self) -> Self {
+        if self.0 >= other.0 {
+            self
         } else {
-            PolicyMode::StealthFirst
+            other
         }
     }
 
-    /// Returns whether the current coarse controller may enter speed-first mode.
+    /// Applies a signed bounded adjustment to the current mode.
     #[must_use]
-    pub const fn allow_speed_first(self) -> bool {
-        self.0 <= 69
+    pub const fn saturating_offset(self, delta: i16) -> Self {
+        let adjusted = self.0 as i16 + delta;
+        let clamped = if adjusted < Self::MIN as i16 {
+            Self::MIN
+        } else if adjusted > Self::MAX as i16 {
+            Self::MAX
+        } else {
+            adjusted as u8
+        };
+        Self(clamped)
     }
 
-    /// Converts legacy named presets into numeric anchors when loading old state.
+    /// Returns whether the mode is low enough to permit the tunnel fast path.
+    #[must_use]
+    pub const fn allows_direct_inner_fast_path(self) -> bool {
+        self.0 <= 10
+    }
+
+    /// Converts legacy named presets into numeric reference values when loading old state.
     #[must_use]
     pub fn from_legacy_name(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
@@ -234,16 +232,6 @@ impl TryFrom<u8> for Mode {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         Self::new(value)
-    }
-}
-
-impl From<PolicyMode> for Mode {
-    fn from(value: PolicyMode) -> Self {
-        match value {
-            PolicyMode::SpeedFirst => Self::SPEED,
-            PolicyMode::Balanced => Self::BALANCED,
-            PolicyMode::StealthFirst => Self::STEALTH,
-        }
     }
 }
 

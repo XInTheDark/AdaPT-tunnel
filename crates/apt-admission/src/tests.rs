@@ -254,15 +254,14 @@ fn malformed_near_miss_does_not_yield_protocol_reply() {
 }
 
 #[test]
-fn speed_first_is_negotiated_when_both_sides_allow_it() {
+fn numeric_mode_negotiation_uses_the_more_conservative_value() {
     let (mut server, credential, carrier) = test_server_setup();
-    server.config.default_policy = PolicyMode::SpeedFirst;
+    server.config.default_mode = Mode::new(15).unwrap();
 
     let endpoint = EndpointId::new("edge-test");
     let now_secs = 1_700_000_000;
     let mut request = ClientSessionRequest::conservative(endpoint, now_secs);
-    request.policy_mode = PolicyMode::SpeedFirst;
-    request.policy_flags.allow_speed_first = true;
+    request.mode = Mode::new(8).unwrap();
     let prepared_c0 = initiate_c0(credential, request, &carrier).unwrap();
 
     let s1 = match server.handle_c0(
@@ -287,36 +286,33 @@ fn speed_first_is_negotiated_when_both_sides_allow_it() {
         ServerResponse::Drop(_) => panic!("expected reply"),
     };
 
-    assert_eq!(established.session.policy_mode, PolicyMode::SpeedFirst);
+    assert_eq!(established.session.mode, Mode::new(15).unwrap());
 }
 
 #[test]
-fn policy_negotiation_uses_the_more_conservative_side() {
+fn mode_negotiation_uses_the_more_conservative_side() {
     let (mut server, _, _) = test_server_setup();
 
-    server.config.default_policy = PolicyMode::SpeedFirst;
+    server.config.default_mode = Mode::new(20).unwrap();
     assert_eq!(
-        server.choose_policy_mode(PolicyMode::Balanced, true),
-        PolicyMode::Balanced
+        server.choose_mode(Mode::new(10).unwrap()),
+        Mode::new(20).unwrap()
     );
     assert_eq!(
-        server.choose_policy_mode(PolicyMode::StealthFirst, true),
-        PolicyMode::StealthFirst
-    );
-
-    server.config.default_policy = PolicyMode::Balanced;
-    assert_eq!(
-        server.choose_policy_mode(PolicyMode::SpeedFirst, true),
-        PolicyMode::Balanced
-    );
-    assert_eq!(
-        server.choose_policy_mode(PolicyMode::SpeedFirst, false),
-        PolicyMode::Balanced
+        server.choose_mode(Mode::new(65).unwrap()),
+        Mode::new(65).unwrap()
     );
 
-    server.config.default_policy = PolicyMode::StealthFirst;
+    server.config.default_mode = Mode::new(55).unwrap();
     assert_eq!(
-        server.choose_policy_mode(PolicyMode::SpeedFirst, true),
-        PolicyMode::StealthFirst
+        server.choose_mode(Mode::new(5).unwrap()),
+        Mode::new(55).unwrap()
     );
+    assert_eq!(
+        server.choose_mode(Mode::new(80).unwrap()),
+        Mode::new(80).unwrap()
+    );
+
+    server.config.default_mode = Mode::STEALTH;
+    assert_eq!(server.choose_mode(Mode::SPEED), Mode::STEALTH);
 }

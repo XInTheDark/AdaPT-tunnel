@@ -69,8 +69,12 @@ pub enum PathSignalEvent {
     RttInflation,
     /// NAT rebinding is observed frequently.
     NatRebinding,
+    /// Repeated quiet-idle timeout symptoms are observed.
+    IdleTimeoutSymptoms,
     /// Recent fallback attempts also failed.
     FallbackFailure,
+    /// A fallback attempt or standby probe succeeded cleanly.
+    FallbackSuccess,
     /// Delivery has been stable through the probation window.
     StableDelivery,
 }

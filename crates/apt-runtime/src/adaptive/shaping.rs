@@ -9,14 +9,28 @@ const BULK_PADDING_THRESHOLD_BYTES: usize = 1_200;
 
 impl AdaptiveDatapath {
     pub fn fallback_order(&self) -> Vec<CarrierBinding> {
-        let mut order = self.persona.scheduler.fallback_order.clone();
+        let mut order = Vec::new();
+        if let Some(carrier) = self.preferred_carrier {
+            push_unique(&mut order, carrier);
+        }
+        if let Some(carrier) = self
+            .remembered_profile
+            .as_ref()
+            .map(|profile| profile.preferred_carrier)
+        {
+            push_unique(&mut order, carrier);
+        }
+        for carrier in &self.persona.scheduler.fallback_order {
+            push_unique(&mut order, *carrier);
+        }
         let controller_order = self.controller.fallback_order(self.chosen_carrier);
-        for carrier in controller_order.into_iter().rev() {
-            if let Some(index) = order.iter().position(|value| *value == carrier) {
-                let existing = order.remove(index);
-                order.insert(0, existing);
-            } else {
-                order.insert(0, carrier);
+        for carrier in controller_order {
+            push_unique(&mut order, carrier);
+        }
+        if self.controller.should_migrate() {
+            if let Some(index) = order.iter().position(|value| *value == self.chosen_carrier) {
+                let active = order.remove(index);
+                order.push(active);
             }
         }
         order
@@ -51,7 +65,7 @@ impl AdaptiveDatapath {
         if !matches!(binding, CarrierBinding::S1EncryptedStream) {
             return MAX_STREAM_PACKING_TARGET_BYTES;
         }
-        let mode = self.operator_mode.value();
+        let mode = self.behavior_mode().value();
         let mut target = if mode <= 50 {
             segment_lerp_usize(mode, 0, MAX_STREAM_PACKING_TARGET_BYTES, 50, 1_200)
         } else {
@@ -131,17 +145,16 @@ impl AdaptiveDatapath {
         batch_index: usize,
         now_millis: u64,
     ) -> u16 {
-        if self.operator_mode == Mode::SPEED
-            || !frames.iter().any(|frame| matches!(frame, Frame::IpData(_)))
-        {
+        let mode = self.behavior_mode();
+        if mode == Mode::SPEED || !frames.iter().any(|frame| matches!(frame, Frame::IpData(_))) {
             return 0;
         }
         let (payload_bytes, ip_frames) = frame_metrics(frames);
         let interactive = payload_bytes <= INTERACTIVE_FRAME_BYTES && ip_frames <= 1;
         let total_cap = if interactive {
-            interactive_latency_cap_ms(self.operator_mode.value())
+            interactive_latency_cap_ms(mode.value())
         } else {
-            bulk_latency_cap_ms(self.operator_mode.value())
+            bulk_latency_cap_ms(mode.value())
         };
         if total_cap == 0 {
             return 0;
@@ -149,7 +162,7 @@ impl AdaptiveDatapath {
         let in_idle_resume = self.in_idle_resume_window(now_millis);
         let total_delay = match self.persona.scheduler.pacing_family {
             PacingFamily::Opportunistic => {
-                if in_idle_resume && self.operator_mode.value() >= 60 {
+                if in_idle_resume && mode.value() >= 60 {
                     total_cap.saturating_mul(25) / 100
                 } else {
                     0
@@ -192,11 +205,11 @@ impl AdaptiveDatapath {
         self.persona = generate_persona(
             self.chosen_carrier,
             self.persona_seed,
-            self.operator_mode,
             self.controller.current_mode,
             self.path_profile,
             self.remembered_profile.clone(),
         );
+        self.keepalive.set_mode(self.controller.current_mode);
     }
 
     fn in_idle_resume_window(&self, now_millis: u64) -> bool {
@@ -225,7 +238,7 @@ impl AdaptiveDatapath {
         }
         if self.in_idle_resume_window(now_millis) || !self.profile_is_bootstrapped() {
             steady.max(probation_padding_budget_bps(
-                self.operator_mode.value(),
+                self.behavior_mode().value(),
                 steady,
             ))
         } else {
@@ -238,13 +251,16 @@ impl AdaptiveDatapath {
             .as_ref()
             .is_none_or(LocalNormalityProfile::is_bootstrapped)
     }
+
+    fn behavior_mode(&self) -> Mode {
+        self.controller.current_mode
+    }
 }
 
 pub(super) fn generate_persona(
     chosen_carrier: CarrierBinding,
     persona_seed: [u8; 32],
     mode: Mode,
-    policy_mode: PolicyMode,
     path_profile: PathProfile,
     remembered_profile: Option<RememberedProfile>,
 ) -> PersonaProfile {
@@ -253,9 +269,14 @@ pub(super) fn generate_persona(
         mode,
         path_profile,
         chosen_carrier,
-        policy_mode,
         remembered_profile,
     })
+}
+
+fn push_unique(order: &mut Vec<CarrierBinding>, carrier: CarrierBinding) {
+    if !order.contains(&carrier) {
+        order.push(carrier);
+    }
 }
 
 fn probation_padding_budget_bps(mode: u8, steady_budget_bps: u16) -> u16 {

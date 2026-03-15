@@ -39,8 +39,6 @@ async fn main() {
             if let Some(mode) = cli.mode {
                 let mode = Mode::try_from(mode).expect("clap validated mode range");
                 config.mode = mode;
-                config.session_policy.initial_mode = mode.policy_mode();
-                config.session_policy.allow_speed_first = mode.allow_speed_first();
             }
             match run_server(config).await {
                 Ok(result) => {

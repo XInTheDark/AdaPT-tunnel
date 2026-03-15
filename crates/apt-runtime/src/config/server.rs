@@ -123,9 +123,6 @@ impl ServerConfig {
             ));
         }
         validate_ipv6_config(self)?;
-        let mut session_policy = self.session_policy.clone();
-        session_policy.initial_mode = self.mode.policy_mode();
-        session_policy.allow_speed_first = self.mode.allow_speed_first();
         let peers = self
             .peers
             .iter()
@@ -162,7 +159,7 @@ impl ServerConfig {
             nat_ipv6: self.nat_ipv6,
             push_routes: self.push_routes.clone(),
             push_dns: self.push_dns.clone(),
-            session_policy,
+            session_policy: self.session_policy.clone(),
             allow_session_migration: self.allow_session_migration,
             keepalive_secs: self.keepalive_secs,
             session_idle_timeout_secs: self.session_idle_timeout_secs,

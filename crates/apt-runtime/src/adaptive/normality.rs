@@ -3,14 +3,16 @@ use crate::config::PersistedIdleOutcomeSummary;
 
 impl AdaptiveDatapath {
     pub fn note_successful_session(&mut self) {
+        let previous_mode = self.controller.current_mode;
         if let Some(profile) = &mut self.local_normality {
             profile.note_successful_session();
             profile.note_carrier_success(self.chosen_carrier);
-            self.controller.allow_speed_first =
-                self.allow_speed_first_by_policy && profile.is_bootstrapped();
+            self.controller.set_bootstrapped(profile.is_bootstrapped());
             self.path_profile = infer_path_profile(profile).unwrap_or(self.path_profile);
-        } else {
-            self.controller.allow_speed_first = self.allow_speed_first_by_policy;
+        }
+        if self.controller.current_mode != previous_mode {
+            self.regenerate_persona();
+            self.reschedule_keepalive(self.last_policy_observation_secs);
         }
         self.refresh_remembered_profile();
     }
@@ -45,7 +47,7 @@ impl AdaptiveDatapath {
         self.last_recv_millis = Some(now_millis);
     }
 
-    pub fn maybe_observe_stability(&mut self, now_secs: u64) -> Option<PolicyMode> {
+    pub fn maybe_observe_stability(&mut self, now_secs: u64) -> Option<Mode> {
         if now_secs.saturating_sub(self.last_policy_observation_secs)
             < POLICY_OBSERVATION_INTERVAL_SECS
         {
@@ -60,18 +62,24 @@ impl AdaptiveDatapath {
         now_secs: u64,
         _last_send_secs: u64,
         _last_recv_secs: u64,
-    ) -> Option<PolicyMode> {
+    ) -> Option<Mode> {
         if !self.keepalive.should_treat_as_idle_impairment(now_secs) {
             return None;
         }
-        if let Some(profile) = &mut self.local_normality {
-            profile.note_carrier_idle_timeout(self.chosen_carrier);
-        }
         self.note_idle_impairment(now_secs);
-        self.apply_signal(PathSignalEvent::RttInflation, now_secs)
+        self.apply_signal(PathSignalEvent::IdleTimeoutSymptoms, now_secs)
     }
 
-    pub fn apply_signal(&mut self, signal: PathSignalEvent, now_secs: u64) -> Option<PolicyMode> {
+    pub fn apply_signal(&mut self, signal: PathSignalEvent, now_secs: u64) -> Option<Mode> {
+        self.apply_signal_for_carrier(signal, self.chosen_carrier, now_secs)
+    }
+
+    pub fn apply_signal_for_carrier(
+        &mut self,
+        signal: PathSignalEvent,
+        carrier: CarrierBinding,
+        now_secs: u64,
+    ) -> Option<Mode> {
         if let Some(profile) = &mut self.local_normality {
             match signal {
                 PathSignalEvent::HandshakeBlackhole
@@ -79,17 +87,20 @@ impl AdaptiveDatapath {
                 | PathSignalEvent::SizeSpecificLoss
                 | PathSignalEvent::MtuBlackhole
                 | PathSignalEvent::FallbackFailure => {
-                    profile.note_carrier_failure(self.chosen_carrier);
+                    profile.note_carrier_failure(carrier);
                 }
                 PathSignalEvent::NatRebinding => {
-                    profile.note_carrier_rebinding(self.chosen_carrier);
+                    profile.note_carrier_rebinding(carrier);
+                }
+                PathSignalEvent::FallbackSuccess => {
+                    profile.note_carrier_success(carrier);
+                }
+                PathSignalEvent::IdleTimeoutSymptoms => {
+                    profile.note_carrier_idle_timeout(carrier);
                 }
                 PathSignalEvent::RttInflation | PathSignalEvent::StableDelivery => {}
             }
-            self.controller.allow_speed_first =
-                self.allow_speed_first_by_policy && profile.is_bootstrapped();
-        } else {
-            self.controller.allow_speed_first = self.allow_speed_first_by_policy;
+            self.controller.set_bootstrapped(profile.is_bootstrapped());
         }
         match signal {
             PathSignalEvent::ImmediateReset => {
@@ -106,10 +117,18 @@ impl AdaptiveDatapath {
                     PersistedIdleOutcomeSummary::Rebinding,
                 );
             }
+            PathSignalEvent::IdleTimeoutSymptoms => {
+                self.keepalive.note_idle_impairment(
+                    now_secs,
+                    self.persona.scheduler.keepalive_mode,
+                    PersistedIdleOutcomeSummary::QuietTimeout,
+                );
+            }
             PathSignalEvent::HandshakeBlackhole
             | PathSignalEvent::SizeSpecificLoss
             | PathSignalEvent::MtuBlackhole
             | PathSignalEvent::FallbackFailure
+            | PathSignalEvent::FallbackSuccess
             | PathSignalEvent::RttInflation
             | PathSignalEvent::StableDelivery => {}
         }
@@ -135,11 +154,8 @@ impl AdaptiveDatapath {
                 return;
             }
         }
-        let permissiveness_score = match self.controller.current_mode {
-            PolicyMode::StealthFirst => 48,
-            PolicyMode::Balanced => 144,
-            PolicyMode::SpeedFirst => 224,
-        };
+        let permissiveness_score =
+            255_u8.saturating_sub(self.controller.current_mode.value().saturating_mul(2));
         self.remembered_profile = Some(RememberedProfile {
             preferred_carrier: self.chosen_carrier,
             permissiveness_score,

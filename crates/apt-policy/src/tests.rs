@@ -1,7 +1,7 @@
 use super::{inferred_path_profile, LocalNormalityProfile, PolicyController};
 use apt_types::{
-    CarrierBinding, ConnectionLongevityClass, GatewayFingerprint, LinkType, LossClass, MtuClass,
-    NatClass, NetworkMetadataObservation, PathClass, PathProfile, PathSignalEvent, PolicyMode,
+    CarrierBinding, ConnectionLongevityClass, GatewayFingerprint, LinkType, LossClass, Mode,
+    MtuClass, NatClass, NetworkMetadataObservation, PathClass, PathProfile, PathSignalEvent,
     PublicRouteHint, RttClass,
 };
 
@@ -145,16 +145,22 @@ fn inferred_path_profile_uses_richer_class_evidence() {
 
 #[test]
 fn controller_moves_between_modes() {
-    let mut controller = PolicyController::new(PolicyMode::StealthFirst, true);
+    let mut controller = PolicyController::new(Mode::SPEED, false, Some(Mode::new(18).unwrap()));
+    assert!(controller.current_mode.value() > Mode::SPEED.value());
+
+    controller.set_bootstrapped(true);
     for _ in 0..5 {
         controller.observe_signal(PathSignalEvent::StableDelivery);
     }
-    assert_eq!(controller.current_mode, PolicyMode::Balanced);
-    for _ in 0..6 {
-        controller.observe_signal(PathSignalEvent::StableDelivery);
-    }
-    assert_eq!(controller.current_mode, PolicyMode::SpeedFirst);
+    assert_eq!(controller.current_mode, Mode::SPEED);
+
+    controller.observe_signal(PathSignalEvent::FallbackFailure);
+    controller.observe_signal(PathSignalEvent::NatRebinding);
     controller.observe_signal(PathSignalEvent::ImmediateReset);
-    controller.observe_signal(PathSignalEvent::ImmediateReset);
-    assert_eq!(controller.current_mode, PolicyMode::StealthFirst);
+    assert!(controller.current_mode.value() >= 24);
+    assert!(controller.should_migrate());
+
+    controller.observe_signal(PathSignalEvent::FallbackSuccess);
+    controller.observe_signal(PathSignalEvent::StableDelivery);
+    assert!(controller.current_mode.value() <= 20);
 }

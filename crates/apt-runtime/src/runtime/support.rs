@@ -11,8 +11,7 @@ pub(super) fn client_session_request(
     let mut request = ClientSessionRequest::conservative(config.endpoint_id.clone(), now);
     request.preferred_carrier = preferred_carrier;
     request.supported_carriers = supported_carriers.to_vec();
-    request.policy_mode = config.session_policy.initial_mode;
-    request.policy_flags.allow_speed_first = config.session_policy.allow_speed_first;
+    request.mode = config.mode;
     request.policy_flags.allow_hybrid_pq = config.session_policy.allow_hybrid_pq;
     request.path_profile = admission_path_profile(
         persistent_state
@@ -84,19 +83,20 @@ fn carrier_attempt_order_without_strict_override(
     if config.enable_s1_fallback && config.stream_server_addr.is_some() {
         available.push(CarrierBinding::S1EncryptedStream);
     }
-    let remembered = config
-        .preferred_carrier
-        .binding()
-        .or(persistent_state.last_successful_carrier)
-        .or_else(|| {
-            persistent_state
-                .active_network_profile()
-                .and_then(|profile| profile.remembered_profile.as_ref())
-                .map(|profile| profile.preferred_carrier)
-        });
+    let explicit = config.preferred_carrier.binding();
+    let remembered = persistent_state
+        .active_network_profile()
+        .and_then(|profile| profile.remembered_profile.as_ref())
+        .map(|profile| profile.preferred_carrier)
+        .or(persistent_state.last_successful_carrier);
     let mut order = Vec::new();
-    if let Some(binding) = remembered {
+    if let Some(binding) = explicit {
         if available.contains(&binding) {
+            order.push(binding);
+        }
+    }
+    if let Some(binding) = remembered {
+        if available.contains(&binding) && !order.contains(&binding) {
             order.push(binding);
         }
     }
@@ -175,7 +175,7 @@ pub(super) fn persist_client_learning(
         context: normality.context.clone(),
         normality,
         remembered_profile: adaptive.remembered_profile(),
-        last_mode: adaptive.current_mode().into(),
+        last_mode: adaptive.current_mode(),
         keepalive_learning: adaptive.keepalive_learning_state(),
         last_seen_unix_secs: now_secs(),
     });

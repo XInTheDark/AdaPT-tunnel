@@ -4,9 +4,9 @@ use crate::config::PersistedKeepaliveLearningState;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AdaptiveRuntimeConfig {
-    pub initial_mode: PolicyMode,
-    pub operator_mode: Mode,
-    pub allow_speed_first_by_policy: bool,
+    pub negotiated_mode: Mode,
+    pub persisted_mode: Option<Mode>,
+    pub preferred_carrier: Option<CarrierBinding>,
     pub keepalive_base_interval_secs: u64,
 }
 
@@ -14,8 +14,7 @@ pub(crate) struct AdaptiveRuntimeConfig {
 pub struct AdaptiveDatapath {
     pub(super) persona_seed: [u8; 32],
     pub(super) chosen_carrier: CarrierBinding,
-    pub(super) operator_mode: Mode,
-    pub(super) allow_speed_first_by_policy: bool,
+    pub(super) preferred_carrier: Option<CarrierBinding>,
     pub(super) controller: PolicyController,
     pub(super) persona: PersonaProfile,
     pub(super) path_profile: PathProfile,
@@ -49,22 +48,23 @@ impl AdaptiveDatapath {
         local_normality.begin_new_session();
         let path_profile =
             super::normality::infer_path_profile(&local_normality).unwrap_or(initial_path_profile);
-        let allow_speed_first =
-            runtime_config.allow_speed_first_by_policy && local_normality.is_bootstrapped();
-        let controller = PolicyController::new(runtime_config.initial_mode, allow_speed_first);
+        let controller = PolicyController::new(
+            runtime_config.negotiated_mode,
+            local_normality.is_bootstrapped(),
+            runtime_config.persisted_mode,
+        );
+        let initial_mode = controller.current_mode;
         let persona = super::shaping::generate_persona(
             chosen_carrier,
             persona_seed,
-            runtime_config.operator_mode,
-            controller.current_mode,
+            initial_mode,
             path_profile,
             remembered_profile.clone(),
         );
         let mut state = Self {
             persona_seed,
             chosen_carrier,
-            operator_mode: runtime_config.operator_mode,
-            allow_speed_first_by_policy: runtime_config.allow_speed_first_by_policy,
+            preferred_carrier: runtime_config.preferred_carrier,
             controller,
             persona,
             path_profile,
@@ -72,7 +72,7 @@ impl AdaptiveDatapath {
             local_normality: Some(local_normality),
             keepalive: AdaptiveKeepaliveController::new(
                 persona_seed,
-                runtime_config.operator_mode,
+                initial_mode,
                 runtime_config.keepalive_base_interval_secs,
                 keepalive_learning,
                 now_secs,
@@ -98,22 +98,22 @@ impl AdaptiveDatapath {
         now_secs: u64,
     ) -> Self {
         let controller = PolicyController::new(
-            runtime_config.initial_mode,
-            runtime_config.allow_speed_first_by_policy,
+            runtime_config.negotiated_mode,
+            true,
+            runtime_config.persisted_mode,
         );
+        let initial_mode = controller.current_mode;
         let persona = super::shaping::generate_persona(
             chosen_carrier,
             persona_seed,
-            runtime_config.operator_mode,
-            controller.current_mode,
+            initial_mode,
             initial_path_profile,
             None,
         );
         let mut state = Self {
             persona_seed,
             chosen_carrier,
-            operator_mode: runtime_config.operator_mode,
-            allow_speed_first_by_policy: runtime_config.allow_speed_first_by_policy,
+            preferred_carrier: runtime_config.preferred_carrier,
             controller,
             persona,
             path_profile: initial_path_profile,
@@ -121,7 +121,7 @@ impl AdaptiveDatapath {
             local_normality: None,
             keepalive: AdaptiveKeepaliveController::new(
                 persona_seed,
-                runtime_config.operator_mode,
+                initial_mode,
                 runtime_config.keepalive_base_interval_secs,
                 None,
                 now_secs,
@@ -139,7 +139,7 @@ impl AdaptiveDatapath {
         state
     }
 
-    pub fn current_mode(&self) -> PolicyMode {
+    pub fn current_mode(&self) -> Mode {
         self.controller.current_mode
     }
 
@@ -163,5 +163,13 @@ impl AdaptiveDatapath {
 
     pub fn local_normality_profile(&self) -> Option<LocalNormalityProfile> {
         self.local_normality.clone()
+    }
+
+    pub fn set_active_carrier(&mut self, carrier: CarrierBinding) {
+        if self.chosen_carrier == carrier {
+            return;
+        }
+        self.chosen_carrier = carrier;
+        self.regenerate_persona();
     }
 }

@@ -13,10 +13,9 @@
 ## Current milestone
 
 - **Milestone:** Phase 3 adaptive/persona/local-normality rewrite
-- **Status:** multi-profile persistence/context discovery, runtime hot-path CPU hardening, bounded histogram local-normality, adaptive keepalive learning, and continuous numeric-mode persona/scheduler shaping are now shipped
+- **Status:** multi-profile persistence/context discovery, runtime hot-path CPU hardening, bounded histogram local-normality, adaptive keepalive learning, continuous numeric-mode persona/scheduler shaping, and the mode-only controller/admission negotiation rewrite are now shipped
 - **Primary remaining goal:** finish the spec-credible adaptive runtime by:
-  - upgrading the controller to consume richer signals and apply bounded `mode` adjustments
-  - validating real-traffic behavior and CPU/latency envelopes at the anchor modes
+  - validating real-traffic behavior and CPU/latency envelopes at the three reference points
 - **Performance intent:**
   - mode near `0`: no meaningful throughput/latency penalty
   - mode around `50`: mild impact only
@@ -24,11 +23,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** persona/scheduler runtime wiring + soft packing
-- **Latency impact:** `mode=0` remains `~0 ms`; mid-range shaping now stays within the `0-3 ms` interactive / `0-10 ms` bulk design envelope; high-mode pacing is capped within the `0-10 ms` interactive / `0-40 ms` bulk envelope
-- **Bandwidth impact:** `mode=0` remains effectively `0%`; mid-range steady padding stays within `0-2%`; high-mode steady padding now tracks `2-8%` with bounded probationary increases during idle-resume / unbootstrapped phases
-- **CPU impact:** `mode=0` remains near the previous baseline; mid/high modes now pay bounded scheduling/shaping overhead in line with the planned `~0-2%` / `~1-5%` envelopes
-- **Notes:** persona generation now scales continuously from numeric `mode`, live runtime scheduling consumes pacing family / burst targets / packet-size bins / idle-resume ramp / keepalive style / fallback order / migration threshold / soft packing preferences, and stream-path batching/pacing now changes monotonically with `mode` instead of switching on old preset buckets
+- **Chunk:** mode-only controller + admission negotiation rewrite
+- **Latency impact:** control-plane overhead remains negligible; runtime shaping now follows the controller’s numeric current mode instead of a coarse bucketed state, so new/untrusted profiles may begin slightly more conservative before decaying toward the negotiated baseline
+- **Bandwidth impact:** no admission bandwidth change of note; adaptive padding/cover decisions now follow numeric controller output directly instead of legacy preset remapping
+- **CPU impact:** negligible steady-state controller overhead; per-tick/controller bookkeeping remains trivial relative to tunnel I/O
+- **Notes:** admission `C0/S1/S3` negotiation is now numeric-mode-based end-to-end, `SessionPolicy` no longer carries runtime mode presets, controller transitions are explicit numeric adjustments from richer signals, fallback ordering now layers explicit preference + remembered profile + persona + conservative ordering, and live shaping/keepalive behavior consumes the controller’s numeric mode rather than converting through `speed/balanced/stealth`
 
 ## Numeric mode model
 
@@ -38,7 +37,7 @@ The Phase 3 end state remains **`mode`-only** across operator-facing config, CLI
 - **Meaning:**
   - lower values = more throughput-oriented, lower-latency, lower-padding behavior
   - higher values = more conservative, stealth-heavy, padding/shaping-friendly behavior
-- **Reference anchors for compatibility and QA:**
+- **Reference points for compatibility and QA:**
   - `0` = previous `speed`
   - `50` = previous `balanced`
   - `100` = previous `stealth`
@@ -48,6 +47,7 @@ The Phase 3 end state remains **`mode`-only** across operator-facing config, CLI
   - piecewise-linear curves or interpolated lookup tables are acceptable, but the implementation must not primarily switch on three buckets
 - **Compatibility rule:**
   - legacy named presets may still be accepted only for migration/import compatibility and must be rewritten out as numeric `mode` values on the next save
+  - the live runtime, admission negotiation, controller, and persisted learning state must not convert numeric `mode` values back into legacy preset enums or bucketed negotiation states
 
 ## Assumptions and non-goals
 
@@ -65,48 +65,18 @@ The Phase 3 end state remains **`mode`-only** across operator-facing config, CLI
 | Chunk | Status | Scope | Estimated impact |
 |---|---|---|---|
 | Planning/docs maintenance | active | Keep `PLAN.md` current after each shipped chunk; keep assumptions, scope, status, and expected performance notes aligned with the live code | No runtime impact |
-| Policy/controller follow-up | pending | Feed richer signals into the controller, remember per-profile carrier preference/permissiveness, and apply bounded numeric `mode` increases/decreases | Negligible runtime overhead |
 | QA/perf validation | pending | Real-traffic checks at `mode=0`, `mode=50`, and `mode=100`, plus workspace/integration coverage for adaptive behavior | Validation-only cost |
 
 ## Next tasks
 
-1. Expand the controller to consume richer delivery/impairment/rebinding/idle-timeout signals and to adjust `mode` conservatively with remembered per-profile preferences.
-2. Run workspace tests plus mode-by-mode smoke/perf checks, with special attention to CPU under `mode=0`, then update this file again with the next shipped chunk and impact note.
+1. Run workspace tests plus mode-by-mode smoke/perf checks, with special attention to CPU under `mode=0`, then update this file again with the next shipped chunk and impact note.
+2. Record lightweight real-traffic QA results for latency/throughput/CPU at `mode=0`, `mode=50`, and `mode=100`, and confirm that the shipped numeric controller behavior stays within the intended envelopes.
 
 ## Detailed implementation requirements for remaining chunks
 
-### 1) Policy / controller follow-up
+### QA / perf validation
 
-Keep the controller explicit and rule-based.
-
-Feed it richer signals:
-
-- stable delivery windows
-- immediate reset / blackhole
-- NAT rebinding
-- MTU blackhole
-- RTT inflation
-- repeated idle-timeout symptoms
-- fallback success/failure per carrier
-
-Transition rules:
-
-- unknown/new profile starts conservative
-- promote toward balanced only after profile bootstrap + stable delivery evidence
-- promote toward the speed end only if operator policy allows and the active profile shows sustained success
-- demote toward the stealth end on repeated impairment or rebinding
-
-Carrier ordering must be:
-
-1. explicit operator preference
-2. active-profile remembered preference
-3. persona fallback order
-4. conservative binding order
-5. always filtered by actually enabled carriers
-
-### 2) QA / perf validation
-
-Run lightweight real-traffic QA for all three anchor points (`mode=0`, `mode=50`, `mode=100`):
+Run lightweight real-traffic QA for all three reference points (`mode=0`, `mode=50`, `mode=100`):
 
 - ping RTT
 - throughput check (`iperf3` / equivalent)
@@ -120,6 +90,7 @@ Required validation coverage:
 - switching contexts selects a different profile and does not pollute the old one
 - adaptive keepalive is actually selected/used in mid-range and high-mode flows
 - low-mode runs emit no deliberate pacing delay and no padding/cover
+- negotiated session mode is numeric end-to-end and no longer logs/uses legacy preset states
 - mid-range runs stay within mild shaping caps
 - high-mode runs stay within hard latency limits while using the full bounded shaping path
 - no new fragmentation wire format appears

@@ -98,9 +98,6 @@ impl ClientConfig {
                 "per-user client configs require client_identity to be set".to_string(),
             ));
         }
-        let mut session_policy = self.session_policy.clone();
-        session_policy.initial_mode = self.mode.policy_mode();
-        session_policy.allow_speed_first = self.mode.allow_speed_first();
         Ok(ResolvedClientConfig {
             server_addr: resolve_socket_addr(&self.server_addr)?,
             mode: self.mode,
@@ -118,7 +115,7 @@ impl ClientConfig {
             use_server_pushed_routes: self.use_server_pushed_routes,
             enable_d2_fallback: self.enable_d2_fallback,
             d2: resolve_client_d2_config(self)?,
-            session_policy,
+            session_policy: self.session_policy.clone(),
             enable_s1_fallback: self.enable_s1_fallback,
             stream_server_addr: self
                 .stream_server_addr

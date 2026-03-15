@@ -30,8 +30,8 @@ pub struct ClientSessionRequest {
     pub supported_carriers: Vec<CarrierBinding>,
     /// Supported cipher suites.
     pub supported_suites: Vec<CipherSuite>,
-    /// Desired policy mode.
-    pub policy_mode: PolicyMode,
+    /// Desired numeric mode.
+    pub mode: Mode,
     /// Coarse current path profile.
     pub path_profile: PathProfile,
     /// Current UNIX timestamp.
@@ -59,14 +59,13 @@ impl ClientSessionRequest {
                 CarrierBinding::S1EncryptedStream,
             ],
             supported_suites: vec![CipherSuite::NoiseXxPsk2X25519ChaChaPolyBlake2s],
-            policy_mode: PolicyMode::StealthFirst,
+            mode: Mode::STEALTH,
             path_profile: PathProfile::unknown(),
             now_secs,
             resume_ticket: None,
             c0_padding_len: 24,
             c2_padding_len: 16,
             policy_flags: PolicyFlags {
-                allow_speed_first: false,
                 allow_hybrid_pq: false,
             },
         }
@@ -90,7 +89,7 @@ pub struct ClientPendingS1 {
     _preferred_carrier: CarrierBinding,
     supported_carriers: Vec<CarrierBinding>,
     supported_suites: Vec<CipherSuite>,
-    _policy_mode: PolicyMode,
+    _mode: Mode,
     admission_epoch_slot: u64,
     admission_key: [u8; 32],
     noise: NoiseHandshake,
@@ -114,7 +113,7 @@ pub struct ClientPendingS3 {
     endpoint_id: EndpointId,
     chosen_carrier: CarrierBinding,
     chosen_suite: CipherSuite,
-    _policy_mode: PolicyMode,
+    _mode: Mode,
     credential_identity: CredentialIdentity,
     secrets: SessionSecretsForRole,
 }
@@ -166,7 +165,7 @@ pub fn initiate_c0<C: CarrierProfile>(
         suite_bitmap: request.supported_suites.clone(),
         carrier_bitmap: request.supported_carriers.clone(),
         policy_flags: request.policy_flags,
-        policy_mode: request.policy_mode,
+        mode: request.mode,
         epoch_slot: current_epoch_slot,
         client_nonce,
         path_profile: request.path_profile,
@@ -190,7 +189,7 @@ pub fn initiate_c0<C: CarrierProfile>(
             _preferred_carrier: request.preferred_carrier,
             supported_carriers: request.supported_carriers,
             supported_suites: request.supported_suites,
-            _policy_mode: request.policy_mode,
+            _mode: request.mode,
             admission_epoch_slot: current_epoch_slot,
             admission_key: per_epoch_admission_key,
             noise,
@@ -274,7 +273,7 @@ impl ClientPendingS1 {
                 endpoint_id: self.endpoint_id,
                 chosen_carrier: s1.chosen_carrier,
                 chosen_suite: s1.chosen_suite,
-                _policy_mode: s1.chosen_policy,
+                _mode: s1.chosen_mode,
                 credential_identity: chosen_credential_identity(&self.credential),
                 secrets,
             },
@@ -306,7 +305,7 @@ impl ClientPendingS3 {
             role: SessionRole::Initiator,
             chosen_carrier: self.chosen_carrier,
             chosen_suite: self.chosen_suite,
-            policy_mode: self._policy_mode,
+            mode: self._mode,
             credential_identity: self.credential_identity,
             secrets: self.secrets,
             tunnel_mtu: s3.tunnel_mtu,

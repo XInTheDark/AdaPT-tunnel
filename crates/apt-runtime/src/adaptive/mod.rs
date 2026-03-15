@@ -4,7 +4,7 @@ use apt_tunnel::Frame;
 use apt_types::{
     CarrierBinding, ConnectionLongevityClass, GatewayFingerprint, KeepaliveMode, LinkType,
     LocalNetworkContext, Mode, NetworkMetadataObservation, PathClass, PathProfile, PathSignalEvent,
-    PolicyMode, PublicRouteHint,
+    PublicRouteHint,
 };
 
 mod context;
