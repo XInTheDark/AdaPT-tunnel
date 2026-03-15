@@ -13,7 +13,7 @@
 ## Current milestone
 
 - **Milestone:** Phase 3 adaptive/persona/local-normality rewrite
-- **Status:** chunk 2 shipped (`adaptive` / `apt-policy` responsibility split plus client-side context-keyed multi-profile persistence with legacy migration and bounded eviction)
+- **Status:** chunk 2 shipped, plus a runtime hot-path CPU hardening checkpoint for the existing tunnel fast path
 - **Primary remaining goal:** finish the spec-credible adaptive runtime by:
   - replacing placeholder local-normality tracking with a compact bounded histogram model
   - making adaptive keepalive a real persisted runtime path
@@ -24,13 +24,13 @@
   - mode around `50`: mild impact only
   - mode near `100`: full shaping, but still bounded and practical
 
-## Recently shipped chunk impact note
+## Latest shipped chunk impact note
 
-- **Chunk:** adaptive/policy module split + passive client context discovery + bounded multi-profile persistent state
-- **Latency impact:** startup-only / negligible during steady state
+- **Chunk:** tunnel runtime CPU hardening for the existing fast path
+- **Latency impact:** none expected; the direct-inner-only path now avoids extra send/decode copies
 - **Bandwidth impact:** none
-- **CPU impact:** negligible
-- **Notes:** the new profile store is client-side only, capped at 16 entries, keyed by canonicalized local network context, and legacy single-profile state now auto-migrates to the keyed format on load
+- **CPU impact:** lower in steady-state tunnel traffic, especially for wrapped carriers and `mode≈0` / direct-inner-only sessions
+- **Notes:** runtime tunnel sessions now cache outer AEAD instances plus precomputed AAD per carrier/direction, direct-inner-only now reuses owned packet buffers on both encode and known-session decode paths, and S1 writes now use the single-record carrier encode path instead of allocating/draining a temporary record vector
 
 ## Numeric mode model
 
@@ -79,7 +79,7 @@ The Phase 3 end state remains **`mode`-only** across operator-facing config, CLI
 2. Add the dedicated adaptive keepalive learning controller and persist its learned interval/confidence state inside each stored network profile.
 3. Rework persona generation and runtime scheduling so pacing, padding, keepalive style, soft packing, and idle-resume behavior scale continuously from numeric `mode` instead of coarse anchor buckets.
 4. Expand the controller to consume richer delivery/impairment/rebinding/idle-timeout signals and to adjust `mode` conservatively with remembered per-profile preferences.
-5. Run workspace tests plus mode-by-mode smoke/perf checks, then update this file again with the shipped chunk and impact note.
+5. Run workspace tests plus mode-by-mode smoke/perf checks, with special attention to CPU under `mode=0`, then update this file again with the next shipped chunk and impact note.
 
 ## Detailed implementation requirements for remaining chunks
 

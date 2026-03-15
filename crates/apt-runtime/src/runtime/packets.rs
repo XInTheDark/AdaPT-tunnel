@@ -105,7 +105,7 @@ pub(super) fn encode_client_tunnel_packet_batch(
 
 pub(super) fn encode_server_tunnel_packet_batch(
     carriers: &RuntimeCarriers,
-    endpoint_id: &apt_types::EndpointId,
+    _endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
     encapsulation: TunnelEncapsulation,
     binding: CarrierBinding,
@@ -114,44 +114,42 @@ pub(super) fn encode_server_tunnel_packet_batch(
     now: u64,
 ) -> Result<Vec<u8>, RuntimeError> {
     let encoded = tunnel.encode_packet(frames, now)?;
-    encode_server_tunnel_packet(
-        carriers,
-        endpoint_id,
-        outer_keys,
-        encapsulation,
-        binding,
-        &encoded.bytes,
-    )
+    encode_server_tunnel_packet(carriers, outer_keys, encapsulation, binding, encoded.bytes)
 }
 
 fn encode_server_tunnel_packet(
     carriers: &RuntimeCarriers,
-    endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
     encapsulation: TunnelEncapsulation,
     binding: CarrierBinding,
-    packet_bytes: &[u8],
+    packet_bytes: Vec<u8>,
 ) -> Result<Vec<u8>, RuntimeError> {
     if matches!(encapsulation, TunnelEncapsulation::DirectInnerOnly) {
-        return Ok(packet_bytes.to_vec());
+        return Ok(packet_bytes);
     }
     match binding {
-        CarrierBinding::D1DatagramUdp => encode_tunnel_datagram(
-            carriers.d1(),
-            endpoint_id,
-            outer_keys.send_for(binding)?,
-            packet_bytes,
-        ),
-        CarrierBinding::D2EncryptedDatagram => encode_tunnel_d2_datagram(
-            carriers.d2().ok_or_else(|| {
+        CarrierBinding::D1DatagramUdp => {
+            let crypto = outer_keys.send_for(binding)?;
+            let (aead, aad) = crypto.send_parts();
+            crate::wire::encode_tunnel_datagram_cached(carriers.d1(), aead, aad, &packet_bytes)
+        }
+        CarrierBinding::D2EncryptedDatagram => {
+            let carrier = carriers.d2().ok_or_else(|| {
                 RuntimeError::InvalidConfig("D2 runtime carrier is not configured".to_string())
-            })?,
-            endpoint_id,
-            outer_keys.send_for(binding)?,
-            packet_bytes,
-        ),
+            })?;
+            let crypto = outer_keys.send_for(binding)?;
+            let (aead, aad) = crypto.send_parts();
+            crate::wire::encode_tunnel_d2_datagram_cached(carrier, aead, aad, &packet_bytes)
+        }
         CarrierBinding::S1EncryptedStream => {
-            encode_tunnel_stream_payload(endpoint_id, outer_keys.send_for(binding)?, packet_bytes)
+            let crypto = outer_keys.send_for(binding)?;
+            let (aead, aad) = crypto.send_parts();
+            let payload =
+                crate::wire::encode_tunnel_stream_payload_cached(aead, aad, &packet_bytes)?;
+            if payload.len() > carriers.s1().max_record_size() as usize {
+                return Err(RuntimeError::Carrier(CarrierError::Oversize));
+            }
+            Ok(payload)
         }
         _ => Err(RuntimeError::InvalidConfig(
             "unsupported runtime carrier".to_string(),
@@ -159,43 +157,41 @@ fn encode_server_tunnel_packet(
     }
 }
 
-pub(super) fn decode_client_tunnel_packet(
+pub(super) fn decode_client_tunnel_packet_owned(
     carriers: &RuntimeCarriers,
-    endpoint_id: &apt_types::EndpointId,
+    _endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
     encapsulation: TunnelEncapsulation,
     binding: CarrierBinding,
-    bytes: &[u8],
+    bytes: Vec<u8>,
 ) -> Result<Vec<u8>, RuntimeError> {
-    decode_server_tunnel_packet_direct(endpoint_id, outer_keys, encapsulation, binding, bytes)
-        .map_err(|error| {
+    decode_server_tunnel_packet_owned(carriers, outer_keys, encapsulation, binding, bytes).map_err(
+        |error| {
             debug!(
                 error = %error,
                 carrier = %binding.as_str(),
                 "failed to decode client tunnel packet"
             );
             error
-        })
-        .and_then(|tunnel_bytes| {
-            let _ = carriers;
-            Ok(tunnel_bytes)
-        })
+        },
+    )
 }
 
-pub(super) fn decode_server_tunnel_packet(
+pub(super) fn decode_server_tunnel_packet_owned(
     carriers: &RuntimeCarriers,
-    endpoint_id: &apt_types::EndpointId,
     outer_keys: &RuntimeOuterKeys,
     encapsulation: TunnelEncapsulation,
     binding: CarrierBinding,
-    bytes: &[u8],
+    bytes: Vec<u8>,
 ) -> Result<Vec<u8>, RuntimeError> {
-    let _ = carriers;
-    decode_server_tunnel_packet_direct(endpoint_id, outer_keys, encapsulation, binding, bytes)
+    if matches!(encapsulation, TunnelEncapsulation::DirectInnerOnly) {
+        return Ok(bytes);
+    }
+    decode_server_tunnel_packet_direct(carriers, outer_keys, encapsulation, binding, &bytes)
 }
 
 pub(super) fn decode_server_tunnel_packet_direct(
-    endpoint_id: &apt_types::EndpointId,
+    carriers: &RuntimeCarriers,
     outer_keys: &RuntimeOuterKeys,
     encapsulation: TunnelEncapsulation,
     binding: CarrierBinding,
@@ -205,20 +201,26 @@ pub(super) fn decode_server_tunnel_packet_direct(
         return Ok(bytes.to_vec());
     }
     match binding {
-        CarrierBinding::D1DatagramUdp => decode_tunnel_datagram(
-            &runtime_d1_carrier(1_380),
-            endpoint_id,
-            outer_keys.recv_for(binding)?,
-            bytes,
-        ),
-        CarrierBinding::D2EncryptedDatagram => decode_tunnel_d2_datagram(
-            &runtime_d2_carrier(crate::quic::D2_DEFAULT_TUNNEL_MTU),
-            endpoint_id,
-            outer_keys.recv_for(binding)?,
-            bytes,
-        ),
+        CarrierBinding::D1DatagramUdp => {
+            let crypto = outer_keys.recv_for(binding)?;
+            let (aead, aad) = crypto.recv_parts();
+            crate::wire::decode_tunnel_datagram_cached(carriers.d1(), aead, aad, bytes)
+        }
+        CarrierBinding::D2EncryptedDatagram => {
+            let carrier = carriers.d2().ok_or_else(|| {
+                RuntimeError::InvalidConfig("D2 runtime carrier is not configured".to_string())
+            })?;
+            let crypto = outer_keys.recv_for(binding)?;
+            let (aead, aad) = crypto.recv_parts();
+            crate::wire::decode_tunnel_d2_datagram_cached(carrier, aead, aad, bytes)
+        }
         CarrierBinding::S1EncryptedStream => {
-            decode_tunnel_stream_payload(endpoint_id, outer_keys.recv_for(binding)?, bytes)
+            if bytes.is_empty() || bytes.len() > carriers.s1().max_record_size() as usize {
+                return Err(RuntimeError::Carrier(CarrierError::MalformedRecord));
+            }
+            let crypto = outer_keys.recv_for(binding)?;
+            let (aead, aad) = crypto.recv_parts();
+            crate::wire::decode_tunnel_stream_payload_cached(aead, aad, bytes)
         }
         _ => Err(RuntimeError::InvalidConfig(
             "unsupported runtime carrier".to_string(),
@@ -282,20 +284,22 @@ pub(super) fn effective_runtime_tunnel_mtu(
 }
 
 fn effective_d1_tunnel_mtu(endpoint_id: &apt_types::EndpointId, carrier: &D1Carrier) -> u16 {
-    let outer_keys = RuntimeOuterKeys {
-        d1: D1OuterKeys {
+    let outer_keys = RuntimeOuterKeys::new(
+        endpoint_id,
+        D1OuterKeys {
             send: [0x11; 32],
             recv: [0x22; 32],
         },
-        d2: D2OuterKeys {
+        D2OuterKeys {
             send: [0x55; 32],
             recv: [0x66; 32],
         },
-        s1: S1OuterKeys {
+        S1OuterKeys {
             send: [0x33; 32],
             recv: [0x44; 32],
         },
-    };
+    )
+    .expect("fixed test keys should produce cached outer state");
     let template_session = TunnelSession::new(
         SessionId([0xAB; 16]),
         SessionRole::Initiator,
@@ -339,20 +343,22 @@ fn effective_d1_tunnel_mtu(endpoint_id: &apt_types::EndpointId, carrier: &D1Carr
 }
 
 fn effective_d2_tunnel_mtu(endpoint_id: &apt_types::EndpointId, carrier: &D2Carrier) -> u16 {
-    let outer_keys = RuntimeOuterKeys {
-        d1: D1OuterKeys {
+    let outer_keys = RuntimeOuterKeys::new(
+        endpoint_id,
+        D1OuterKeys {
             send: [0x11; 32],
             recv: [0x22; 32],
         },
-        d2: D2OuterKeys {
+        D2OuterKeys {
             send: [0x55; 32],
             recv: [0x66; 32],
         },
-        s1: S1OuterKeys {
+        S1OuterKeys {
             send: [0x33; 32],
             recv: [0x44; 32],
         },
-    };
+    )
+    .expect("fixed test keys should produce cached outer state");
     let template_session = TunnelSession::new(
         SessionId([0xAB; 16]),
         SessionRole::Initiator,

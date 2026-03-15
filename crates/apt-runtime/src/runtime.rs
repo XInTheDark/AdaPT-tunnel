@@ -15,16 +15,15 @@ use crate::{
     wire::{
         decode_admission_d2_datagram, decode_admission_datagram, decode_admission_stream_payload,
         decode_confirmation_d2_datagram, decode_confirmation_datagram,
-        decode_confirmation_stream_payload, decode_tunnel_d2_datagram, decode_tunnel_datagram,
-        decode_tunnel_stream_payload, derive_d1_admission_outer_key,
+        decode_confirmation_stream_payload, derive_d1_admission_outer_key,
         derive_d1_confirmation_outer_key, derive_d1_tunnel_outer_keys,
         derive_d2_admission_outer_key, derive_d2_confirmation_outer_key,
         derive_d2_tunnel_outer_keys, derive_s1_admission_outer_key,
         derive_s1_confirmation_outer_key, derive_s1_tunnel_outer_keys,
         encode_admission_d2_datagram, encode_admission_datagram, encode_admission_stream_payload,
         encode_confirmation_d2_datagram, encode_confirmation_datagram,
-        encode_confirmation_stream_payload, encode_tunnel_d2_datagram, encode_tunnel_datagram,
-        encode_tunnel_stream_payload, D1OuterKeys, D2OuterKeys, S1OuterKeys,
+        encode_confirmation_stream_payload, CachedTunnelOuterCrypto, D1OuterKeys, D2OuterKeys,
+        S1OuterKeys,
     },
 };
 use apt_admission::{
@@ -37,8 +36,9 @@ use apt_crypto::{SealedEnvelope, SessionSecretsForRole, StaticKeypair};
 use apt_observability::{record_event, AptEvent, ObservabilityConfig, TelemetrySnapshot};
 use apt_tunnel::{Frame, RekeyStatus, TunnelSession};
 use apt_types::{
-    AuthProfile, CarrierBinding, CipherSuite, CredentialIdentity, Mode, PathSignalEvent,
-    PolicyMode, SessionId, SessionRole, DEFAULT_ADMISSION_EPOCH_SLOT_SECS, MINIMUM_REPLAY_WINDOW,
+    AuthProfile, CarrierBinding, CipherSuite, CredentialIdentity, EndpointId, Mode,
+    PathSignalEvent, PolicyMode, SessionId, SessionRole, DEFAULT_ADMISSION_EPOCH_SLOT_SECS,
+    MINIMUM_REPLAY_WINDOW,
 };
 use serde::{Deserialize, Serialize};
 use socket2::{Domain, Protocol, Socket, Type};
@@ -97,28 +97,56 @@ enum PathHandle {
 
 #[derive(Clone, Debug)]
 struct RuntimeOuterKeys {
-    d1: D1OuterKeys,
-    d2: D2OuterKeys,
-    s1: S1OuterKeys,
+    d1: CachedTunnelOuterCrypto,
+    d2: CachedTunnelOuterCrypto,
+    s1: CachedTunnelOuterCrypto,
 }
 
 impl RuntimeOuterKeys {
-    fn send_for(&self, binding: CarrierBinding) -> Result<&[u8; 32], RuntimeError> {
+    fn new(
+        endpoint_id: &EndpointId,
+        d1: D1OuterKeys,
+        d2: D2OuterKeys,
+        s1: S1OuterKeys,
+    ) -> Result<Self, RuntimeError> {
+        Ok(Self {
+            d1: CachedTunnelOuterCrypto::new(
+                endpoint_id,
+                CarrierBinding::D1DatagramUdp,
+                d1.send,
+                d1.recv,
+            )?,
+            d2: CachedTunnelOuterCrypto::new(
+                endpoint_id,
+                CarrierBinding::D2EncryptedDatagram,
+                d2.send,
+                d2.recv,
+            )?,
+            s1: CachedTunnelOuterCrypto::new(
+                endpoint_id,
+                CarrierBinding::S1EncryptedStream,
+                s1.send,
+                s1.recv,
+            )?,
+        })
+    }
+
+    fn send_for(&self, binding: CarrierBinding) -> Result<&CachedTunnelOuterCrypto, RuntimeError> {
         match binding {
-            CarrierBinding::D1DatagramUdp => Ok(&self.d1.send),
-            CarrierBinding::D2EncryptedDatagram => Ok(&self.d2.send),
-            CarrierBinding::S1EncryptedStream => Ok(&self.s1.send),
+            CarrierBinding::D1DatagramUdp => Ok(&self.d1),
+            CarrierBinding::D2EncryptedDatagram => Ok(&self.d2),
+            CarrierBinding::S1EncryptedStream => Ok(&self.s1),
             _ => Err(RuntimeError::InvalidConfig(format!(
                 "unsupported runtime carrier {binding:?}"
             ))),
         }
     }
 
-    fn recv_for(&self, binding: CarrierBinding) -> Result<&[u8; 32], RuntimeError> {
+    fn recv_for(&self, binding: CarrierBinding) -> Result<&CachedTunnelOuterCrypto, RuntimeError> {
         match binding {
-            CarrierBinding::D1DatagramUdp => Ok(&self.d1.recv),
-            CarrierBinding::D2EncryptedDatagram => Ok(&self.d2.recv),
-            CarrierBinding::S1EncryptedStream => Ok(&self.s1.recv),
+            CarrierBinding::D1DatagramUdp => Ok(&self.d1),
+            CarrierBinding::D2EncryptedDatagram => Ok(&self.d2),
+            CarrierBinding::S1EncryptedStream => Ok(&self.s1),
             _ => Err(RuntimeError::InvalidConfig(format!(
                 "unsupported runtime carrier {binding:?}"
             ))),
@@ -138,6 +166,13 @@ impl TunnelEncapsulation {
             Self::DirectInnerOnly
         } else {
             Self::Wrapped
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Wrapped => "wrapped",
+            Self::DirectInnerOnly => "direct-inner-only",
         }
     }
 }

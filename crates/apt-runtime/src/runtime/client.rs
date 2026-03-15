@@ -26,6 +26,7 @@ pub(super) async fn run_client(
         &observability,
     )
     .await?;
+    let encapsulation = TunnelEncapsulation::for_policy(handshake.established.policy_mode);
     let transport = extract_tunnel_parameters(&handshake.established)?;
     let tun = spawn_tun_worker(TunInterfaceConfig {
         name: config.interface_name.clone(),
@@ -71,6 +72,7 @@ pub(super) async fn run_client(
         interface = %tun.interface_name,
         routes = ?effective_routes,
         carrier = %handshake.binding.as_str(),
+        encapsulation = encapsulation.as_str(),
         requested_mode = config.mode.value(),
         negotiated_mode = Mode::from(handshake.established.policy_mode).value(),
         "client session established"

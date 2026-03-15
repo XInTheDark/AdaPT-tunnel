@@ -58,6 +58,56 @@ impl OpaqueAead {
             )
             .map_err(|_| CryptoError::Aead)
     }
+
+    /// Encrypts raw bytes into an opaque XChaCha20-Poly1305 message.
+    pub fn seal_payload(
+        &self,
+        associated_data: &[u8],
+        plaintext: &[u8],
+    ) -> Result<OpaqueMessage, CryptoError> {
+        let nonce = random_bytes();
+        let ciphertext = self.seal_with_nonce(&nonce, associated_data, plaintext)?;
+        Ok(OpaqueMessage { nonce, ciphertext })
+    }
+
+    /// Encrypts raw bytes into a nonce-prefixed opaque XChaCha20-Poly1305 payload.
+    pub fn seal_payload_bytes(
+        &self,
+        associated_data: &[u8],
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, CryptoError> {
+        let nonce = random_bytes();
+        let mut ciphertext = self.seal_with_nonce(&nonce, associated_data, plaintext)?;
+        let mut out = Vec::with_capacity(nonce.len() + ciphertext.len());
+        out.extend_from_slice(&nonce);
+        out.append(&mut ciphertext);
+        Ok(out)
+    }
+
+    /// Decrypts raw bytes from an opaque XChaCha20-Poly1305 message.
+    pub fn open_payload(
+        &self,
+        associated_data: &[u8],
+        message: &OpaqueMessage,
+    ) -> Result<Vec<u8>, CryptoError> {
+        self.open_with_nonce(&message.nonce, associated_data, &message.ciphertext)
+    }
+
+    /// Decrypts raw bytes from a nonce-prefixed opaque XChaCha20-Poly1305 payload.
+    pub fn open_payload_bytes(
+        &self,
+        associated_data: &[u8],
+        payload: &[u8],
+    ) -> Result<Vec<u8>, CryptoError> {
+        if payload.len() <= COOKIE_NONCE_LEN {
+            return Err(CryptoError::InvalidInput("malformed opaque payload"));
+        }
+        let (nonce, ciphertext) = payload.split_at(COOKIE_NONCE_LEN);
+        let nonce: [u8; COOKIE_NONCE_LEN] = nonce
+            .try_into()
+            .map_err(|_| CryptoError::InvalidInput("malformed opaque payload"))?;
+        self.open_with_nonce(&nonce, associated_data, ciphertext)
+    }
 }
 
 impl Clone for OpaqueAead {
@@ -174,10 +224,7 @@ pub fn seal_opaque_payload(
     associated_data: &[u8],
     plaintext: &[u8],
 ) -> Result<OpaqueMessage, CryptoError> {
-    let cipher = OpaqueAead::new(key)?;
-    let nonce = random_bytes();
-    let ciphertext = cipher.seal_with_nonce(&nonce, associated_data, plaintext)?;
-    Ok(OpaqueMessage { nonce, ciphertext })
+    OpaqueAead::new(key)?.seal_payload(associated_data, plaintext)
 }
 
 /// Encrypts raw bytes into a nonce-prefixed opaque XChaCha20-Poly1305 payload.
@@ -186,11 +233,7 @@ pub fn seal_opaque_payload_bytes(
     associated_data: &[u8],
     plaintext: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
-    let message = seal_opaque_payload(key, associated_data, plaintext)?;
-    let mut out = Vec::with_capacity(message.nonce.len() + message.ciphertext.len());
-    out.extend_from_slice(&message.nonce);
-    out.extend_from_slice(&message.ciphertext);
-    Ok(out)
+    OpaqueAead::new(key)?.seal_payload_bytes(associated_data, plaintext)
 }
 
 /// Decrypts raw bytes from an opaque XChaCha20-Poly1305 message.
@@ -199,7 +242,7 @@ pub fn open_opaque_payload(
     associated_data: &[u8],
     message: &OpaqueMessage,
 ) -> Result<Vec<u8>, CryptoError> {
-    OpaqueAead::new(key)?.open_with_nonce(&message.nonce, associated_data, &message.ciphertext)
+    OpaqueAead::new(key)?.open_payload(associated_data, message)
 }
 
 /// Decrypts raw bytes from a nonce-prefixed opaque XChaCha20-Poly1305 payload.
@@ -208,12 +251,5 @@ pub fn open_opaque_payload_bytes(
     associated_data: &[u8],
     payload: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
-    if payload.len() <= COOKIE_NONCE_LEN {
-        return Err(CryptoError::InvalidInput("malformed opaque payload"));
-    }
-    let (nonce, ciphertext) = payload.split_at(COOKIE_NONCE_LEN);
-    let nonce: [u8; COOKIE_NONCE_LEN] = nonce
-        .try_into()
-        .map_err(|_| CryptoError::InvalidInput("malformed opaque payload"))?;
-    OpaqueAead::new(key)?.open_with_nonce(&nonce, associated_data, ciphertext)
+    OpaqueAead::new(key)?.open_payload_bytes(associated_data, payload)
 }

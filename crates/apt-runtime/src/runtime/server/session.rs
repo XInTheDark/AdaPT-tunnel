@@ -19,13 +19,12 @@ pub(super) async fn process_known_server_path(
         path_to_session.remove(&path);
         return Ok(());
     };
-    let tunnel_bytes = decode_server_tunnel_packet(
+    let tunnel_bytes = decode_server_tunnel_packet_owned(
         carriers,
-        &config.endpoint_id,
         &session.outer_keys,
         session.encapsulation,
         binding,
-        &bytes,
+        bytes,
     )?;
     let decoded = session.tunnel.decode_packet(&tunnel_bytes, now_secs())?;
     handle_server_decoded_packet(
@@ -288,14 +287,15 @@ pub(super) fn expire_server_session(
 
 pub(super) fn try_match_server_session(
     sessions: &HashMap<SessionId, ServerSessionState>,
-    endpoint_id: &apt_types::EndpointId,
+    carriers: &RuntimeCarriers,
+    _endpoint_id: &apt_types::EndpointId,
     binding: CarrierBinding,
     bytes: &[u8],
     now: u64,
 ) -> Result<Option<MatchedServerPacket>, RuntimeError> {
     for (session_id, session) in sessions {
         let tunnel_bytes = match decode_server_tunnel_packet_direct(
-            endpoint_id,
+            carriers,
             &session.outer_keys,
             session.encapsulation,
             binding,

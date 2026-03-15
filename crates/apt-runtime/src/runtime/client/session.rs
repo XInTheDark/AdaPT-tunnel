@@ -10,11 +10,12 @@ pub(super) async fn run_client_session_loop(
     observability: &ObservabilityConfig,
     carriers: &RuntimeCarriers,
 ) -> Result<ClientStatus, RuntimeError> {
-    let outer_keys = RuntimeOuterKeys {
-        d1: derive_d1_tunnel_outer_keys(&handshake.established.secrets)?,
-        d2: derive_d2_tunnel_outer_keys(&handshake.established.secrets)?,
-        s1: derive_s1_tunnel_outer_keys(&handshake.established.secrets)?,
-    };
+    let outer_keys = RuntimeOuterKeys::new(
+        &config.endpoint_id,
+        derive_d1_tunnel_outer_keys(&handshake.established.secrets)?,
+        derive_d2_tunnel_outer_keys(&handshake.established.secrets)?,
+        derive_s1_tunnel_outer_keys(&handshake.established.secrets)?,
+    )?;
     let mut adaptive = AdaptiveDatapath::new_client(
         handshake.established.chosen_carrier,
         handshake.established.secrets.persona_seed,
@@ -85,13 +86,13 @@ pub(super) async fn run_client_session_loop(
                 match event {
                     ClientTransportEvent::Inbound { path_id, bytes } => {
                         let Some(path) = paths.get_mut(&path_id) else { continue; };
-                        let tunnel_bytes = decode_client_tunnel_packet(
+                        let tunnel_bytes = decode_client_tunnel_packet_owned(
                             carriers,
                             &config.endpoint_id,
                             &outer_keys,
                             encapsulation,
                             path.binding,
-                            &bytes,
+                            bytes,
                         )?;
                         let decoded = tunnel.decode_packet(&tunnel_bytes, now_secs())?;
                         path.last_recv_secs = now_secs();

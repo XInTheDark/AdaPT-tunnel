@@ -310,11 +310,12 @@ fn install_server_session(
             assigned_ipv6: peer.tunnel_ipv6,
             tunnel,
             adaptive,
-            outer_keys: RuntimeOuterKeys {
-                d1: derive_d1_tunnel_outer_keys(&session.secrets)?,
-                d2: derive_d2_tunnel_outer_keys(&session.secrets)?,
-                s1: derive_s1_tunnel_outer_keys(&session.secrets)?,
-            },
+            outer_keys: RuntimeOuterKeys::new(
+                &config.endpoint_id,
+                derive_d1_tunnel_outer_keys(&session.secrets)?,
+                derive_d2_tunnel_outer_keys(&session.secrets)?,
+                derive_s1_tunnel_outer_keys(&session.secrets)?,
+            )?,
             encapsulation: TunnelEncapsulation::for_policy(session.policy_mode),
             primary_path,
             standby_path: None,
@@ -329,6 +330,7 @@ fn install_server_session(
         assigned_ipv6 = ?peer.tunnel_ipv6,
         credential = %credential_label,
         carrier = %binding.as_str(),
+        encapsulation = TunnelEncapsulation::for_policy(session.policy_mode).as_str(),
         "server session established"
     );
     record_event(

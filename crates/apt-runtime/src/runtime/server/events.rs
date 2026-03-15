@@ -64,6 +64,7 @@ pub(super) async fn handle_datagram_event(
     if config.allow_session_migration {
         if let Some(matched) = try_match_server_session(
             sessions,
+            carriers,
             &config.endpoint_id,
             CarrierBinding::D1DatagramUdp,
             &bytes,
@@ -167,6 +168,7 @@ pub(super) async fn handle_d2_datagram_event(
     if config.allow_session_migration {
         if let Some(matched) = try_match_server_session(
             sessions,
+            carriers,
             &config.endpoint_id,
             CarrierBinding::D2EncryptedDatagram,
             &bytes,
@@ -289,6 +291,7 @@ pub(super) async fn handle_stream_record_event(
     if config.allow_session_migration {
         if let Some(matched) = try_match_server_session(
             sessions,
+            carriers,
             &config.endpoint_id,
             CarrierBinding::S1EncryptedStream,
             &bytes,

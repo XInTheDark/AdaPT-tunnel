@@ -16,20 +16,22 @@ fn test_runtime_carriers() -> RuntimeCarriers {
 }
 
 fn test_runtime_outer_keys() -> RuntimeOuterKeys {
-    RuntimeOuterKeys {
-        d1: D1OuterKeys {
+    RuntimeOuterKeys::new(
+        &EndpointId::new("adapt-test".to_string()),
+        D1OuterKeys {
             send: [0x11; 32],
             recv: [0x22; 32],
         },
-        d2: D2OuterKeys {
+        D2OuterKeys {
             send: [0x55; 32],
             recv: [0x66; 32],
         },
-        s1: S1OuterKeys {
+        S1OuterKeys {
             send: [0x33; 32],
             recv: [0x44; 32],
         },
-    }
+    )
+    .unwrap()
 }
 
 fn test_tunnel_session() -> TunnelSession {
@@ -304,6 +306,27 @@ fn speed_mode_direct_encapsulation_skips_outer_wrap() {
     let baseline = baseline_tunnel.encode_packet(&frames, 0).unwrap().bytes;
 
     assert_eq!(direct, baseline);
+}
+
+#[test]
+fn direct_inner_only_owned_decode_reuses_the_input_buffer() {
+    let carriers = test_runtime_carriers();
+    let outer_keys = test_runtime_outer_keys();
+    let bytes = vec![0x10, 0x20, 0x30, 0x40];
+    let input_ptr = bytes.as_ptr();
+
+    let decoded = decode_client_tunnel_packet_owned(
+        &carriers,
+        &EndpointId::new("adapt-test".to_string()),
+        &outer_keys,
+        TunnelEncapsulation::DirectInnerOnly,
+        CarrierBinding::D1DatagramUdp,
+        bytes,
+    )
+    .unwrap();
+
+    assert_eq!(decoded, vec![0x10, 0x20, 0x30, 0x40]);
+    assert_eq!(decoded.as_ptr(), input_ptr);
 }
 
 #[test]

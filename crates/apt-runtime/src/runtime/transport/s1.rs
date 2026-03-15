@@ -96,11 +96,7 @@ pub(in super::super) async fn write_s1_payload<W: AsyncWriteExt + Unpin>(
     carrier: &S1Carrier,
     payload: &[u8],
 ) -> Result<(), RuntimeError> {
-    let mut records = carrier.encode_records(payload)?;
-    let record = records
-        .drain(..)
-        .next()
-        .ok_or(RuntimeError::Carrier(CarrierError::MalformedRecord))?;
+    let record = carrier.encode_record(payload)?;
     writer.write_all(&record).await?;
     Ok(())
 }
