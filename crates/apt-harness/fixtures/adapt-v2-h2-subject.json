@@ -1,0 +1,12 @@
+{
+  "label": "adapt-v2-h2",
+  "family": "adapt-v2-s1-h2",
+  "alpn": "h2",
+  "request_count": 4,
+  "response_count": 4,
+  "concurrency_peak": 2,
+  "total_bytes": 3000,
+  "object_sizes": [140, 260, 880, 1080],
+  "gap_ms": [14, 20, 24, 35],
+  "error_codes": []
+}

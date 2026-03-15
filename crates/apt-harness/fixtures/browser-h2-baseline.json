@@ -1,0 +1,12 @@
+{
+  "label": "browser-h2-baseline",
+  "family": "browser-h2",
+  "alpn": "h2",
+  "request_count": 4,
+  "response_count": 4,
+  "concurrency_peak": 2,
+  "total_bytes": 3200,
+  "object_sizes": [120, 240, 900, 1100],
+  "gap_ms": [12, 18, 25, 33],
+  "error_codes": []
+}

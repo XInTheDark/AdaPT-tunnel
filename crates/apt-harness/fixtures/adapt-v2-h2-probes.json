@@ -1,0 +1,7 @@
+[
+  {
+    "probe_name": "semi-valid-upgrade",
+    "expected": "honest-public-semantics",
+    "observed": "honest-public-semantics"
+  }
+]

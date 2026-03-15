@@ -1,4 +1,5 @@
 use super::*;
+use std::path::PathBuf;
 
 fn browser_h2_baseline() -> PassiveCapture {
     PassiveCapture {
@@ -93,4 +94,17 @@ fn harness_report_passes_close_public_session() {
     );
     assert_eq!(report.verdict, HarnessVerdict::Pass);
     assert_eq!(report.probes.honest, 1);
+}
+
+#[test]
+fn fixture_manifest_loads_and_evaluates_repo_samples() {
+    let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .join("manifest.json");
+    let manifest = load_fixture_manifest(&manifest_path).unwrap();
+    assert_eq!(manifest.entries.len(), 1);
+    let evaluations = evaluate_fixture_manifest(&manifest_path).unwrap();
+    assert_eq!(evaluations.len(), 1);
+    assert_eq!(evaluations[0].name, "browser-h2-vs-adapt-v2-h2");
+    assert_eq!(evaluations[0].report.verdict, HarnessVerdict::Pass);
 }

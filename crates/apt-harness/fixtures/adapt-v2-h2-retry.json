@@ -1,0 +1,9 @@
+{
+  "attempts": [
+    {
+      "family": "adapt-v2-s1-h2",
+      "delay_ms": 350,
+      "success": true
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "entries": [
+    {
+      "name": "browser-h2-vs-adapt-v2-h2",
+      "baseline_capture": "browser-h2-baseline.json",
+      "subject_capture": "adapt-v2-h2-subject.json",
+      "probes": "adapt-v2-h2-probes.json",
+      "retry_trace": "adapt-v2-h2-retry.json"
+    }
+  ]
+}

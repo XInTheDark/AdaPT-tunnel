@@ -63,7 +63,7 @@
 |---|---|---|---|
 | Planning/docs maintenance | active | Keep `PLAN.md`, `SPEC_v2.md`, and `docs/ARCHITECTURE_V2.md` aligned with live code and shipped scope | No runtime impact |
 | Runtime/module split | active | Finish separating remaining transport-owned runtime/helpers into surface-ready modules and eliminate stale legacy `S1` assumptions from shared codepaths | No intentional runtime impact; lowers maintenance risk |
-| Empirical harness | active | Extend `apt-harness` beyond the initial passive/probe/retry report helpers into baseline corpora ingestion and runtime comparison fixtures | Offline-only analysis cost |
+| Empirical harness | active | Extend `apt-harness` beyond the initial passive/probe/retry report helpers into baseline corpora ingestion and runtime comparison fixtures; sample fixture manifests are the current sub-step | Offline-only analysis cost |
 | Hidden-upgrade core | pending | Refactor `apt-admission` so it owns logical hidden-upgrade capsules/tickets rather than a public-wire packet envelope | Moderate implementation risk; core enabler |
 | Structured v2 transport config | pending | Add versioned public-session transport blocks and deployment metadata without reviving legacy stream fields on the primary schema | Minor config churn |
 | First public-session carrier | pending | Ship the H2 API-sync family end-to-end with honest unauthenticated semantics and hidden-upgrade slots | Main v2 milestone |
@@ -74,7 +74,7 @@
 
 1. Split any remaining mixed transport/runtime code into surface-oriented modules before new v2 crates land.
 2. Introduce the first structured v2 transport/config types for public-session families and deployment strength metadata.
-3. Extend `apt-harness` from the initial report helpers into baseline-trace ingestion plus browser/AdaPT comparison fixtures.
+3. Extend `apt-harness` from the initial report helpers into baseline-trace ingestion plus browser/AdaPT comparison fixtures and manifest-driven evaluation.
 4. Rework `apt-admission` around transport-agnostic hidden-upgrade capsules (`UG1`/`UG2`/`UG3`/`UG4`) and masked fallback tickets.
 5. Add `apt-origin` + `apt-surface-h2` and land the H2 API-sync reference path with harness-facing trace output.
 6. Follow with the H3 sibling, then cover compiler/budget work once both public-session baselines exist.
