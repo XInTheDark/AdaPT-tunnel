@@ -76,7 +76,7 @@ async fn tls_surface_plan_preserves_plain_public_service_semantics() {
     .await;
 
     let surface = ApiSyncSurface::starter();
-    let mut backend = ApiSyncH2HyperClient::connect_tls_with_surface_plan(&client_plan)
+    let backend = ApiSyncH2HyperClient::connect_tls_with_surface_plan(&client_plan)
         .await
         .unwrap();
     let request =
@@ -117,14 +117,14 @@ async fn tls_surface_plan_transfers_tunnel_ip_frames_after_hidden_upgrade() {
     client_config.server_static_public_key = server_static_public_key;
     let persistent_state = ClientPersistentState::default();
 
-    let mut backend = ApiSyncH2HyperClient::connect_tls_with_surface_plan(&client_plan)
+    let backend = ApiSyncH2HyperClient::connect_tls_with_surface_plan(&client_plan)
         .await
         .unwrap();
     let mut session = driver
         .establish_tunnel_session_with_hyper_client(
             &client_config,
             &persistent_state,
-            &mut backend,
+            &backend,
             now_secs,
         )
         .await
@@ -132,7 +132,7 @@ async fn tls_surface_plan_transfers_tunnel_ip_frames_after_hidden_upgrade() {
 
     let echoed = session
         .exchange_tunnel_frames_with_hyper_client(
-            &mut backend,
+            &backend,
             &[Frame::IpData(vec![0xDE, 0xAD, 0xBE, 0xEF])],
             now_secs + 1,
         )

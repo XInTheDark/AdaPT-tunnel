@@ -1,8 +1,20 @@
 use super::*;
 use apt_admission::{AdmissionError, EstablishedSession};
-use apt_surface_h2::{ApiSyncRequestTunnelEnvelope, ApiSyncResponseTunnelEnvelope};
+use apt_surface_h2::{
+    ApiSyncRequestTunnelEnvelope, ApiSyncRequestTunnelPollEnvelope, ApiSyncResponseTunnelEnvelope,
+};
 use apt_tunnel::{DecodedPacket, Frame, TunnelSession};
-use apt_types::MINIMUM_REPLAY_WINDOW;
+use apt_types::{SessionId, MINIMUM_REPLAY_WINDOW};
+use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+
+pub trait ApiSyncTunnelDispatch: Send + Sync {
+    fn wait_for_outbound_frames<'a>(
+        &'a self,
+        session_id: SessionId,
+        limit: usize,
+        timeout: Duration,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Frame>, RuntimeError>> + Send + 'a>>;
+}
 
 pub trait ApiSyncPublicService {
     fn handle_public_request(
@@ -27,6 +39,10 @@ pub trait ApiSyncPublicService {
     }
 
     fn note_closed_session(&mut self, _established_session: &EstablishedSession) {}
+
+    fn tunnel_dispatch(&self) -> Option<Arc<dyn ApiSyncTunnelDispatch>> {
+        None
+    }
 
     fn handle_established_request(
         &mut self,
@@ -110,6 +126,31 @@ impl ApiSyncH2ConnectionState {
         self.established_session.as_ref()
     }
 
+    pub fn established_tunnel_poll_session(
+        &self,
+        surface: &ApiSyncSurface,
+        request: &ApiSyncRequest,
+    ) -> Result<Option<EstablishedSession>, RuntimeError> {
+        let Some(established_session) = self.established_session.clone() else {
+            return Ok(None);
+        };
+        let session_id = match surface.extract_request_tunnel_poll_envelope(request) {
+            Ok(Some(ApiSyncRequestTunnelPollEnvelope { session_id })) => session_id,
+            Ok(None) => return Ok(None),
+            Err(error) => {
+                let runtime_error = RuntimeError::from(error);
+                if is_ignorable_api_sync_probe_error(&runtime_error) {
+                    return Ok(None);
+                }
+                return Err(runtime_error);
+            }
+        };
+        if session_id != established_session.session_id {
+            return Ok(None);
+        }
+        Ok(Some(established_session))
+    }
+
     fn note_established_session(&mut self, session: EstablishedSession, now_secs: u64) {
         let tunnel = TunnelSession::new(
             session.session_id,
@@ -169,6 +210,31 @@ impl ApiSyncH2ConnectionState {
             response,
             decoded_packet,
         }))
+    }
+
+    pub fn embed_outbound_tunnel_frames(
+        &mut self,
+        surface: &ApiSyncSurface,
+        response: &mut ApiSyncResponse,
+        session_id: SessionId,
+        outbound_frames: &[Frame],
+        now_secs: u64,
+    ) -> Result<(), RuntimeError> {
+        if outbound_frames.is_empty() {
+            return Ok(());
+        }
+        let tunnel = self.tunnel.as_mut().ok_or(RuntimeError::InvalidConfig(
+            "api-sync connection lost established tunnel state".to_string(),
+        ))?;
+        let encoded = tunnel.encode_packet(outbound_frames, now_secs)?;
+        surface.embed_response_tunnel_envelope(
+            response,
+            &ApiSyncResponseTunnelEnvelope {
+                session_id,
+                packet: encoded.bytes,
+            },
+        )?;
+        Ok(())
     }
 }
 

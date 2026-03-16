@@ -10,11 +10,14 @@ use bytes::Bytes;
 use http::{Request as HttpRequest, Response as HttpResponse, StatusCode};
 use http_body_util::{BodyExt, Full};
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio::{net::TcpStream, sync::Mutex};
 
+const H2_DOWNLINK_WAIT_TIMEOUT: Duration = Duration::from_secs(25);
+
+#[derive(Clone)]
 pub struct ApiSyncH2HyperClient {
-    sender: SendRequest<Full<Bytes>>,
+    sender: Arc<Mutex<SendRequest<Full<Bytes>>>>,
 }
 
 impl ApiSyncH2HyperClient {
@@ -33,24 +36,27 @@ impl ApiSyncH2HyperClient {
         tokio::spawn(async move {
             let _ = connection.await;
         });
-        Ok(Self { sender })
+        Ok(Self {
+            sender: Arc::new(Mutex::new(sender)),
+        })
     }
 
     pub async fn round_trip(
-        &mut self,
+        &self,
         surface: &ApiSyncSurface,
         request: ApiSyncRequest,
     ) -> Result<ApiSyncResponse, RuntimeError> {
-        self.sender
+        let mut sender = self.sender.lock().await;
+        sender
             .ready()
             .await
             .map_err(|error| RuntimeError::Http(format!("h2 client not ready: {error}")))?;
         let request = http_request_with_body(surface.encode_http_request(&request)?);
-        let response = self
-            .sender
+        let response = sender
             .send_request(request)
             .await
             .map_err(|error| RuntimeError::Http(format!("h2 request failed: {error}")))?;
+        drop(sender);
         surface
             .decode_http_response(&collect_http_response(response).await?)
             .map_err(RuntimeError::from)
@@ -153,6 +159,20 @@ where
 {
     let request = collect_http_request(request).await?;
     let api_request = request_handler.surface().decode_http_request(&request)?;
+    if let Some(response) = try_handle_http_tunnel_poll(
+        request_handler.surface(),
+        &api_request,
+        &connection_state,
+        &public_service,
+        now_secs,
+    )
+    .await?
+    {
+        return request_handler
+            .surface()
+            .encode_http_response(&response)
+            .map_err(RuntimeError::from);
+    }
     let mut admission = admission.lock().await;
     let mut connection_state = connection_state.lock().await;
     let mut public_service = public_service.lock().await;
@@ -171,6 +191,43 @@ where
         .surface()
         .encode_http_response(&handled.into_response())
         .map_err(RuntimeError::from)
+}
+
+async fn try_handle_http_tunnel_poll<S>(
+    surface: &ApiSyncSurface,
+    request: &ApiSyncRequest,
+    connection_state: &Arc<Mutex<ApiSyncH2ConnectionState>>,
+    public_service: &Arc<Mutex<S>>,
+    now_secs: u64,
+) -> Result<Option<ApiSyncResponse>, RuntimeError>
+where
+    S: ApiSyncPublicService + Send + 'static,
+{
+    let Some(established_session) = connection_state
+        .lock()
+        .await
+        .established_tunnel_poll_session(surface, request)?
+    else {
+        return Ok(None);
+    };
+    let Some(dispatch) = public_service.lock().await.tunnel_dispatch() else {
+        return Ok(None);
+    };
+    let outbound_frames = dispatch
+        .wait_for_outbound_frames(established_session.session_id, 32, H2_DOWNLINK_WAIT_TIMEOUT)
+        .await?;
+    let mut response = public_service
+        .lock()
+        .await
+        .handle_public_request(surface, request)?;
+    connection_state.lock().await.embed_outbound_tunnel_frames(
+        surface,
+        &mut response,
+        established_session.session_id,
+        &outbound_frames,
+        now_secs,
+    )?;
+    Ok(Some(response))
 }
 
 async fn collect_http_request(

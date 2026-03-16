@@ -30,7 +30,7 @@ pub(super) async fn run_client(
     persistent_state.store(&config.state_path)?;
 
     let startup_shutdown_rx = hooks.shutdown_rx.clone();
-    let mut backend = run_startup_step(
+    let backend = run_startup_step(
         &startup_shutdown_rx,
         "client h2 connect",
         ApiSyncH2HyperClient::connect_tls_with_surface_plan(&config.surface_plan),
@@ -44,7 +44,7 @@ pub(super) async fn run_client(
         driver.establish_tunnel_session_with_hyper_client(
             &config,
             &persistent_state,
-            &mut backend,
+            &backend,
             now_secs(),
         ),
     )

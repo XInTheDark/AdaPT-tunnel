@@ -1,4 +1,5 @@
 use super::super::*;
+use crate::runtime::surface_h2::ApiSyncTunnelDispatch;
 use apt_admission::{AdmissionError, AdmissionServerSecrets, CredentialStore, PerUserCredential};
 use apt_surface_h2::{ApiSyncH2Carrier, ApiSyncRequest, ApiSyncResponse, ApiSyncSurface};
 use apt_tunnel::Frame;
@@ -8,8 +9,9 @@ use std::{
     collections::{HashMap, VecDeque},
     net::IpAddr,
     sync::{Arc, Mutex},
+    time::Duration,
 };
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::Notify};
 
 pub(super) async fn run_h2_server(
     config: ResolvedServerConfig,
@@ -133,6 +135,7 @@ struct H2ServerSessionState {
     assigned_ips: Vec<IpAddr>,
     outbound_frames: VecDeque<Frame>,
     last_activity_secs: u64,
+    outbound_notify: Arc<Notify>,
 }
 
 impl H2ServerRuntimeState {
@@ -155,12 +158,14 @@ impl H2ServerRuntimeState {
                 assigned_ips,
                 outbound_frames: VecDeque::new(),
                 last_activity_secs: now_secs,
+                outbound_notify: Arc::new(Notify::new()),
             },
         );
     }
 
     fn remove_session(&mut self, session_id: SessionId) {
         if let Some(session) = self.sessions.remove(&session_id) {
+            session.outbound_notify.notify_waiters();
             for assigned_ip in session.assigned_ips {
                 self.sessions_by_tunnel_ip.remove(&assigned_ip);
             }
@@ -180,6 +185,52 @@ impl H2ServerRuntimeState {
             frames.push(frame);
         }
         frames
+    }
+
+    fn session_notify(&self, session_id: SessionId) -> Option<Arc<Notify>> {
+        self.sessions
+            .get(&session_id)
+            .map(|session| Arc::clone(&session.outbound_notify))
+    }
+}
+
+#[derive(Clone)]
+struct H2ServerTunnelDispatch {
+    state: Arc<Mutex<H2ServerRuntimeState>>,
+}
+
+impl ApiSyncTunnelDispatch for H2ServerTunnelDispatch {
+    fn wait_for_outbound_frames<'a>(
+        &'a self,
+        session_id: SessionId,
+        limit: usize,
+        timeout: Duration,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<Frame>, RuntimeError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let timeout_sleep = tokio::time::sleep(timeout);
+            tokio::pin!(timeout_sleep);
+            loop {
+                let notify = {
+                    let state = self.state.lock().unwrap();
+                    let Some(notify) = state.session_notify(session_id) else {
+                        return Ok(Vec::new());
+                    };
+                    notify
+                };
+                let notified = notify.notified();
+                tokio::pin!(notified);
+                let frames = self.state.lock().unwrap().drain_outbound(session_id, limit);
+                if !frames.is_empty() {
+                    return Ok(frames);
+                }
+                tokio::select! {
+                    _ = &mut timeout_sleep => return Ok(Vec::new()),
+                    _ = &mut notified => {}
+                }
+            }
+        })
     }
 }
 
@@ -250,6 +301,12 @@ impl ApiSyncPublicService for H2ServerPublicService {
             .remove_session(established_session.session_id);
     }
 
+    fn tunnel_dispatch(&self) -> Option<Arc<dyn ApiSyncTunnelDispatch>> {
+        Some(Arc::new(H2ServerTunnelDispatch {
+            state: Arc::clone(&self.state),
+        }))
+    }
+
     fn handle_established_request(
         &mut self,
         surface: &ApiSyncSurface,
@@ -293,6 +350,7 @@ async fn drive_server_tun(
         if let Some(session) = state.sessions.get_mut(&session_id) {
             session.outbound_frames.push_back(Frame::IpData(packet));
             session.last_activity_secs = now_secs();
+            session.outbound_notify.notify_one();
         }
     }
 }

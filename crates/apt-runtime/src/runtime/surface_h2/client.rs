@@ -1,5 +1,5 @@
 use super::*;
-use apt_surface_h2::ApiSyncRequestTunnelEnvelope;
+use apt_surface_h2::{ApiSyncRequestTunnelEnvelope, ApiSyncRequestTunnelPollEnvelope};
 use apt_tunnel::{DecodedPacket, Frame, TunnelSession};
 use apt_types::MINIMUM_REPLAY_WINDOW;
 use serde_json::json;
@@ -99,6 +99,21 @@ impl ApiSyncH2ClientSession {
         Ok(request)
     }
 
+    pub fn prepare_tunnel_poll_request(&self) -> Result<ApiSyncRequest, RuntimeError> {
+        let mut request = self.surface.build_state_push_request(
+            &self.authority,
+            &self.device_id,
+            json!({ "listen": true }),
+        );
+        self.surface.embed_request_tunnel_poll_envelope(
+            &mut request,
+            &ApiSyncRequestTunnelPollEnvelope {
+                session_id: self.established.session_id,
+            },
+        )?;
+        Ok(request)
+    }
+
     pub fn handle_tunnel_response(
         &mut self,
         response: &ApiSyncResponse,
@@ -132,7 +147,7 @@ impl ApiSyncH2ClientSession {
 
     pub async fn exchange_tunnel_frames_with_hyper_client(
         &mut self,
-        backend: &mut ApiSyncH2HyperClient,
+        backend: &ApiSyncH2HyperClient,
         frames: &[Frame],
         now_secs: u64,
     ) -> Result<Option<DecodedPacket>, RuntimeError> {
@@ -216,7 +231,7 @@ impl ApiSyncH2ClientDriver {
         &self,
         config: &ResolvedClientConfig,
         persistent_state: &ClientPersistentState,
-        backend: &mut ApiSyncH2HyperClient,
+        backend: &ApiSyncH2HyperClient,
         now_secs: u64,
     ) -> Result<EstablishedSession, RuntimeError> {
         Ok(self
@@ -229,7 +244,7 @@ impl ApiSyncH2ClientDriver {
         &self,
         config: &ResolvedClientConfig,
         persistent_state: &ClientPersistentState,
-        backend: &mut ApiSyncH2HyperClient,
+        backend: &ApiSyncH2HyperClient,
         now_secs: u64,
     ) -> Result<ApiSyncH2ClientSession, RuntimeError> {
         let prepared_ug1 =
@@ -287,11 +302,11 @@ impl ApiSyncH2ClientDriver {
         surface_plan: &crate::V2ClientSurfacePlan,
         now_secs: u64,
     ) -> Result<ApiSyncH2ClientSession, RuntimeError> {
-        let mut backend = ApiSyncH2HyperClient::connect_tls_with_surface_plan(surface_plan).await?;
+        let backend = ApiSyncH2HyperClient::connect_tls_with_surface_plan(surface_plan).await?;
         self.establish_tunnel_session_with_hyper_client(
             config,
             persistent_state,
-            &mut backend,
+            &backend,
             now_secs,
         )
         .await

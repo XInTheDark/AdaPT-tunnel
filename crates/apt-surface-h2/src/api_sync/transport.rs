@@ -24,6 +24,13 @@ pub struct ApiSyncRequestTunnelEnvelope {
     pub packet: Vec<u8>,
 }
 
+/// Connection-local downlink wait request embedded into a legal API-sync request
+/// slot after hidden upgrade has completed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiSyncRequestTunnelPollEnvelope {
+    pub session_id: SessionId,
+}
+
 /// Connection-local tunnel packet embedded into a legal API-sync response slot
 /// after hidden upgrade has completed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

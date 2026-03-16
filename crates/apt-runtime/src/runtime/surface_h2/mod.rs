@@ -23,6 +23,7 @@ pub use self::bridge::{
 pub use self::client::{ApiSyncH2ClientDriver, ApiSyncH2ClientSession};
 pub use self::server::{
     ApiSyncH2ConnectionState, ApiSyncH2RequestHandler, ApiSyncHandledRequest, ApiSyncPublicService,
+    ApiSyncTunnelDispatch,
 };
 
 fn is_ignorable_api_sync_probe_error(error: &RuntimeError) -> bool {

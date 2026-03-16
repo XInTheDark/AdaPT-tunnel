@@ -15,12 +15,12 @@ async fn hyper_backend_client_and_server_complete_hidden_upgrade() {
     let persistent_state = ClientPersistentState::default();
 
     let stream = TcpStream::connect(addr).await.unwrap();
-    let mut backend = ApiSyncH2HyperClient::connect(stream).await.unwrap();
+    let backend = ApiSyncH2HyperClient::connect(stream).await.unwrap();
     let session = driver
         .establish_hidden_upgrade_with_hyper_client(
             &client_config,
             &persistent_state,
-            &mut backend,
+            &backend,
             now_secs,
         )
         .await
@@ -38,7 +38,7 @@ async fn hyper_backend_preserves_plain_public_service_semantics() {
     let (admission, _) = test_server();
     let (addr, server_task) = spawn_runtime_h2_server(admission, now_secs).await;
     let surface = ApiSyncSurface::starter();
-    let mut backend = ApiSyncH2HyperClient::connect(TcpStream::connect(addr).await.unwrap())
+    let backend = ApiSyncH2HyperClient::connect(TcpStream::connect(addr).await.unwrap())
         .await
         .unwrap();
     let request =
@@ -68,12 +68,12 @@ async fn hyper_backend_transfers_tunnel_ip_frames_after_hidden_upgrade() {
     let persistent_state = ClientPersistentState::default();
 
     let stream = TcpStream::connect(addr).await.unwrap();
-    let mut backend = ApiSyncH2HyperClient::connect(stream).await.unwrap();
+    let backend = ApiSyncH2HyperClient::connect(stream).await.unwrap();
     let mut session = driver
         .establish_tunnel_session_with_hyper_client(
             &client_config,
             &persistent_state,
-            &mut backend,
+            &backend,
             now_secs,
         )
         .await
@@ -81,7 +81,7 @@ async fn hyper_backend_transfers_tunnel_ip_frames_after_hidden_upgrade() {
 
     let echoed = session
         .exchange_tunnel_frames_with_hyper_client(
-            &mut backend,
+            &backend,
             &[Frame::IpData(vec![0x10, 0x20, 0x30, 0x40])],
             now_secs + 1,
         )

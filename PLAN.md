@@ -32,11 +32,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** First live user-test plumbing and latency fixes for the H2 baseline
-- **Latency impact:** material improvement for established-session TCP/TLS traffic over H2 by replacing the old once-per-second idle polling behavior with sub-second polling; macOS DNS updates should also take effect more reliably at connect time
-- **Bandwidth impact:** modest increase while a session is established because the H2 client now polls for inbound tunnel data at a sub-second cadence instead of only once per second
-- **CPU impact:** small steady-state increase on active sessions from the tighter H2 polling cadence, plus negligible connect-time overhead for macOS resolver refresh and explicit Linux tunnel-subnet route installation
-- **Notes:** the current user-testing focus is on post-establishment internet reachability and usable latency now that H2 session establishment itself works. The next runtime fixes are aimed at making full-tunnel DNS/egress behavior match the previously working v1 operational baseline without regressing the public-session architecture.
+- **Chunk:** First live user-test plumbing and transport rewrite for the H2 baseline
+- **Latency impact:** material improvement for established-session TCP/TLS traffic over H2 by replacing timer-driven idle polling with a same-connection long-lived downlink wait request; macOS DNS updates should also take effect more reliably at connect time
+- **Bandwidth impact:** lower idle request churn than the interim sub-second polling fix because the client now keeps one outstanding downlink request instead of re-polling on a timer
+- **CPU impact:** modest steady-state cost from maintaining the dedicated H2 downlink wait path and wakeups, but lower pointless request turnover than the timer-poll bridge; explicit Linux tunnel-subnet route installation and macOS resolver refresh remain negligible
+- **Notes:** the current user-testing focus is on post-establishment internet reachability and usable latency now that H2 session establishment itself works. The live H2 runtime has now been moved away from the timer-poll bridge toward a prompt same-connection downlink design, and the next runtime fixes are aimed at validating that this matches the previously working v1 operational baseline without regressing the public-session architecture.
 
 ## Core v2 design rules
 
@@ -67,13 +67,13 @@
 | Hidden-upgrade core | active | `apt-admission` now has transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, slot bindings, masked fallback tickets, and direct envelope APIs throughout the crate; the old packet-wrapper compatibility layer has been deleted, and the next step is keeping future H3 work on the same wrapper-free surface | Moderate implementation risk; core enabler |
 | Structured v2 transport config | active | Draft v2 public-session transport blocks and deployment metadata now resolve into `apt-origin` starter surface plans; next step is feeding those plans into future bundle/origin/surface orchestration without changing the live runtime path yet | Minor config churn |
 | Origin family definitions | active | `apt-origin` now carries API-sync and object/origin starter profiles with request graphs, legal upgrade slots, concurrency/timing envelopes, idle rules, and shadow-lane hints; `apt-surface-h2` is the first consumer | No runtime impact yet |
-| First public-session carrier | active | `apt-surface-h2` now provides the API-sync surface/body/slot scaffold, modeled request authority, surface-derived public-session context, HTTP request/response codecs, and established-session tunnel-packet slot helpers; `apt-runtime` owns bridge helpers plus client/request-handler orchestration, connection-local H2 session state, concrete Hyper H2 backends for both `h2c` and rustls/TLS, and plan-driven client trust wiring. The immediate next step is closing the first real operator-testing gaps (full-tunnel DNS/egress correctness, origin-backed deployment polish, and more fixture-backed validation) before Phase E H3 work expands the same pattern; the shipped apps/docs/bundles now assume H2 directly and no longer expose legacy carrier toggles | Main v2 milestone; in live user-testing/fixup mode |
+| First public-session carrier | active | `apt-surface-h2` now provides the API-sync surface/body/slot scaffold, modeled request authority, surface-derived public-session context, HTTP request/response codecs, and established-session tunnel-packet slot helpers; `apt-runtime` owns bridge helpers plus client/request-handler orchestration, connection-local H2 session state, concrete Hyper H2 backends for both `h2c` and rustls/TLS, plan-driven client trust wiring, Linux/macOS full-tunnel plumbing fixes, and a same-connection long-lived H2 downlink wait path that replaces the earlier timer-poll bridge. The immediate next step is validating this against real user traffic and continuing origin-backed deployment polish before Phase E H3 work expands the same pattern; the shipped apps/docs/bundles now assume H2 directly and no longer expose legacy carrier toggles | Main v2 milestone; in live user-testing/fixup mode |
 | Second public-session carrier | pending | Ship the H3 public-session sibling after H2 is stable | Major feature; higher protocol complexity |
 | Cover compiler + budget controller | pending | Add machine-readable cover profiles, session plans, and bounded indistinguishability budgets | Bounded CPU/latency overhead |
 
 ## Next tasks
 
-1. Close the current first-user-test H2 reachability gaps so a connected session reliably delivers full-tunnel DNS and internet egress on the supported Linux-server/macOS-client path.
+1. Validate the new same-connection H2 downlink design against real operator traffic so a connected session reliably delivers usable full-tunnel DNS and internet egress on the supported Linux-server/macOS-client path.
 2. Continue interactive H2 API-sync user testing now that products, bundles, docs, and the live runtime all speak the H2-first flow directly.
 3. Extend the H2 surface-plan wiring from self-signed lab TLS into richer origin-backed deployment behavior (for example stronger trust-source handling and backend/origin routing semantics) without moving HTTP encoding into runtime code.
 4. Feed `apt-harness` with more realistic captured/session-derived H2 corpora now that the repo can ingest backend-trace fixtures and compare TLS-backed vs cleartext lab sessions explicitly.

@@ -9,7 +9,8 @@ mod api_sync;
 mod json_slot;
 
 pub use self::api_sync::{
-    ApiSyncH2Carrier, ApiSyncRequest, ApiSyncRequestTunnelEnvelope, ApiSyncRequestUpgradeEnvelope,
-    ApiSyncResponse, ApiSyncResponseTunnelEnvelope, ApiSyncResponseUpgradeEnvelope, ApiSyncSurface,
-    SurfaceH2Error, API_SYNC_REQUEST_SLOT, API_SYNC_RESPONSE_SLOT,
+    ApiSyncH2Carrier, ApiSyncRequest, ApiSyncRequestTunnelEnvelope,
+    ApiSyncRequestTunnelPollEnvelope, ApiSyncRequestUpgradeEnvelope, ApiSyncResponse,
+    ApiSyncResponseTunnelEnvelope, ApiSyncResponseUpgradeEnvelope, ApiSyncSurface, SurfaceH2Error,
+    API_SYNC_REQUEST_SLOT, API_SYNC_RESPONSE_SLOT,
 };

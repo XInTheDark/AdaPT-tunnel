@@ -13,8 +13,8 @@ mod tests;
 mod transport;
 
 pub use self::transport::{
-    ApiSyncH2Carrier, ApiSyncRequestTunnelEnvelope, ApiSyncRequestUpgradeEnvelope,
-    ApiSyncResponseTunnelEnvelope, ApiSyncResponseUpgradeEnvelope,
+    ApiSyncH2Carrier, ApiSyncRequestTunnelEnvelope, ApiSyncRequestTunnelPollEnvelope,
+    ApiSyncRequestUpgradeEnvelope, ApiSyncResponseTunnelEnvelope, ApiSyncResponseUpgradeEnvelope,
 };
 
 pub const API_SYNC_REQUEST_SLOT: &str = "request-json-metadata";
@@ -221,6 +221,21 @@ impl ApiSyncSurface {
         &self,
         request: &ApiSyncRequest,
     ) -> Result<Option<ApiSyncRequestTunnelEnvelope>, SurfaceH2Error> {
+        self.extract_request_capsule(request)
+    }
+
+    pub fn embed_request_tunnel_poll_envelope(
+        &self,
+        request: &mut ApiSyncRequest,
+        tunnel: &ApiSyncRequestTunnelPollEnvelope,
+    ) -> Result<(), SurfaceH2Error> {
+        self.embed_request_capsule(request, tunnel)
+    }
+
+    pub fn extract_request_tunnel_poll_envelope(
+        &self,
+        request: &ApiSyncRequest,
+    ) -> Result<Option<ApiSyncRequestTunnelPollEnvelope>, SurfaceH2Error> {
         self.extract_request_capsule(request)
     }
 
