@@ -38,131 +38,8 @@ pub(super) fn client_credential(config: &ResolvedClientConfig) -> ClientCredenti
     }
 }
 
-pub(super) fn client_carrier_attempt_order(
-    config: &ResolvedClientConfig,
-    persistent_state: &ClientPersistentState,
-) -> Result<Vec<CarrierBinding>, RuntimeError> {
-    if config.strict_preferred_carrier {
-        return match config.preferred_carrier {
-            crate::config::RuntimeCarrierPreference::Auto => Ok(
-                carrier_attempt_order_without_strict_override(config, persistent_state),
-            ),
-            crate::config::RuntimeCarrierPreference::D1 => Ok(vec![CarrierBinding::D1DatagramUdp]),
-            crate::config::RuntimeCarrierPreference::D2 => {
-                if config.d2.is_some() {
-                    Ok(vec![CarrierBinding::D2EncryptedDatagram])
-                } else {
-                    Err(RuntimeError::InvalidConfig(
-                        "D2 was requested explicitly, but no D2 endpoint/certificate is configured"
-                            .to_string(),
-                    ))
-                }
-            }
-            crate::config::RuntimeCarrierPreference::S1 => Ok(
-                carrier_attempt_order_without_strict_override(config, persistent_state),
-            ),
-        };
-    }
-
-    Ok(carrier_attempt_order_without_strict_override(
-        config,
-        persistent_state,
-    ))
-}
-
-fn carrier_attempt_order_without_strict_override(
-    config: &ResolvedClientConfig,
-    persistent_state: &ClientPersistentState,
-) -> Vec<CarrierBinding> {
-    let mut public_session_families = Vec::new();
-    if config.enable_d2_fallback && config.d2.is_some() {
-        public_session_families.push(CarrierBinding::D2EncryptedDatagram);
-    }
-    let mut available = public_session_families.clone();
-    available.push(CarrierBinding::D1DatagramUdp);
-    let explicit = config.preferred_carrier.binding();
-    let remembered = persistent_state
-        .active_network_profile()
-        .and_then(|profile| profile.remembered_profile.as_ref())
-        .map(|profile| profile.preferred_carrier)
-        .or(persistent_state.last_successful_carrier);
-    let mut order = Vec::new();
-    if let Some(binding) = explicit {
-        if available.contains(&binding) {
-            order.push(binding);
-        }
-    }
-    if let Some(binding) = remembered {
-        if available.contains(&binding) && !order.contains(&binding) {
-            order.push(binding);
-        }
-    }
-    for binding in public_session_families {
-        if available.contains(&binding) && !order.contains(&binding) {
-            order.push(binding);
-        }
-    }
-    if available.contains(&CarrierBinding::D1DatagramUdp)
-        && !order.contains(&CarrierBinding::D1DatagramUdp)
-    {
-        order.push(CarrierBinding::D1DatagramUdp);
-    }
-    order
-}
-
-pub(super) fn next_standby_candidate(
-    config: &ResolvedClientConfig,
-    adaptive: &AdaptiveDatapath,
-    paths: &HashMap<u64, ClientPathState>,
-    active_path_id: u64,
-) -> Option<CarrierBinding> {
-    let active_binding = paths.get(&active_path_id)?.binding;
-    adaptive.fallback_order().into_iter().find(|binding| {
-        runtime_supports_client_binding(config, *binding)
-            && !matches!(binding, CarrierBinding::H1RequestResponse)
-            && *binding != active_binding
-            && (*binding != CarrierBinding::D2EncryptedDatagram
-                || (config.enable_d2_fallback && config.d2.is_some()))
-            && !paths.values().any(|path| path.binding == *binding)
-    })
-}
-
-fn runtime_supports_client_binding(config: &ResolvedClientConfig, binding: CarrierBinding) -> bool {
-    match binding {
-        CarrierBinding::D1DatagramUdp => true,
-        CarrierBinding::D2EncryptedDatagram => config.enable_d2_fallback && config.d2.is_some(),
-        CarrierBinding::S1EncryptedStream | CarrierBinding::H1RequestResponse => false,
-    }
-}
-
-pub(super) fn schedule_next_standby_probe(
-    now: u64,
-    override_secs: u64,
-    adaptive: &AdaptiveDatapath,
-) -> u64 {
-    let base = if override_secs > 0 {
-        override_secs
-    } else {
-        adaptive.standby_health_check_secs()
-    }
-    .max(10);
-    now.saturating_add(jittered_interval_secs(base))
-}
-
-pub(super) fn jittered_interval_secs(base: u64) -> u64 {
-    let jitter = rand::random::<u8>() % 41;
-    let percent = 80 + u64::from(jitter);
-    base.saturating_mul(percent) / 100
-}
-
 pub(super) fn client_route_exempt_endpoints(config: &ResolvedClientConfig) -> Vec<SocketAddr> {
-    let mut endpoints = vec![config.server_addr];
-    if let Some(d2) = &config.d2 {
-        if !endpoints.contains(&d2.endpoint.addr) {
-            endpoints.push(d2.endpoint.addr);
-        }
-    }
-    endpoints
+    vec![config.server_addr]
 }
 
 pub(super) fn persist_client_learning(
@@ -203,11 +80,6 @@ pub(super) fn tunnel_addresses(transport: &SessionTransportParameters) -> Vec<Ip
         addresses.push(IpAddr::V6(ipv6));
     }
     addresses
-}
-
-pub(super) fn candidate_epoch_slots(now_secs: u64) -> [u64; 3] {
-    let slot = now_secs / DEFAULT_ADMISSION_EPOCH_SLOT_SECS;
-    [slot.saturating_sub(1), slot, slot.saturating_add(1)]
 }
 
 pub(super) fn now_secs() -> u64 {

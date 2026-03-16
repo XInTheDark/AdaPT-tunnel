@@ -136,8 +136,6 @@ impl ClientConfig {
             authority: self.authority.clone(),
             surface_plan,
             mode: self.mode,
-            preferred_carrier: RuntimeCarrierPreference::Auto,
-            strict_preferred_carrier: false,
             auth_profile: self.auth_profile,
             endpoint_id: EndpointId::new(self.endpoint_id.clone()),
             admission_key: load_key32(&self.admission_key)?,
@@ -148,8 +146,6 @@ impl ClientConfig {
             interface_name: self.interface_name.clone(),
             routes: self.routes.clone(),
             use_server_pushed_routes: self.use_server_pushed_routes,
-            enable_d2_fallback: false,
-            d2: None,
             session_policy: self.session_policy.clone(),
             allow_session_migration: self.allow_session_migration,
             standby_health_check_secs: self.standby_health_check_secs,
@@ -165,26 +161,11 @@ impl ClientConfig {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ResolvedRemoteEndpoint {
-    pub original: String,
-    pub addr: SocketAddr,
-    pub server_name: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ResolvedClientD2Config {
-    pub endpoint: ResolvedRemoteEndpoint,
-    pub server_certificate_der: Vec<u8>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedClientConfig {
     pub server_addr: SocketAddr,
     pub authority: String,
     pub surface_plan: V2ClientSurfacePlan,
     pub mode: Mode,
-    pub preferred_carrier: RuntimeCarrierPreference,
-    pub strict_preferred_carrier: bool,
     pub auth_profile: AuthProfile,
     pub endpoint_id: EndpointId,
     pub admission_key: [u8; 32],
@@ -195,8 +176,6 @@ pub struct ResolvedClientConfig {
     pub interface_name: Option<String>,
     pub routes: Vec<IpNet>,
     pub use_server_pushed_routes: bool,
-    pub enable_d2_fallback: bool,
-    pub d2: Option<ResolvedClientD2Config>,
     pub session_policy: SessionPolicy,
     pub allow_session_migration: bool,
     pub standby_health_check_secs: u64,

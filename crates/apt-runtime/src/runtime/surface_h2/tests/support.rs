@@ -1,5 +1,4 @@
 use super::super::*;
-use crate::config::RuntimeCarrierPreference;
 use apt_admission::{AdmissionConfig, AdmissionServerSecrets, CredentialStore};
 use apt_crypto::generate_static_keypair;
 use apt_origin::{OriginFamilyProfile, PublicSessionTransport};
@@ -31,8 +30,6 @@ pub(super) fn test_client_config() -> ResolvedClientConfig {
         authority: "api.example.com".to_string(),
         surface_plan: test_client_surface_plan("198.51.100.10:443", "api.example.com"),
         mode: Mode::STEALTH,
-        preferred_carrier: RuntimeCarrierPreference::Auto,
-        strict_preferred_carrier: false,
         auth_profile: AuthProfile::SharedDeployment,
         endpoint_id: EndpointId::new("edge-h2"),
         admission_key: [0x11; 32],
@@ -43,8 +40,6 @@ pub(super) fn test_client_config() -> ResolvedClientConfig {
         interface_name: None,
         routes: Vec::new(),
         use_server_pushed_routes: true,
-        enable_d2_fallback: false,
-        d2: None,
         session_policy: SessionPolicy::default(),
         allow_session_migration: true,
         standby_health_check_secs: 0,

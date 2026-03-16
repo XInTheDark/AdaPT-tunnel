@@ -1,49 +1,10 @@
 use super::*;
-use apt_types::PacingFamily;
-
 const LONG_IDLE_RESUME_TRIGGER_MS: u64 = 5_000;
 const MAX_STREAM_PACKING_TARGET_BYTES: usize = 1_600;
 const MIN_STREAM_PACKING_TARGET_BYTES: usize = 640;
-const INTERACTIVE_FRAME_BYTES: usize = 384;
 const BULK_PADDING_THRESHOLD_BYTES: usize = 1_200;
 
 impl AdaptiveDatapath {
-    pub fn fallback_order(&self) -> Vec<CarrierBinding> {
-        let mut order = Vec::new();
-        if let Some(carrier) = self.preferred_carrier {
-            push_unique(&mut order, carrier);
-        }
-        if let Some(carrier) = self
-            .remembered_profile
-            .as_ref()
-            .map(|profile| profile.preferred_carrier)
-        {
-            push_unique(&mut order, carrier);
-        }
-        for carrier in &self.persona.scheduler.fallback_order {
-            push_unique(&mut order, *carrier);
-        }
-        let controller_order = self.controller.fallback_order(self.chosen_carrier);
-        for carrier in controller_order {
-            push_unique(&mut order, carrier);
-        }
-        if self.controller.should_migrate() {
-            if let Some(index) = order.iter().position(|value| *value == self.chosen_carrier) {
-                let active = order.remove(index);
-                order.push(active);
-            }
-        }
-        order
-    }
-
-    pub fn standby_health_check_secs(&self) -> u64 {
-        u64::from(self.persona.standby_health_check_secs)
-    }
-
-    pub fn migration_threshold(&self) -> u8 {
-        self.persona.scheduler.migration_threshold
-    }
-
     pub fn burst_cap(&self, binding: CarrierBinding, now_millis: u64) -> usize {
         if !matches!(binding, CarrierBinding::S1EncryptedStream) {
             return 1;
@@ -138,68 +99,6 @@ impl AdaptiveDatapath {
         }
     }
 
-    pub fn pacing_delay_ms(
-        &self,
-        binding: CarrierBinding,
-        frames: &[Frame],
-        batch_count: usize,
-        batch_index: usize,
-        now_millis: u64,
-    ) -> u16 {
-        let mode = self.behavior_mode();
-        if mode == Mode::SPEED || !frames.iter().any(|frame| matches!(frame, Frame::IpData(_))) {
-            return 0;
-        }
-        let in_idle_resume = self.in_idle_resume_window(now_millis);
-        if binding.is_datagram() && !in_idle_resume {
-            return 0;
-        }
-        let (payload_bytes, ip_frames) = frame_metrics(frames);
-        let interactive = payload_bytes <= INTERACTIVE_FRAME_BYTES && ip_frames <= 1;
-        let total_cap = if interactive {
-            interactive_latency_cap_ms(mode.value())
-        } else {
-            bulk_latency_cap_ms(mode.value())
-        };
-        if total_cap == 0 {
-            return 0;
-        }
-        let total_delay = match self.persona.scheduler.pacing_family {
-            PacingFamily::Opportunistic => {
-                if in_idle_resume && mode.value() >= 60 {
-                    total_cap.saturating_mul(25) / 100
-                } else {
-                    0
-                }
-            }
-            PacingFamily::Bursty => {
-                if batch_count <= 1 && !in_idle_resume {
-                    0
-                } else if in_idle_resume {
-                    total_cap.saturating_mul(35) / 100
-                } else {
-                    total_cap.saturating_mul(25) / 100
-                }
-            }
-            PacingFamily::Smooth => {
-                if in_idle_resume {
-                    total_cap.saturating_mul(70) / 100
-                } else {
-                    total_cap.saturating_mul(55) / 100
-                }
-            }
-        };
-        if total_delay == 0 {
-            return 0;
-        }
-        let per_batch = ceil_div_u16(total_delay, u16::try_from(batch_count.max(1)).unwrap_or(1));
-        match self.persona.scheduler.pacing_family {
-            PacingFamily::Bursty if batch_index == 0 && !in_idle_resume => 0,
-            _ if in_idle_resume => per_batch.max(1),
-            _ => per_batch,
-        }
-    }
-
     pub(super) fn regenerate_persona(&mut self) {
         self.path_profile = self
             .local_normality
@@ -277,61 +176,11 @@ pub(super) fn generate_persona(
     })
 }
 
-fn push_unique(order: &mut Vec<CarrierBinding>, carrier: CarrierBinding) {
-    if !order.contains(&carrier) {
-        order.push(carrier);
-    }
-}
-
 fn probation_padding_budget_bps(mode: u8, steady_budget_bps: u16) -> u16 {
     if mode <= 50 {
         steady_budget_bps
     } else {
         segment_lerp_u16(mode, 50, steady_budget_bps.max(200), 100, 2_000)
-    }
-}
-
-fn interactive_latency_cap_ms(mode: u8) -> u16 {
-    if mode == Mode::MIN {
-        0
-    } else if mode <= 50 {
-        segment_lerp_u16(mode, 0, 0, 50, 3)
-    } else {
-        segment_lerp_u16(mode, 50, 3, 100, 10)
-    }
-}
-
-fn bulk_latency_cap_ms(mode: u8) -> u16 {
-    if mode == Mode::MIN {
-        0
-    } else if mode <= 50 {
-        segment_lerp_u16(mode, 0, 0, 50, 10)
-    } else {
-        segment_lerp_u16(mode, 50, 10, 100, 40)
-    }
-}
-
-fn frame_metrics(frames: &[Frame]) -> (usize, usize) {
-    frames
-        .iter()
-        .fold((0, 0), |(bytes, ip_count), frame| match frame {
-            Frame::IpData(packet) => (bytes.saturating_add(packet.len()), ip_count + 1),
-            Frame::Padding(bytes_) => (bytes.saturating_add(bytes_.len()), ip_count),
-            Frame::CtrlAck { .. } => (bytes.saturating_add(16), ip_count),
-            Frame::PathChallenge { .. } | Frame::PathResponse { .. } => {
-                (bytes.saturating_add(24), ip_count)
-            }
-            Frame::SessionUpdate { .. } => (bytes.saturating_add(48), ip_count),
-            Frame::Ping => (bytes.saturating_add(8), ip_count),
-            Frame::Close { reason, .. } => (bytes.saturating_add(16 + reason.len()), ip_count),
-        })
-}
-
-fn ceil_div_u16(value: u16, divisor: u16) -> u16 {
-    if divisor <= 1 {
-        value
-    } else {
-        (value.saturating_add(divisor - 1)) / divisor
     }
 }
 

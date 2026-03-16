@@ -36,7 +36,6 @@ pub(super) async fn run_client_h2_session_loop(
             persisted_mode: persistent_state
                 .active_network_profile()
                 .map(|profile| profile.last_mode),
-            preferred_carrier: Some(CarrierBinding::S1EncryptedStream),
             keepalive_base_interval_secs: config.keepalive_secs,
         },
         admission_path_profile(

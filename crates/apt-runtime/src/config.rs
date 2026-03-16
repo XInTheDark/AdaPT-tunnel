@@ -27,11 +27,11 @@ use self::io::*;
 
 pub(crate) use self::io::resolve_socket_addr;
 pub use self::{
-    client::{ClientConfig, ResolvedClientConfig, ResolvedClientD2Config, ResolvedRemoteEndpoint},
+    client::{ClientConfig, ResolvedClientConfig},
     io::{encode_key_hex, load_key32},
     server::{
-        AuthorizedPeerConfig, ResolvedAuthorizedPeer, ResolvedServerConfig, ResolvedServerD2Config,
-        ServerConfig, ServerSessionExtension, SessionTransportParameters,
+        AuthorizedPeerConfig, ResolvedAuthorizedPeer, ResolvedServerConfig, ServerConfig,
+        ServerSessionExtension, SessionTransportParameters,
     },
     state::{
         ClientPersistentState, PersistedIdleOutcomeSummary, PersistedKeepaliveLearningState,
@@ -90,10 +90,6 @@ fn default_state_path() -> PathBuf {
     PathBuf::from(DEFAULT_STATE_PATH)
 }
 
-fn default_enable_d2_fallback() -> bool {
-    true
-}
-
 fn default_allow_session_migration() -> bool {
     true
 }
@@ -102,40 +98,6 @@ fn default_standby_health_check_secs() -> u64 {
     0
 }
 
-fn default_preferred_carrier() -> RuntimeCarrierPreference {
-    RuntimeCarrierPreference::Auto
-}
-
-fn default_auth_profile() -> AuthProfile {
-    AuthProfile::SharedDeployment
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "kebab-case")]
-pub enum RuntimeCarrierPreference {
-    #[default]
-    Auto,
-    D1,
-    D2,
-    S1,
-}
-
-impl RuntimeCarrierPreference {
-    #[must_use]
-    pub const fn binding(self) -> Option<CarrierBinding> {
-        match self {
-            Self::Auto => None,
-            Self::D1 => Some(CarrierBinding::D1DatagramUdp),
-            Self::D2 => Some(CarrierBinding::D2EncryptedDatagram),
-            Self::S1 => None,
-        }
-    }
-
-    #[must_use]
-    pub const fn normalize_legacy(self) -> Self {
-        match self {
-            Self::S1 => Self::Auto,
-            _ => self,
-        }
-    }
+fn default_auth_profile() -> apt_types::AuthProfile {
+    apt_types::AuthProfile::SharedDeployment
 }

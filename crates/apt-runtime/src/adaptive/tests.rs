@@ -5,7 +5,6 @@ fn runtime_config(mode: Mode) -> AdaptiveRuntimeConfig {
     AdaptiveRuntimeConfig {
         negotiated_mode: mode,
         persisted_mode: None,
-        preferred_carrier: None,
         keepalive_base_interval_secs: 25,
     }
 }
@@ -74,7 +73,6 @@ fn stable_delivery_reduces_seeded_conservative_bias() {
         AdaptiveRuntimeConfig {
             negotiated_mode: Mode::BALANCED,
             persisted_mode: Some(Mode::new(72).unwrap()),
-            preferred_carrier: None,
             keepalive_base_interval_secs: 25,
         },
         PathProfile::unknown(),
@@ -284,82 +282,4 @@ fn constrained_high_mode_prefers_smaller_bursts_and_packing_targets() {
     adaptive.begin_outbound_data_send(10_000);
     assert!(adaptive.burst_cap(CarrierBinding::S1EncryptedStream, 10_000) <= 2);
     assert!(adaptive.soft_packing_target_bytes(CarrierBinding::S1EncryptedStream) < 900);
-}
-
-#[test]
-fn pacing_delay_respects_mode_caps() {
-    let balanced_context = build_client_network_context("edge-a", "route-a");
-    let mut balanced = AdaptiveDatapath::new_client(
-        CarrierBinding::S1EncryptedStream,
-        [59_u8; 32],
-        balanced_context.clone(),
-        Some(bootstrapped_profile(balanced_context)),
-        None,
-        runtime_config(Mode::BALANCED),
-        PathProfile::unknown(),
-        None,
-        0,
-    );
-    balanced.persona.scheduler.pacing_family = apt_types::PacingFamily::Smooth;
-    let interactive_delay = balanced.pacing_delay_ms(
-        CarrierBinding::S1EncryptedStream,
-        &[Frame::IpData(vec![0_u8; 200])],
-        1,
-        0,
-        1_000,
-    );
-    assert!(interactive_delay <= 3);
-
-    let stealth_context = build_client_network_context("edge-a", "route-a");
-    let mut stealth = AdaptiveDatapath::new_client(
-        CarrierBinding::S1EncryptedStream,
-        [61_u8; 32],
-        stealth_context,
-        None,
-        None,
-        runtime_config(Mode::STEALTH),
-        PathProfile::unknown(),
-        None,
-        0,
-    );
-    stealth.persona.scheduler.pacing_family = apt_types::PacingFamily::Smooth;
-    let bulk_delay = stealth.pacing_delay_ms(
-        CarrierBinding::S1EncryptedStream,
-        &[
-            Frame::IpData(vec![0_u8; 1_200]),
-            Frame::IpData(vec![0_u8; 1_200]),
-        ],
-        1,
-        0,
-        1_000,
-    );
-    assert!(bulk_delay <= 40);
-    assert!(bulk_delay > 0);
-}
-
-#[test]
-fn datagram_paths_skip_steady_per_packet_pacing() {
-    let context = build_client_network_context("edge-a", "route-a");
-    let mut adaptive = AdaptiveDatapath::new_client(
-        CarrierBinding::D1DatagramUdp,
-        [67_u8; 32],
-        context,
-        Some(bootstrapped_profile(build_client_network_context(
-            "edge-a", "route-a",
-        ))),
-        None,
-        runtime_config(Mode::STEALTH),
-        PathProfile::unknown(),
-        None,
-        0,
-    );
-    adaptive.persona.scheduler.pacing_family = apt_types::PacingFamily::Smooth;
-    let delay = adaptive.pacing_delay_ms(
-        CarrierBinding::D1DatagramUdp,
-        &[Frame::IpData(vec![0_u8; 1_200])],
-        1,
-        0,
-        1_000,
-    );
-    assert_eq!(delay, 0);
 }

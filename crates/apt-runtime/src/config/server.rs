@@ -143,7 +143,6 @@ impl ServerConfig {
             private_key_spec: self.private_key.clone(),
             surface_plan,
             mode: self.mode,
-            d2: None,
             endpoint_id: EndpointId::new(self.endpoint_id.clone()),
             admission_key: load_key32(&self.admission_key)?,
             server_static_private_key: load_key32(&self.server_static_private_key)?,
@@ -213,14 +212,6 @@ impl ResolvedAuthorizedPeer {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ResolvedServerD2Config {
-    pub bind: SocketAddr,
-    pub public_endpoint: String,
-    pub certificate_spec: String,
-    pub private_key_spec: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedServerConfig {
     pub bind: SocketAddr,
     pub public_endpoint: String,
@@ -229,7 +220,6 @@ pub struct ResolvedServerConfig {
     pub private_key_spec: String,
     pub surface_plan: V2ServerSurfacePlan,
     pub mode: Mode,
-    pub d2: Option<ResolvedServerD2Config>,
     pub endpoint_id: EndpointId,
     pub admission_key: [u8; 32],
     pub server_static_private_key: [u8; 32],
