@@ -93,9 +93,11 @@ where
     N: Fn() -> u64 + Clone + Send + Sync + 'static,
     I: HyperRead + HyperWrite + Unpin + Send + 'static,
 {
+    let connection_state = Arc::new(Mutex::new(ApiSyncH2ConnectionState::default()));
     let service = service_fn(move |request| {
         let request_handler = request_handler.clone();
         let admission = Arc::clone(&admission);
+        let connection_state = Arc::clone(&connection_state);
         let public_service = Arc::clone(&public_service);
         let source_id = source_id.clone();
         let now_fn = now_fn.clone();
@@ -103,6 +105,7 @@ where
             let response = match handle_http_request(
                 request_handler,
                 admission,
+                connection_state,
                 public_service,
                 source_id,
                 now_fn(),
@@ -125,6 +128,7 @@ where
 async fn handle_http_request<S>(
     request_handler: ApiSyncH2RequestHandler,
     admission: Arc<Mutex<AdmissionServer>>,
+    connection_state: Arc<Mutex<ApiSyncH2ConnectionState>>,
     public_service: Arc<Mutex<S>>,
     source_id: String,
     now_secs: u64,
@@ -136,9 +140,11 @@ where
     let request = collect_http_request(request).await?;
     let api_request = request_handler.surface().decode_http_request(&request)?;
     let mut admission = admission.lock().await;
+    let mut connection_state = connection_state.lock().await;
     let mut public_service = public_service.lock().await;
-    let handled = request_handler.handle_request(
+    let handled = request_handler.handle_request_with_state(
         &mut admission,
+        &mut connection_state,
         &mut *public_service,
         &api_request,
         &source_id,

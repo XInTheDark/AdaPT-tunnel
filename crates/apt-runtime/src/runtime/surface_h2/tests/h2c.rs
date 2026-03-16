@@ -1,4 +1,5 @@
 use super::{super::*, support::*};
+use apt_tunnel::Frame;
 use serde_json::json;
 use tokio::net::TcpStream;
 
@@ -49,6 +50,49 @@ async fn hyper_backend_preserves_plain_public_service_semantics() {
     assert_eq!(response.body["state"]["accepted_mode"], 7);
     assert_eq!(response.body["state"]["authority"], "api.example.com");
     assert!(response.body["server_hints"]["next_cursor"].is_null());
+    drop(backend);
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn hyper_backend_transfers_tunnel_ip_frames_after_hidden_upgrade() {
+    let now_secs = 1_700_300_200;
+    let (admission, server_static_public_key) = test_server();
+    let (addr, server_task) =
+        spawn_runtime_h2_server_with_public_service(admission, now_secs, EchoTunnelPublicService)
+            .await;
+    let surface = ApiSyncSurface::starter();
+    let driver = ApiSyncH2ClientDriver::new(surface);
+    let mut client_config = test_client_config();
+    client_config.server_static_public_key = server_static_public_key;
+    let persistent_state = ClientPersistentState::default();
+
+    let stream = TcpStream::connect(addr).await.unwrap();
+    let mut backend = ApiSyncH2HyperClient::connect(stream).await.unwrap();
+    let mut session = driver
+        .establish_tunnel_session_with_hyper_client(
+            &client_config,
+            &persistent_state,
+            &mut backend,
+            now_secs,
+        )
+        .await
+        .unwrap();
+
+    let echoed = session
+        .exchange_tunnel_frames_with_hyper_client(
+            &mut backend,
+            &[Frame::IpData(vec![0x10, 0x20, 0x30, 0x40])],
+            now_secs + 1,
+        )
+        .await
+        .unwrap()
+        .expect("expected echoed tunnel response");
+
+    assert_eq!(
+        echoed.frames,
+        vec![Frame::IpData(vec![0x10, 0x20, 0x30, 0x40])]
+    );
     drop(backend);
     server_task.abort();
 }

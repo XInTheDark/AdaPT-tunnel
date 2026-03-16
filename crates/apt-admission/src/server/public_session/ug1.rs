@@ -165,7 +165,7 @@ impl AdmissionServer {
                         &self.config.endpoint_id,
                         active_binding,
                         UpgradeMessagePhase::Response,
-                        "legacy-ug2",
+                        "baseline-ug2",
                         ug1.slot_binding.epoch_slot,
                     ),
                 },
@@ -186,7 +186,7 @@ impl AdmissionServer {
             let encoded_len = response_envelope.nonce.len() + response_envelope.ciphertext.len();
             if encoded_len > carrier.anti_amplification_budget(received_len) {
                 return Err(AdmissionError::Validation(
-                    "s1 exceeds anti-amplification budget",
+                    "ug2 exceeds anti-amplification budget",
                 ));
             }
             Ok(response_envelope)
@@ -227,6 +227,6 @@ impl AdmissionServer {
                 return Ok((ug1, resolved));
             }
         }
-        Err(AdmissionError::Validation("unable to decrypt c0"))
+        Err(AdmissionError::Validation("unable to decrypt ug1 envelope"))
     }
 }

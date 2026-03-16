@@ -1,5 +1,5 @@
 use super::*;
-use crate::packet::{NoiseInitiatorPayload, NoiseResponderPayload};
+use crate::payload::{NoiseInitiatorPayload, NoiseResponderPayload};
 
 fn handshake_prologue(
     endpoint_id: &EndpointId,
@@ -52,7 +52,7 @@ fn initiate_ug1_impl<C: CarrierProfile>(
 ) -> Result<PreparedUg1Envelope, AdmissionError> {
     if request.preferred_carrier != carrier.binding() {
         return Err(AdmissionError::Validation(
-            "carrier mismatch for initiate_c0",
+            "carrier mismatch for initiate_ug1",
         ));
     }
     if !request.supported_carriers.contains(&carrier.binding()) {
@@ -98,10 +98,10 @@ fn initiate_ug1_impl<C: CarrierProfile>(
             carrier.binding(),
             public_session_context.as_ref(),
             UpgradeMessagePhase::Request,
-            "legacy-ug1",
+            "baseline-ug1",
             current_epoch_slot,
         ),
-        padding: random_padding(request.c0_padding_len),
+        padding: random_padding(request.ug1_padding_len),
     };
     let lookup_hint = credential
         .enable_lookup_hint
@@ -129,7 +129,7 @@ fn initiate_ug1_impl<C: CarrierProfile>(
             noise,
             _client_nonce: client_nonce,
             client_contribution: rand::random(),
-            c2_padding_len: request.c2_padding_len,
+            ug3_padding_len: request.ug3_padding_len,
             public_session_context,
         },
     })
@@ -192,7 +192,7 @@ impl ClientPendingS1 {
             carrier.binding(),
             self.public_session_context.as_ref(),
             UpgradeMessagePhase::Response,
-            "legacy-ug2",
+            "baseline-ug2",
             self.admission_epoch_slot,
         );
         if ug2.slot_binding != expected_response_binding {
@@ -241,10 +241,10 @@ impl ClientPendingS1 {
                 carrier.binding(),
                 self.public_session_context.as_ref(),
                 UpgradeMessagePhase::Request,
-                "legacy-ug3",
+                "baseline-ug3",
                 self.admission_epoch_slot,
             ),
-            padding: random_padding(self.c2_padding_len),
+            padding: random_padding(self.ug3_padding_len),
         };
         let request_aad = envelope_aad(
             &self.endpoint_id,
@@ -277,7 +277,7 @@ impl ClientPendingS1 {
 
 impl ClientPendingS3 {
     /// Returns the receive-direction control key that may be used to wrap the
-    /// outer carrier record for the encrypted `S3` confirmation.
+    /// outer carrier record for the encrypted final `UG4` confirmation.
     #[must_use]
     pub const fn confirmation_recv_ctrl_key(&self) -> &[u8; 32] {
         &self.secrets.recv_ctrl
@@ -303,7 +303,7 @@ impl ClientPendingS3 {
             carrier.binding(),
             self.public_session_context.as_ref(),
             UpgradeMessagePhase::Response,
-            "legacy-ug4",
+            "baseline-ug4",
             self.admission_epoch_slot,
         );
         if ug4.slot_binding != expected_response_binding {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::packet::CookiePayload;
+use crate::payload::CookiePayload;
 
 /// Server-side per-user credential.
 #[derive(Clone, Debug)]
@@ -141,8 +141,8 @@ pub struct AdmissionConfig {
     pub tunnel_mtu: u16,
     /// Rekey limits.
     pub rekey_limits: RekeyLimits,
-    /// Whether to issue sealed remembered-safe tickets.
-    pub issue_resumption_tickets: bool,
+    /// Whether to issue fresh masked fallback tickets.
+    pub issue_masked_fallback_tickets: bool,
     /// Lifetime of new remembered-safe tickets.
     pub ticket_lifetime_secs: u64,
 }
@@ -164,13 +164,13 @@ impl AdmissionConfig {
             idle_binding_hint_secs: 25,
             tunnel_mtu: 1_160,
             rekey_limits: RekeyLimits::recommended(),
-            issue_resumption_tickets: true,
+            issue_masked_fallback_tickets: true,
             ticket_lifetime_secs: 3_600,
         }
     }
 }
 
-/// Session material returned after `S3` is prepared or accepted.
+/// Session material returned after the final hidden-upgrade confirmation is prepared or accepted.
 #[derive(Clone, Debug)]
 pub struct EstablishedSession {
     /// Session identifier.
@@ -197,7 +197,7 @@ pub struct EstablishedSession {
     pub client_identity: Option<String>,
     /// Optional client static public key observed during the Noise handshake.
     pub client_static_public: Option<[u8; 32]>,
-    /// Optional encrypted extensions delivered during `S3`.
+    /// Optional encrypted extensions delivered during `UG4`.
     pub optional_extensions: Vec<Vec<u8>>,
 }
 
@@ -208,15 +208,6 @@ pub enum ServerResponse<T> {
     Reply(T),
     /// Invalid input should be handled carrier-natively.
     Drop(InvalidInputBehavior),
-}
-
-/// Server response after `C2`.
-#[derive(Debug)]
-pub struct EstablishedServerReply {
-    /// Encrypted `S3` packet.
-    pub packet: ServerConfirmationPacket,
-    /// Local session material.
-    pub session: EstablishedSession,
 }
 
 /// Server response after `UG3` without any public-wire packet wrapper.
@@ -347,7 +338,7 @@ impl AdmissionServer {
                 return Ok((ug1, resolved));
             }
         }
-        Err(AdmissionError::Validation("unable to decrypt c0"))
+        Err(AdmissionError::Validation("unable to decrypt ug1 envelope"))
     }
 
     pub(super) fn open_ug3_envelope(
@@ -365,7 +356,7 @@ impl AdmissionServer {
                 return Ok((ug3, resolved));
             }
         }
-        Err(AdmissionError::Validation("unable to decrypt c2"))
+        Err(AdmissionError::Validation("unable to decrypt ug3 envelope"))
     }
 
     pub(super) fn build_cookie_context(payload: &CookiePayload) -> Result<Vec<u8>, AdmissionError> {
@@ -398,7 +389,7 @@ impl AdmissionServer {
         path_profile: PathProfile,
         now_secs: u64,
     ) -> Result<Option<SealedEnvelope>, AdmissionError> {
-        if !self.config.issue_resumption_tickets {
+        if !self.config.issue_masked_fallback_tickets {
             return Ok(None);
         }
         let evidence = match path_profile.path {

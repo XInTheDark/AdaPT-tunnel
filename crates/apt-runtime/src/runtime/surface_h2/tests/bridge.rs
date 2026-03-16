@@ -1,4 +1,5 @@
 use super::{super::*, support::*};
+use apt_tunnel::Frame;
 use apt_types::Mode;
 use serde_json::json;
 use std::future::ready;
@@ -180,4 +181,64 @@ fn request_handler_treats_malformed_probe_slots_as_public_requests() {
         }
         other => panic!("expected public-only response, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn client_tunnel_session_exchanges_ip_frames_over_request_handler() {
+    let surface = ApiSyncSurface::starter();
+    let driver = ApiSyncH2ClientDriver::new(surface.clone());
+    let handler = ApiSyncH2RequestHandler::new(surface);
+    let now_secs = 1_700_200_500;
+    let (mut admission, server_static_public_key) = test_server();
+    let persistent_state = ClientPersistentState::default();
+    let mut client_config = test_client_config();
+    client_config.server_static_public_key = server_static_public_key;
+    let mut public_service = EchoTunnelPublicService;
+    let mut server_connection_state = ApiSyncH2ConnectionState::default();
+
+    let mut client_session = driver
+        .establish_tunnel_session(
+            &client_config,
+            &persistent_state,
+            |request| {
+                let handled = handler
+                    .handle_request_with_state(
+                        &mut admission,
+                        &mut server_connection_state,
+                        &mut public_service,
+                        &request,
+                        "h2-client-a",
+                        now_secs,
+                    )
+                    .unwrap();
+                ready(Ok(handled.into_response()))
+            },
+            now_secs,
+        )
+        .await
+        .unwrap();
+
+    let echoed = client_session
+        .exchange_tunnel_frames(
+            |request| {
+                let handled = handler
+                    .handle_request_with_state(
+                        &mut admission,
+                        &mut server_connection_state,
+                        &mut public_service,
+                        &request,
+                        "h2-client-a",
+                        now_secs + 1,
+                    )
+                    .unwrap();
+                ready(Ok(handled.into_response()))
+            },
+            &[Frame::IpData(vec![0xAA, 0xBB, 0xCC])],
+            now_secs + 1,
+        )
+        .await
+        .unwrap()
+        .expect("expected echoed tunnel packet");
+
+    assert_eq!(echoed.frames, vec![Frame::IpData(vec![0xAA, 0xBB, 0xCC])]);
 }

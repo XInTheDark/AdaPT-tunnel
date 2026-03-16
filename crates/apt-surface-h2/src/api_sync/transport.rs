@@ -1,19 +1,35 @@
 use apt_carriers::{CarrierProfile, InvalidInputBehavior};
 use apt_crypto::SealedEnvelope;
-use apt_types::CarrierBinding;
+use apt_types::{CarrierBinding, SessionId};
 use serde::{Deserialize, Serialize};
 
-/// Envelope embedded into a legal API-sync request slot.
+/// Envelope embedded into a legal API-sync request slot during hidden upgrade.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiSyncRequestUpgradeEnvelope {
     pub lookup_hint: Option<[u8; 8]>,
     pub envelope: SealedEnvelope,
 }
 
-/// Envelope embedded into a legal API-sync response slot.
+/// Envelope embedded into a legal API-sync response slot during hidden upgrade.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiSyncResponseUpgradeEnvelope {
     pub envelope: SealedEnvelope,
+}
+
+/// Connection-local tunnel packet embedded into a legal API-sync request slot
+/// after hidden upgrade has completed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiSyncRequestTunnelEnvelope {
+    pub session_id: SessionId,
+    pub packet: Vec<u8>,
+}
+
+/// Connection-local tunnel packet embedded into a legal API-sync response slot
+/// after hidden upgrade has completed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiSyncResponseTunnelEnvelope {
+    pub session_id: SessionId,
+    pub packet: Vec<u8>,
 }
 
 /// Carrier metadata for the H2 API-sync public-session family.

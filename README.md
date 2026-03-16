@@ -11,6 +11,21 @@ The project now has two layers:
 
 Implemented today:
 
+Experimental v2 public-session status on the `v2` branch:
+
+- `apt-admission` now runs entirely on wrapper-free `UG1` / `UG2` / `UG3` / `UG4` envelopes
+- `apt-surface-h2` + `apt-runtime` now complete the H2 API-sync baseline over both Hyper `h2c` and rustls/TLS H2
+- the H2 baseline now carries post-upgrade encrypted tunnel packets inside the same legal API-sync request/response JSON slots used for the hidden upgrade
+- `apt-harness` includes browser-vs-AdaPT H2 fixture support and backend-trace comparisons for the current H2 lab path
+
+Quick validation commands for the current H2 baseline:
+
+```bash
+cargo test -q -p apt-runtime runtime::surface_h2::tests::h2c
+cargo test -q -p apt-runtime runtime::surface_h2::tests::tls
+cargo test -q -p apt-harness
+```
+
 - shared protocol/runtime types
 - cryptographic helpers and Noise `XXpsk2` session establishment
 - admission handshake (`C0 -> S1 -> C2 -> S3`)

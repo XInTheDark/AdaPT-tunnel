@@ -44,8 +44,8 @@ pub use runtime::{
     handle_api_sync_ug2_response, handle_api_sync_ug4_response, prepare_api_sync_ug1_request,
     respond_api_sync_ug1_request, respond_api_sync_ug3_request, run_client, run_client_with_hooks,
     run_server, serve_api_sync_h2_connection, serve_api_sync_h2_tls_connection,
-    ApiSyncH2ClientDriver, ApiSyncH2HyperClient, ApiSyncH2RequestHandler, ApiSyncH2TlsClientConfig,
-    ApiSyncHandledRequest, ApiSyncPublicService, ClientRuntimeResult, PreparedApiSyncUg1Request,
-    PreparedApiSyncUg3Request, ServerRuntimeResult,
+    ApiSyncH2ClientDriver, ApiSyncH2ClientSession, ApiSyncH2ConnectionState, ApiSyncH2HyperClient,
+    ApiSyncH2RequestHandler, ApiSyncH2TlsClientConfig, ApiSyncHandledRequest, ApiSyncPublicService,
+    ClientRuntimeResult, PreparedApiSyncUg1Request, PreparedApiSyncUg3Request, ServerRuntimeResult,
 };
 pub use status::{ClientStatus, RuntimeStatus, ServerStatus, SessionSummary};

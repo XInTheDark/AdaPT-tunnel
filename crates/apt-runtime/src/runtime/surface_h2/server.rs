@@ -1,4 +1,7 @@
 use super::*;
+use apt_surface_h2::{ApiSyncRequestTunnelEnvelope, ApiSyncResponseTunnelEnvelope};
+use apt_tunnel::{DecodedPacket, Frame, TunnelSession};
+use apt_types::MINIMUM_REPLAY_WINDOW;
 
 pub trait ApiSyncPublicService {
     fn handle_public_request(
@@ -6,6 +9,19 @@ pub trait ApiSyncPublicService {
         surface: &ApiSyncSurface,
         request: &ApiSyncRequest,
     ) -> Result<ApiSyncResponse, RuntimeError>;
+
+    fn handle_established_request(
+        &mut self,
+        surface: &ApiSyncSurface,
+        request: &ApiSyncRequest,
+        established_session: &EstablishedSession,
+        decoded_packet: &DecodedPacket,
+    ) -> Result<(ApiSyncResponse, Vec<Frame>), RuntimeError> {
+        let _ = established_session;
+        let _ = decoded_packet;
+        let response = self.handle_public_request(surface, request)?;
+        Ok((response, Vec::new()))
+    }
 }
 
 impl<F> ApiSyncPublicService for F
@@ -28,13 +44,17 @@ pub enum ApiSyncHandledRequest {
         response: ApiSyncResponse,
         established_session: Option<EstablishedSession>,
     },
+    TunnelData {
+        response: ApiSyncResponse,
+        decoded_packet: DecodedPacket,
+    },
 }
 
 impl ApiSyncHandledRequest {
     #[must_use]
     pub fn established_session(&self) -> Option<&EstablishedSession> {
         match self {
-            Self::Public(_) => None,
+            Self::Public(_) | Self::TunnelData { .. } => None,
             Self::HiddenUpgrade {
                 established_session,
                 ..
@@ -43,10 +63,94 @@ impl ApiSyncHandledRequest {
     }
 
     #[must_use]
+    pub fn decoded_packet(&self) -> Option<&DecodedPacket> {
+        match self {
+            Self::TunnelData { decoded_packet, .. } => Some(decoded_packet),
+            Self::Public(_) | Self::HiddenUpgrade { .. } => None,
+        }
+    }
+
+    #[must_use]
     pub fn into_response(self) -> ApiSyncResponse {
         match self {
-            Self::Public(response) | Self::HiddenUpgrade { response, .. } => response,
+            Self::Public(response)
+            | Self::HiddenUpgrade { response, .. }
+            | Self::TunnelData { response, .. } => response,
         }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ApiSyncH2ConnectionState {
+    established_session: Option<EstablishedSession>,
+    tunnel: Option<TunnelSession>,
+}
+
+impl ApiSyncH2ConnectionState {
+    #[must_use]
+    pub fn established_session(&self) -> Option<&EstablishedSession> {
+        self.established_session.as_ref()
+    }
+
+    fn note_established_session(&mut self, session: EstablishedSession, now_secs: u64) {
+        let tunnel = TunnelSession::new(
+            session.session_id,
+            session.role,
+            session.secrets.clone(),
+            session.rekey_limits,
+            u64::try_from(MINIMUM_REPLAY_WINDOW).expect("replay window fits into u64"),
+            now_secs,
+        );
+        self.established_session = Some(session);
+        self.tunnel = Some(tunnel);
+    }
+
+    fn handle_tunnel_request<S>(
+        &mut self,
+        surface: &ApiSyncSurface,
+        public_service: &mut S,
+        request: &ApiSyncRequest,
+        now_secs: u64,
+    ) -> Result<Option<ApiSyncHandledRequest>, RuntimeError>
+    where
+        S: ApiSyncPublicService,
+    {
+        let Some(established_session) = self.established_session.clone() else {
+            return Ok(None);
+        };
+        let Some(ApiSyncRequestTunnelEnvelope { session_id, packet }) =
+            surface.extract_request_tunnel_envelope(request)?
+        else {
+            return Ok(None);
+        };
+        if session_id != established_session.session_id {
+            return Ok(None);
+        }
+        let tunnel = self.tunnel.as_mut().ok_or(RuntimeError::InvalidConfig(
+            "api-sync connection lost established tunnel state".to_string(),
+        ))?;
+        let decoded_packet = tunnel.decode_packet(&packet, now_secs)?;
+        let (mut response, mut outbound_frames) = public_service.handle_established_request(
+            surface,
+            request,
+            &established_session,
+            &decoded_packet,
+        )?;
+        outbound_frames.extend(decoded_packet.ack_suggestions.clone());
+        if !outbound_frames.is_empty() {
+            let encoded = tunnel.encode_packet(&outbound_frames, now_secs)?;
+            surface.embed_response_tunnel_envelope(
+                &mut response,
+                &ApiSyncResponseTunnelEnvelope {
+                    session_id: established_session.session_id,
+                    packet: encoded.bytes,
+                },
+            )?;
+        }
+        Ok(Some(ApiSyncHandledRequest::TunnelData {
+            response,
+            decoded_packet,
+        }))
     }
 }
 
@@ -77,6 +181,45 @@ impl ApiSyncH2RequestHandler {
     where
         S: ApiSyncPublicService,
     {
+        let mut connection_state = ApiSyncH2ConnectionState::default();
+        self.handle_request_with_state(
+            admission,
+            &mut connection_state,
+            public_service,
+            request,
+            source_id,
+            now_secs,
+        )
+    }
+
+    pub fn handle_request_with_state<S>(
+        &self,
+        admission: &mut AdmissionServer,
+        connection_state: &mut ApiSyncH2ConnectionState,
+        public_service: &mut S,
+        request: &ApiSyncRequest,
+        source_id: &str,
+        now_secs: u64,
+    ) -> Result<ApiSyncHandledRequest, RuntimeError>
+    where
+        S: ApiSyncPublicService,
+    {
+        match connection_state.handle_tunnel_request(
+            &self.surface,
+            public_service,
+            request,
+            now_secs,
+        ) {
+            Ok(Some(handled)) => return Ok(handled),
+            Ok(None) => {}
+            Err(error) if is_ignorable_api_sync_probe_error(&error) => {
+                return public_service
+                    .handle_public_request(&self.surface, request)
+                    .map(ApiSyncHandledRequest::Public);
+            }
+            Err(error) => return Err(error),
+        }
+
         match respond_api_sync_ug1_request(admission, &self.surface, request, source_id, now_secs) {
             Ok(Some(response)) => {
                 return Ok(ApiSyncHandledRequest::HiddenUpgrade {
@@ -94,10 +237,13 @@ impl ApiSyncH2RequestHandler {
         }
 
         match respond_api_sync_ug3_request(admission, &self.surface, request, source_id, now_secs) {
-            Ok(Some((response, established_session))) => Ok(ApiSyncHandledRequest::HiddenUpgrade {
-                response,
-                established_session: Some(established_session),
-            }),
+            Ok(Some((response, established_session))) => {
+                connection_state.note_established_session(established_session.clone(), now_secs);
+                Ok(ApiSyncHandledRequest::HiddenUpgrade {
+                    response,
+                    established_session: Some(established_session),
+                })
+            }
             Ok(None) => public_service
                 .handle_public_request(&self.surface, request)
                 .map(ApiSyncHandledRequest::Public),

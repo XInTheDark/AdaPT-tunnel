@@ -1,12 +1,8 @@
 use super::*;
 
 mod envelope;
-mod wrapper;
 
-pub use self::{
-    envelope::{initiate_ug1, initiate_ug1_with_context},
-    wrapper::{initiate_c0, PreparedC0, PreparedC2},
-};
+pub use self::envelope::{initiate_ug1, initiate_ug1_with_context};
 
 /// Provisioned client credential.
 #[derive(Clone, Debug)]
@@ -47,10 +43,10 @@ pub struct ClientSessionRequest {
     pub now_secs: u64,
     /// Optional masked fallback ticket.
     pub masked_fallback_ticket: Option<SealedEnvelope>,
-    /// Requested random padding for `C0`.
-    pub c0_padding_len: usize,
-    /// Requested random padding for `C2`.
-    pub c2_padding_len: usize,
+    /// Requested random padding for `UG1`.
+    pub ug1_padding_len: usize,
+    /// Requested random padding for `UG3`.
+    pub ug3_padding_len: usize,
     /// Policy flags.
     pub policy_flags: PolicyFlags,
 }
@@ -73,8 +69,8 @@ impl ClientSessionRequest {
             path_profile: PathProfile::unknown(),
             now_secs,
             masked_fallback_ticket: None,
-            c0_padding_len: 24,
-            c2_padding_len: 16,
+            ug1_padding_len: 24,
+            ug3_padding_len: 16,
             policy_flags: PolicyFlags {
                 allow_hybrid_pq: false,
             },
@@ -120,7 +116,7 @@ pub struct ClientPendingS1 {
     pub(super) noise: NoiseHandshake,
     pub(super) _client_nonce: ClientNonce,
     pub(super) client_contribution: [u8; 32],
-    pub(super) c2_padding_len: usize,
+    pub(super) ug3_padding_len: usize,
     pub(super) public_session_context: Option<PublicSessionUpgradeContext>,
 }
 

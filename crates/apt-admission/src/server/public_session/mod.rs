@@ -1,5 +1,5 @@
 use super::*;
-use crate::packet::{CookiePayload, NoiseInitiatorPayload, NoiseResponderPayload};
+use crate::payload::{CookiePayload, NoiseInitiatorPayload, NoiseResponderPayload};
 
 mod helpers;
 mod ug1;

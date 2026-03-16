@@ -240,7 +240,7 @@ impl AdmissionServer {
                         &self.config.endpoint_id,
                         active_binding,
                         UpgradeMessagePhase::Response,
-                        "legacy-ug4",
+                        "baseline-ug4",
                         cookie_payload.slot_binding.epoch_slot,
                     ),
                 },
@@ -313,6 +313,6 @@ impl AdmissionServer {
                 return Ok((ug3, resolved));
             }
         }
-        Err(AdmissionError::Validation("unable to decrypt c2"))
+        Err(AdmissionError::Validation("unable to decrypt ug3 envelope"))
     }
 }

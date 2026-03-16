@@ -19,12 +19,14 @@ pub use self::bridge::{
     respond_api_sync_ug1_request, respond_api_sync_ug3_request, PreparedApiSyncUg1Request,
     PreparedApiSyncUg3Request,
 };
-pub use self::client::ApiSyncH2ClientDriver;
-pub use self::server::{ApiSyncH2RequestHandler, ApiSyncHandledRequest, ApiSyncPublicService};
+pub use self::client::{ApiSyncH2ClientDriver, ApiSyncH2ClientSession};
+pub use self::server::{
+    ApiSyncH2ConnectionState, ApiSyncH2RequestHandler, ApiSyncHandledRequest, ApiSyncPublicService,
+};
 
 fn is_ignorable_api_sync_probe_error(error: &RuntimeError) -> bool {
     matches!(
         error,
-        RuntimeError::SurfaceH2(_) | RuntimeError::Serialization(_)
+        RuntimeError::SurfaceH2(_) | RuntimeError::Serialization(_) | RuntimeError::Tunnel(_)
     )
 }

@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 mod client;
-mod packet;
+mod payload;
 mod server;
 mod upgrade;
 
@@ -33,15 +33,13 @@ use self::upgrade::{
 };
 pub use self::{
     client::{
-        initiate_c0, initiate_ug1, initiate_ug1_with_context, ClientCredential, ClientPendingS1,
-        ClientPendingS3, ClientSessionRequest, PreparedC0, PreparedC2, PreparedUg1Envelope,
-        PreparedUg3Envelope,
+        initiate_ug1, initiate_ug1_with_context, ClientCredential, ClientPendingS1,
+        ClientPendingS3, ClientSessionRequest, PreparedUg1Envelope, PreparedUg3Envelope,
     },
-    packet::{AdmissionPacket, PolicyFlags, ServerConfirmationPacket, C0, C2, S1, S3},
+    payload::PolicyFlags,
     server::{
         AdmissionConfig, AdmissionServer, AdmissionServerSecrets, CredentialStore,
-        EstablishedEnvelopeReply, EstablishedServerReply, EstablishedSession, PerUserCredential,
-        ServerResponse,
+        EstablishedEnvelopeReply, EstablishedSession, PerUserCredential, ServerResponse,
     },
     upgrade::{
         PublicSessionUpgradeContext, Ug1, Ug2, Ug3, Ug4, UpgradeMessagePhase, UpgradeSlotBinding,
@@ -50,8 +48,6 @@ pub use self::{
 
 const VERSION: &str = "APT/1-core";
 const ACCEPTABLE_SLOT_SKEW: i64 = 1;
-const ADMISSION_FLAG_LOOKUP_HINT: u8 = 0x01;
-const ENVELOPE_NONCE_LEN: usize = 24;
 
 fn random_padding(len: usize) -> Vec<u8> {
     let mut out = vec![0_u8; len];

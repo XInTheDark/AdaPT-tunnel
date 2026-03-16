@@ -2,6 +2,7 @@ use super::super::*;
 use crate::config::RuntimeCarrierPreference;
 use apt_admission::{AdmissionConfig, AdmissionServerSecrets, CredentialStore};
 use apt_crypto::generate_static_keypair;
+use apt_tunnel::{DecodedPacket, Frame};
 use apt_types::{AuthProfile, EndpointId, Mode, SessionPolicy};
 use serde_json::json;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
@@ -93,15 +94,58 @@ impl ApiSyncPublicService for TestPublicService {
     }
 }
 
+#[derive(Default)]
+pub(super) struct EchoTunnelPublicService;
+
+impl ApiSyncPublicService for EchoTunnelPublicService {
+    fn handle_public_request(
+        &mut self,
+        surface: &ApiSyncSurface,
+        request: &ApiSyncRequest,
+    ) -> Result<ApiSyncResponse, RuntimeError> {
+        public_service_response(surface, request)
+    }
+
+    fn handle_established_request(
+        &mut self,
+        surface: &ApiSyncSurface,
+        request: &ApiSyncRequest,
+        _established_session: &EstablishedSession,
+        decoded_packet: &DecodedPacket,
+    ) -> Result<(ApiSyncResponse, Vec<Frame>), RuntimeError> {
+        let response = public_service_response(surface, request)?;
+        let outbound_frames = decoded_packet
+            .frames
+            .iter()
+            .filter_map(|frame| match frame {
+                Frame::IpData(packet) => Some(Frame::IpData(packet.clone())),
+                _ => None,
+            })
+            .collect();
+        Ok((response, outbound_frames))
+    }
+}
+
 pub(super) async fn spawn_runtime_h2_server(
     admission: AdmissionServer,
     now_secs: u64,
 ) -> (SocketAddr, JoinHandle<()>) {
+    spawn_runtime_h2_server_with_public_service(admission, now_secs, TestPublicService).await
+}
+
+pub(super) async fn spawn_runtime_h2_server_with_public_service<S>(
+    admission: AdmissionServer,
+    now_secs: u64,
+    public_service: S,
+) -> (SocketAddr, JoinHandle<()>)
+where
+    S: ApiSyncPublicService + Send + 'static,
+{
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let handler = ApiSyncH2RequestHandler::new(ApiSyncSurface::starter());
     let admission = Arc::new(Mutex::new(admission));
-    let public_service = Arc::new(Mutex::new(TestPublicService));
+    let public_service = Arc::new(Mutex::new(public_service));
     let task = tokio::spawn(async move {
         let (stream, peer_addr) = listener.accept().await.unwrap();
         serve_api_sync_h2_connection(

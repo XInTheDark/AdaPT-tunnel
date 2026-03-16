@@ -25,8 +25,8 @@ use crate::{
 };
 use apt_admission::{
     initiate_ug1, AdmissionConfig, AdmissionError, AdmissionServer, AdmissionServerSecrets,
-    ClientCredential, ClientSessionRequest, CredentialStore,
-    EstablishedSession, PerUserCredential, ServerResponse,
+    ClientCredential, ClientSessionRequest, CredentialStore, EstablishedSession, PerUserCredential,
+    ServerResponse,
 };
 use apt_carriers::{CarrierError, CarrierProfile, D1Carrier, D2Carrier};
 use apt_crypto::{SealedEnvelope, SessionSecretsForRole, StaticKeypair};
@@ -70,8 +70,9 @@ pub use self::surface_h2::{
     build_api_sync_h2_tls_client_config, build_api_sync_h2_tls_server_config_for_surface_plan,
     handle_api_sync_ug2_response, handle_api_sync_ug4_response, prepare_api_sync_ug1_request,
     respond_api_sync_ug1_request, respond_api_sync_ug3_request, serve_api_sync_h2_connection,
-    serve_api_sync_h2_tls_connection, ApiSyncH2ClientDriver, ApiSyncH2HyperClient,
-    ApiSyncH2RequestHandler, ApiSyncH2TlsClientConfig, ApiSyncHandledRequest, ApiSyncPublicService,
+    serve_api_sync_h2_tls_connection, ApiSyncH2ClientDriver, ApiSyncH2ClientSession,
+    ApiSyncH2ConnectionState, ApiSyncH2HyperClient, ApiSyncH2RequestHandler,
+    ApiSyncH2TlsClientConfig, ApiSyncHandledRequest, ApiSyncPublicService,
     PreparedApiSyncUg1Request, PreparedApiSyncUg3Request,
 };
 

@@ -13,7 +13,8 @@ mod tests;
 mod transport;
 
 pub use self::transport::{
-    ApiSyncH2Carrier, ApiSyncRequestUpgradeEnvelope, ApiSyncResponseUpgradeEnvelope,
+    ApiSyncH2Carrier, ApiSyncRequestTunnelEnvelope, ApiSyncRequestUpgradeEnvelope,
+    ApiSyncResponseTunnelEnvelope, ApiSyncResponseUpgradeEnvelope,
 };
 
 pub const API_SYNC_REQUEST_SLOT: &str = "request-json-metadata";
@@ -205,6 +206,36 @@ impl ApiSyncSurface {
         &self,
         response: &ApiSyncResponse,
     ) -> Result<Option<ApiSyncResponseUpgradeEnvelope>, SurfaceH2Error> {
+        self.extract_response_capsule(response)
+    }
+
+    pub fn embed_request_tunnel_envelope(
+        &self,
+        request: &mut ApiSyncRequest,
+        tunnel: &ApiSyncRequestTunnelEnvelope,
+    ) -> Result<(), SurfaceH2Error> {
+        self.embed_request_capsule(request, tunnel)
+    }
+
+    pub fn extract_request_tunnel_envelope(
+        &self,
+        request: &ApiSyncRequest,
+    ) -> Result<Option<ApiSyncRequestTunnelEnvelope>, SurfaceH2Error> {
+        self.extract_request_capsule(request)
+    }
+
+    pub fn embed_response_tunnel_envelope(
+        &self,
+        response: &mut ApiSyncResponse,
+        tunnel: &ApiSyncResponseTunnelEnvelope,
+    ) -> Result<(), SurfaceH2Error> {
+        self.embed_response_capsule(response, tunnel)
+    }
+
+    pub fn extract_response_tunnel_envelope(
+        &self,
+        response: &ApiSyncResponse,
+    ) -> Result<Option<ApiSyncResponseTunnelEnvelope>, SurfaceH2Error> {
         self.extract_response_capsule(response)
     }
 
