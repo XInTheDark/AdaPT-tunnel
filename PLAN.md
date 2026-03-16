@@ -32,11 +32,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** Phase D runtime-owned API-sync H2 bridge helpers
-- **Latency impact:** none on the live shipped datapath yet; the new helpers are bridge/orchestration code and are currently exercised via tests
-- **Bandwidth impact:** none on live traffic yet; they only model how legal API-sync bodies carry the encrypted hidden-upgrade envelopes
-- **CPU impact:** negligible; limited to JSON/base64 slot work around the hidden-upgrade envelopes
-- **Notes:** `apt-runtime` now contains a thin `surface_h2` bridge that prepares `UG1`/`UG3` requests and consumes `UG2`/`UG4` API-sync responses via `apt-surface-h2`, giving the runtime crate ownership of the public-session orchestration layer before real networked H2 session code lands
+- **Chunk:** H2 surface module split after the runtime bridge landing
+- **Latency impact:** none
+- **Bandwidth impact:** none
+- **CPU impact:** none
+- **Notes:** after the runtime bridge landed, `apt-surface-h2` was split into focused API-sync surface, transport, and test modules so the H2 reference path can continue growing without violating the repository size/ownership rules
 
 ## Core v2 design rules
 
@@ -61,7 +61,7 @@
 
 | Chunk | Status | Scope | Expected impact |
 |---|---|---|---|
-| Planning/docs maintenance | active | Keep `PLAN.md`, `SPEC_v2.md`, and `docs/ARCHITECTURE_V2.md` aligned with live code and shipped scope | No runtime impact |
+| Planning/docs maintenance | active | Keep `PLAN.md`, `SPEC_v2.md`, and `docs/ARCHITECTURE_V2.md` aligned with live code and shipped scope; keep near-threshold H2 modules split by responsibility as they grow | No runtime impact |
 | Runtime/module split | active | Finish separating remaining transport-owned runtime/helpers into surface-ready modules and remove remaining coupling between the live runtime baseline and future public-session families | No intentional runtime impact; lowers maintenance risk |
 | Empirical harness | active | Extend `apt-harness` beyond the initial passive/probe/retry report helpers into baseline corpora ingestion and runtime comparison fixtures; sample fixture manifests are the current sub-step | Offline-only analysis cost |
 | Hidden-upgrade core | active | `apt-admission` now has transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, slot bindings, masked fallback tickets, and direct envelope APIs that avoid `AdmissionPacket` / `ServerConfirmationPacket` in the tested H2 path; next step is deleting or quarantining remaining legacy wrapper-only flow where practical | Moderate implementation risk; core enabler |
