@@ -1,7 +1,7 @@
 use super::*;
 use apt_admission::{
-    initiate_ug1, AdmissionServer, ClientPendingS1, ClientPendingS3, EstablishedEnvelopeReply,
-    EstablishedSession, ServerResponse,
+    initiate_ug1_with_context, AdmissionServer, ClientPendingS1, ClientPendingS3,
+    EstablishedEnvelopeReply, EstablishedSession, ServerResponse,
 };
 use apt_surface_h2::{
     ApiSyncH2Carrier, ApiSyncRequest, ApiSyncRequestUpgradeEnvelope, ApiSyncResponse,
@@ -11,6 +11,7 @@ use serde_json::json;
 
 #[derive(Debug)]
 pub struct PreparedApiSyncUg1Request {
+    pub authority: String,
     pub request: ApiSyncRequest,
     pub state: ClientPendingS1,
 }
@@ -28,6 +29,11 @@ pub fn prepare_api_sync_ug1_request(
     now_secs: u64,
 ) -> Result<PreparedApiSyncUg1Request, RuntimeError> {
     let carrier = ApiSyncH2Carrier::conservative();
+    let authority = persistent_state
+        .active_network_profile()
+        .map(|profile| profile.context.public_route.0.clone())
+        .unwrap_or_else(|| config.endpoint_id.as_str().to_string());
+    let upgrade_context = surface.upgrade_context(&authority)?;
     let request = client_session_request(
         config,
         persistent_state,
@@ -40,10 +46,18 @@ pub fn prepare_api_sync_ug1_request(
             .transpose()?,
         now_secs,
     );
-    let prepared = initiate_ug1(client_credential(config), request, &carrier)?;
+    let prepared = initiate_ug1_with_context(
+        client_credential(config),
+        request,
+        &carrier,
+        upgrade_context,
+    )?;
     let device_id = config.client_identity.as_deref().unwrap_or("shared-device");
-    let mut public_request =
-        surface.build_state_push_request(device_id, json!({ "mode": config.mode.value() }));
+    let mut public_request = surface.build_state_push_request(
+        &authority,
+        device_id,
+        json!({ "mode": config.mode.value() }),
+    );
     surface.embed_request_upgrade_envelope(
         &mut public_request,
         &ApiSyncRequestUpgradeEnvelope {
@@ -52,6 +66,7 @@ pub fn prepare_api_sync_ug1_request(
         },
     )?;
     Ok(PreparedApiSyncUg1Request {
+        authority,
         request: public_request,
         state: prepared.state,
     })
@@ -59,6 +74,7 @@ pub fn prepare_api_sync_ug1_request(
 
 pub fn handle_api_sync_ug2_response(
     surface: &ApiSyncSurface,
+    authority: &str,
     response: &ApiSyncResponse,
     state: ClientPendingS1,
 ) -> Result<PreparedApiSyncUg3Request, RuntimeError> {
@@ -74,7 +90,7 @@ pub fn handle_api_sync_ug2_response(
         .as_str()
         .unwrap_or("shared-device");
     let mut public_request =
-        surface.build_state_push_request(device_id, json!({ "confirm": true }));
+        surface.build_state_push_request(authority, device_id, json!({ "confirm": true }));
     surface.embed_request_upgrade_envelope(
         &mut public_request,
         &ApiSyncRequestUpgradeEnvelope {
@@ -114,7 +130,9 @@ pub fn respond_api_sync_ug1_request(
     let Some(upgrade) = surface.extract_request_upgrade_envelope(request)? else {
         return Ok(None);
     };
-    let received_len = request.path.len()
+    let upgrade_context = surface.request_upgrade_context(request)?;
+    let received_len = request.authority.len()
+        + request.path.len()
         + serde_json::to_vec(&request.body)
             .map_err(|error| {
                 RuntimeError::InvalidConfig(format!(
@@ -125,9 +143,10 @@ pub fn respond_api_sync_ug1_request(
     let device_id = request.body["device_id"]
         .as_str()
         .unwrap_or("shared-device");
-    match admission.handle_ug1(
+    match admission.handle_ug1_with_context(
         source_id,
         &carrier,
+        &upgrade_context,
         upgrade.lookup_hint,
         &upgrade.envelope,
         received_len,
@@ -157,12 +176,14 @@ pub fn respond_api_sync_ug3_request(
     let Some(upgrade) = surface.extract_request_upgrade_envelope(request)? else {
         return Ok(None);
     };
+    let upgrade_context = surface.request_upgrade_context(request)?;
     let device_id = request.body["device_id"]
         .as_str()
         .unwrap_or("shared-device");
-    match admission.handle_ug3(
+    match admission.handle_ug3_with_context(
         source_id,
         &carrier,
+        &upgrade_context,
         upgrade.lookup_hint,
         &upgrade.envelope,
         now_secs,
@@ -261,8 +282,13 @@ mod tests {
         )
         .unwrap()
         .expect("expected UG2 response");
-        let prepared_ug3 =
-            handle_api_sync_ug2_response(&surface, &response_ug2, prepared_ug1.state).unwrap();
+        let prepared_ug3 = handle_api_sync_ug2_response(
+            &surface,
+            &prepared_ug1.authority,
+            &response_ug2,
+            prepared_ug1.state,
+        )
+        .unwrap();
         let (response_ug4, server_session) = respond_api_sync_ug3_request(
             &mut server,
             &surface,
@@ -288,8 +314,11 @@ mod tests {
     fn runtime_bridge_returns_none_for_plain_public_requests() {
         let surface = ApiSyncSurface::starter();
         let (mut server, _) = test_server();
-        let public_request =
-            surface.build_state_push_request("device-a", json!({ "mode": Mode::STEALTH.value() }));
+        let public_request = surface.build_state_push_request(
+            "api.example.com",
+            "device-a",
+            json!({ "mode": Mode::STEALTH.value() }),
+        );
         let reply = respond_api_sync_ug1_request(
             &mut server,
             &surface,

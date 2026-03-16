@@ -7,6 +7,7 @@ rust-version.workspace = true
 authors.workspace = true
 
 [dependencies]
+apt-admission.workspace = true
 apt-carriers.workspace = true
 apt-crypto.workspace = true
 apt-origin.workspace = true
@@ -16,9 +17,6 @@ bincode.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
-apt-admission.workspace = true
 
 [lints]
 workspace = true

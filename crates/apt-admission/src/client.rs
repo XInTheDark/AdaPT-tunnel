@@ -99,6 +99,7 @@ pub struct ClientPendingS1 {
     _client_nonce: ClientNonce,
     client_contribution: [u8; 32],
     c2_padding_len: usize,
+    public_session_context: Option<PublicSessionUpgradeContext>,
 }
 
 /// Result of processing the first server reply and emitting the client confirmation.
@@ -143,6 +144,8 @@ pub struct ClientPendingS3 {
     _mode: Mode,
     credential_identity: CredentialIdentity,
     secrets: SessionSecretsForRole,
+    admission_epoch_slot: u64,
+    public_session_context: Option<PublicSessionUpgradeContext>,
 }
 
 fn chosen_credential_identity(credential: &ClientCredential) -> CredentialIdentity {
@@ -153,11 +156,54 @@ fn chosen_credential_identity(credential: &ClientCredential) -> CredentialIdenti
     }
 }
 
-/// Initiates an admission attempt and emits the first hidden-upgrade request.
-pub fn initiate_ug1<C: CarrierProfile>(
+fn handshake_prologue(
+    endpoint_id: &EndpointId,
+    carrier: CarrierBinding,
+    public_session_context: Option<&PublicSessionUpgradeContext>,
+) -> Result<Vec<u8>, AdmissionError> {
+    match public_session_context {
+        Some(context) => public_session_associated_data(endpoint_id, context),
+        None => Ok(admission_associated_data(endpoint_id, carrier)),
+    }
+}
+
+fn envelope_aad(
+    endpoint_id: &EndpointId,
+    carrier: CarrierBinding,
+    public_session_context: Option<&PublicSessionUpgradeContext>,
+    phase: UpgradeMessagePhase,
+    epoch_slot: u64,
+) -> Result<Vec<u8>, AdmissionError> {
+    match public_session_context {
+        Some(context) => slot_bound_associated_data(endpoint_id, context, phase, epoch_slot),
+        None => Ok(admission_associated_data(endpoint_id, carrier)),
+    }
+}
+
+fn phase_slot_binding(
+    endpoint_id: &EndpointId,
+    carrier: CarrierBinding,
+    public_session_context: Option<&PublicSessionUpgradeContext>,
+    phase: UpgradeMessagePhase,
+    legacy_slot_id: &str,
+    epoch_slot: u64,
+) -> UpgradeSlotBinding {
+    match public_session_context {
+        Some(context) => match phase {
+            UpgradeMessagePhase::Request => context.request_binding(epoch_slot),
+            UpgradeMessagePhase::Response => context.response_binding(epoch_slot),
+        },
+        None => {
+            legacy_upgrade_slot_binding(endpoint_id, carrier, phase, legacy_slot_id, epoch_slot)
+        }
+    }
+}
+
+fn initiate_ug1_impl<C: CarrierProfile>(
     credential: ClientCredential,
     request: ClientSessionRequest,
     carrier: &C,
+    public_session_context: Option<PublicSessionUpgradeContext>,
 ) -> Result<PreparedUg1Envelope, AdmissionError> {
     if request.preferred_carrier != carrier.binding() {
         return Err(AdmissionError::Validation(
@@ -175,11 +221,15 @@ pub fn initiate_ug1<C: CarrierProfile>(
     );
     let per_epoch_admission_key =
         derive_admission_key(&credential.admission_key, current_epoch_slot);
-    let aad = admission_associated_data(&request.endpoint_id, carrier.binding());
+    let prologue = handshake_prologue(
+        &request.endpoint_id,
+        carrier.binding(),
+        public_session_context.as_ref(),
+    )?;
     let mut noise = NoiseHandshake::new(NoiseHandshakeConfig {
         role: SessionRole::Initiator,
         psk: per_epoch_admission_key,
-        prologue: aad.clone(),
+        prologue,
         local_static_private: credential.client_static_private,
         remote_static_public: None,
         fixed_ephemeral_private: None,
@@ -198,9 +248,10 @@ pub fn initiate_ug1<C: CarrierProfile>(
         client_nonce,
         noise_msg1,
         optional_masked_fallback_ticket: request.masked_fallback_ticket.clone(),
-        slot_binding: legacy_upgrade_slot_binding(
+        slot_binding: phase_slot_binding(
             &request.endpoint_id,
             carrier.binding(),
+            public_session_context.as_ref(),
             UpgradeMessagePhase::Request,
             "legacy-ug1",
             current_epoch_slot,
@@ -210,6 +261,13 @@ pub fn initiate_ug1<C: CarrierProfile>(
     let lookup_hint = credential
         .enable_lookup_hint
         .then(|| derive_lookup_hint(&credential.admission_key, current_epoch_slot));
+    let aad = envelope_aad(
+        &request.endpoint_id,
+        carrier.binding(),
+        public_session_context.as_ref(),
+        UpgradeMessagePhase::Request,
+        current_epoch_slot,
+    )?;
     let envelope = SealedEnvelope::seal(&per_epoch_admission_key, &aad, &ug1)?;
     Ok(PreparedUg1Envelope {
         lookup_hint,
@@ -227,8 +285,29 @@ pub fn initiate_ug1<C: CarrierProfile>(
             _client_nonce: client_nonce,
             client_contribution: rand::random(),
             c2_padding_len: request.c2_padding_len,
+            public_session_context,
         },
     })
+}
+
+/// Initiates an admission attempt and emits the first hidden-upgrade request.
+pub fn initiate_ug1<C: CarrierProfile>(
+    credential: ClientCredential,
+    request: ClientSessionRequest,
+    carrier: &C,
+) -> Result<PreparedUg1Envelope, AdmissionError> {
+    initiate_ug1_impl(credential, request, carrier, None)
+}
+
+/// Initiates a public-session hidden-upgrade request bound to an explicit
+/// surface family/profile/slot context.
+pub fn initiate_ug1_with_context<C: CarrierProfile>(
+    credential: ClientCredential,
+    request: ClientSessionRequest,
+    carrier: &C,
+    public_session_context: PublicSessionUpgradeContext,
+) -> Result<PreparedUg1Envelope, AdmissionError> {
+    initiate_ug1_impl(credential, request, carrier, Some(public_session_context))
 }
 
 /// Initiates an admission attempt and emits the first hidden-upgrade request.
@@ -255,7 +334,13 @@ impl ClientPendingS1 {
         envelope: &SealedEnvelope,
         carrier: &C,
     ) -> Result<PreparedUg3Envelope, AdmissionError> {
-        let aad = admission_associated_data(&self.endpoint_id, carrier.binding());
+        let aad = envelope_aad(
+            &self.endpoint_id,
+            carrier.binding(),
+            self.public_session_context.as_ref(),
+            UpgradeMessagePhase::Response,
+            self.admission_epoch_slot,
+        )?;
         let ug2: Ug2 = envelope.open(&self.admission_key, &aad)?;
         let prepared = self.finish_ug2(ug2, carrier)?;
         Ok(PreparedUg3Envelope {
@@ -287,7 +372,6 @@ impl ClientPendingS1 {
         ug2: Ug2,
         carrier: &C,
     ) -> Result<PreparedC2, AdmissionError> {
-        let aad = admission_associated_data(&self.endpoint_id, carrier.binding());
         if !self.supported_suites.contains(&ug2.chosen_suite) {
             return Err(AdmissionError::Validation("server chose unsupported suite"));
         }
@@ -296,8 +380,18 @@ impl ClientPendingS1 {
                 "server chose unsupported carrier",
             ));
         }
-        if ug2.slot_binding.phase != UpgradeMessagePhase::Response {
-            return Err(AdmissionError::Validation("unexpected upgrade-slot phase"));
+        let expected_response_binding = phase_slot_binding(
+            &self.endpoint_id,
+            carrier.binding(),
+            self.public_session_context.as_ref(),
+            UpgradeMessagePhase::Response,
+            "legacy-ug2",
+            self.admission_epoch_slot,
+        );
+        if ug2.slot_binding != expected_response_binding {
+            return Err(AdmissionError::Validation(
+                "unexpected upgrade-slot binding",
+            ));
         }
         let responder_payload_bytes = self.noise.read_message(&ug2.noise_msg2)?;
         let responder_payload: NoiseResponderPayload =
@@ -335,16 +429,24 @@ impl ClientPendingS1 {
             selected_family_ack: ug2.chosen_family,
             anti_amplification_cookie: ug2.anti_amplification_cookie.clone(),
             noise_msg3: noise_msg3.clone(),
-            slot_binding: legacy_upgrade_slot_binding(
+            slot_binding: phase_slot_binding(
                 &self.endpoint_id,
                 carrier.binding(),
+                self.public_session_context.as_ref(),
                 UpgradeMessagePhase::Request,
                 "legacy-ug3",
                 self.admission_epoch_slot,
             ),
             padding: random_padding(self.c2_padding_len),
         };
-        let c2_envelope = SealedEnvelope::seal(&self.admission_key, &aad, &ug3)?;
+        let request_aad = envelope_aad(
+            &self.endpoint_id,
+            carrier.binding(),
+            self.public_session_context.as_ref(),
+            UpgradeMessagePhase::Request,
+            self.admission_epoch_slot,
+        )?;
+        let c2_envelope = SealedEnvelope::seal(&self.admission_key, &request_aad, &ug3)?;
         let packet = AdmissionPacket {
             lookup_hint: self.credential.enable_lookup_hint.then(|| {
                 derive_lookup_hint(&self.credential.admission_key, self.admission_epoch_slot)
@@ -360,6 +462,8 @@ impl ClientPendingS1 {
                 _mode: ug2.chosen_mode,
                 credential_identity: chosen_credential_identity(&self.credential),
                 secrets,
+                admission_epoch_slot: self.admission_epoch_slot,
+                public_session_context: self.public_session_context,
             },
         })
     }
@@ -389,10 +493,26 @@ impl ClientPendingS3 {
         envelope: &SealedEnvelope,
         carrier: &C,
     ) -> Result<EstablishedSession, AdmissionError> {
-        let aad = admission_associated_data(&self.endpoint_id, carrier.binding());
+        let aad = envelope_aad(
+            &self.endpoint_id,
+            carrier.binding(),
+            self.public_session_context.as_ref(),
+            UpgradeMessagePhase::Response,
+            self.admission_epoch_slot,
+        )?;
         let ug4: Ug4 = envelope.open(&self.secrets.recv_ctrl, &aad)?;
-        if ug4.slot_binding.phase != UpgradeMessagePhase::Response {
-            return Err(AdmissionError::Validation("unexpected upgrade-slot phase"));
+        let expected_response_binding = phase_slot_binding(
+            &self.endpoint_id,
+            carrier.binding(),
+            self.public_session_context.as_ref(),
+            UpgradeMessagePhase::Response,
+            "legacy-ug4",
+            self.admission_epoch_slot,
+        );
+        if ug4.slot_binding != expected_response_binding {
+            return Err(AdmissionError::Validation(
+                "unexpected upgrade-slot binding",
+            ));
         }
         Ok(EstablishedSession {
             session_id: ug4.session_id,

@@ -1,5 +1,26 @@
 use super::*;
-use apt_carriers::D1Carrier;
+use apt_carriers::{CarrierProfile, D1Carrier, InvalidInputBehavior};
+
+#[derive(Clone, Copy, Debug)]
+struct TestS1Carrier;
+
+impl CarrierProfile for TestS1Carrier {
+    fn binding(&self) -> CarrierBinding {
+        CarrierBinding::S1EncryptedStream
+    }
+
+    fn max_record_size(&self) -> u16 {
+        16_384
+    }
+
+    fn tunnel_mtu(&self) -> u16 {
+        1_380
+    }
+
+    fn invalid_input_behavior(&self) -> InvalidInputBehavior {
+        InvalidInputBehavior::Silence
+    }
+}
 
 fn test_server_setup() -> (AdmissionServer, ClientCredential, D1Carrier) {
     let static_keypair = generate_static_keypair().unwrap();
@@ -60,6 +81,8 @@ fn test_slot_binding() -> UpgradeSlotBinding {
     UpgradeSlotBinding {
         family_id: "api-sync".to_string(),
         profile_version: "2026.03".to_string(),
+        authority: "api.example.com".to_string(),
+        graph_branch_id: Some("bootstrap-sync".to_string()),
         slot_id: "request-json-metadata".to_string(),
         phase: UpgradeMessagePhase::Request,
         epoch_slot: 77,
@@ -471,4 +494,65 @@ fn masked_fallback_ticket_is_issued_and_only_reused_on_matching_route() {
     let mismatched_key = derive_admission_key(&credential.admission_key, epoch_slot);
     let mismatched_ug2: Ug2 = mismatched_s1.envelope.open(&mismatched_key, &aad).unwrap();
     assert!(!mismatched_ug2.optional_masked_fallback_accept);
+}
+
+#[test]
+fn public_session_context_binds_hidden_upgrade_to_surface_metadata() {
+    let (mut server, credential, _) = test_server_setup();
+    let carrier = TestS1Carrier;
+    server.config.allowed_carriers = vec![CarrierBinding::S1EncryptedStream];
+    let endpoint = EndpointId::new("edge-test");
+    let now_secs = 1_700_000_000;
+    let public_context = PublicSessionUpgradeContext::new(
+        CarrierBinding::S1EncryptedStream,
+        "api-sync".to_string(),
+        "2026.03".to_string(),
+        "api.example.com".to_string(),
+        None,
+        "request-json-metadata".to_string(),
+        "/v1/devices/{device_id}/sync".to_string(),
+        "response-json-fragment".to_string(),
+        "/v1/devices/{device_id}/state".to_string(),
+    );
+    let mut request = ClientSessionRequest::conservative(endpoint, now_secs);
+    request.preferred_carrier = CarrierBinding::S1EncryptedStream;
+    request.supported_carriers = vec![CarrierBinding::S1EncryptedStream];
+    let prepared =
+        initiate_ug1_with_context(credential, request, &carrier, public_context.clone()).unwrap();
+
+    let reply = server.handle_ug1_with_context(
+        "h2-client-a",
+        &carrier,
+        &public_context,
+        prepared.lookup_hint,
+        &prepared.envelope,
+        512,
+        now_secs,
+    );
+    assert!(matches!(reply, ServerResponse::Reply(_)));
+
+    let mismatched_context = PublicSessionUpgradeContext::new(
+        CarrierBinding::S1EncryptedStream,
+        "api-sync".to_string(),
+        "2026.03".to_string(),
+        "other.example.com".to_string(),
+        None,
+        "request-json-metadata".to_string(),
+        "/v1/devices/{device_id}/sync".to_string(),
+        "response-json-fragment".to_string(),
+        "/v1/devices/{device_id}/state".to_string(),
+    );
+    let dropped = server.handle_ug1_with_context(
+        "h2-client-a",
+        &carrier,
+        &mismatched_context,
+        prepared.lookup_hint,
+        &prepared.envelope,
+        512,
+        now_secs,
+    );
+    assert!(matches!(
+        dropped,
+        ServerResponse::Drop(InvalidInputBehavior::Silence)
+    ));
 }

@@ -1,5 +1,7 @@
 use crate::json_slot::{get_nested_string, set_nested_string};
+use apt_admission::PublicSessionUpgradeContext;
 use apt_origin::{MessagePhase, OriginFamilyId, OriginFamilyProfile, PublicSessionTransport};
+use apt_types::CarrierBinding;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
@@ -21,6 +23,7 @@ const RESPONSE_SLOT_PATH: &[&str] = &["server_hints", "next_cursor"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ApiSyncRequest {
+    pub authority: String,
     pub path: String,
     pub authenticated_public: bool,
     pub body: Value,
@@ -72,9 +75,41 @@ impl ApiSyncSurface {
         &self.profile
     }
 
+    pub fn upgrade_context(
+        &self,
+        authority: &str,
+    ) -> Result<PublicSessionUpgradeContext, SurfaceH2Error> {
+        let request_slot = self.slot(API_SYNC_REQUEST_SLOT, MessagePhase::Request)?;
+        let response_slot = self.slot(API_SYNC_RESPONSE_SLOT, MessagePhase::Response)?;
+        Ok(PublicSessionUpgradeContext::new(
+            CarrierBinding::S1EncryptedStream,
+            self.profile.display_name.clone(),
+            self.profile.profile_version.clone(),
+            authority.to_string(),
+            None,
+            request_slot.name.clone(),
+            request_slot.path_hint.clone(),
+            response_slot.name.clone(),
+            response_slot.path_hint.clone(),
+        ))
+    }
+
+    pub fn request_upgrade_context(
+        &self,
+        request: &ApiSyncRequest,
+    ) -> Result<PublicSessionUpgradeContext, SurfaceH2Error> {
+        self.upgrade_context(&request.authority)
+    }
+
     #[must_use]
-    pub fn build_state_push_request(&self, device_id: &str, changes: Value) -> ApiSyncRequest {
+    pub fn build_state_push_request(
+        &self,
+        authority: &str,
+        device_id: &str,
+        changes: Value,
+    ) -> ApiSyncRequest {
         ApiSyncRequest {
+            authority: authority.to_string(),
             path: format!("/v1/devices/{device_id}/sync"),
             authenticated_public: true,
             body: json!({
@@ -170,11 +205,11 @@ impl ApiSyncSurface {
         self.extract_response_capsule(response)
     }
 
-    fn validate_slot_phase(
+    fn slot(
         &self,
         slot_name: &str,
         expected_phase: MessagePhase,
-    ) -> Result<(), SurfaceH2Error> {
+    ) -> Result<&apt_origin::UpgradeSlot, SurfaceH2Error> {
         let slot = self
             .profile
             .upgrade_slot(slot_name)
@@ -182,7 +217,15 @@ impl ApiSyncSurface {
         if slot.phase != expected_phase {
             return Err(SurfaceH2Error::SlotPhase(slot_name.to_string()));
         }
-        Ok(())
+        Ok(slot)
+    }
+
+    fn validate_slot_phase(
+        &self,
+        slot_name: &str,
+        expected_phase: MessagePhase,
+    ) -> Result<(), SurfaceH2Error> {
+        self.slot(slot_name, expected_phase).map(|_| ())
     }
 }
 

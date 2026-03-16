@@ -1,8 +1,8 @@
 use super::*;
 use apt_admission::{
-    initiate_ug1, AdmissionConfig, AdmissionServer, AdmissionServerSecrets, ClientCredential,
-    ClientSessionRequest, CredentialStore, EstablishedEnvelopeReply, ServerResponse, Ug1, Ug2,
-    UpgradeMessagePhase, UpgradeSlotBinding,
+    initiate_ug1_with_context, AdmissionConfig, AdmissionServer, AdmissionServerSecrets,
+    ClientCredential, ClientSessionRequest, CredentialStore, EstablishedEnvelopeReply,
+    ServerResponse, Ug1, Ug2, UpgradeMessagePhase, UpgradeSlotBinding,
 };
 use apt_crypto::generate_static_keypair;
 use apt_types::{
@@ -11,10 +11,14 @@ use apt_types::{
 };
 use serde_json::json;
 
+const TEST_AUTHORITY: &str = "api.example.com";
+
 fn test_slot_binding(phase: UpgradeMessagePhase, slot_id: &str) -> UpgradeSlotBinding {
     UpgradeSlotBinding {
         family_id: "api-sync".to_string(),
         profile_version: "2026.03".to_string(),
+        authority: TEST_AUTHORITY.to_string(),
+        graph_branch_id: None,
         slot_id: slot_id.to_string(),
         phase,
         epoch_slot: 7,
@@ -23,7 +27,7 @@ fn test_slot_binding(phase: UpgradeMessagePhase, slot_id: &str) -> UpgradeSlotBi
 }
 
 fn request_len(request: &ApiSyncRequest) -> usize {
-    request.path.len() + serde_json::to_vec(&request.body).unwrap().len()
+    request.authority.len() + request.path.len() + serde_json::to_vec(&request.body).unwrap().len()
 }
 
 fn test_server_setup() -> (AdmissionServer, ClientCredential, ApiSyncH2Carrier) {
@@ -57,9 +61,11 @@ fn test_server_setup() -> (AdmissionServer, ClientCredential, ApiSyncH2Carrier) 
 #[test]
 fn public_api_sync_messages_are_valid_without_hidden_capsules() {
     let surface = ApiSyncSurface::starter();
-    let request = surface.build_state_push_request("device-1", json!({"battery": 91}));
+    let request =
+        surface.build_state_push_request(TEST_AUTHORITY, "device-1", json!({"battery": 91}));
     let response = surface.build_state_pull_response("device-1", json!({"battery": 91}));
 
+    assert_eq!(request.authority, TEST_AUTHORITY);
     assert_eq!(request.path, "/v1/devices/device-1/sync");
     assert!(request.authenticated_public);
     assert_eq!(request.body["changes"]["battery"], 91);
@@ -68,6 +74,19 @@ fn public_api_sync_messages_are_valid_without_hidden_capsules() {
     assert_eq!(response.status, 200);
     assert_eq!(response.body["state"]["battery"], 91);
     assert!(response.body["server_hints"]["next_cursor"].is_null());
+}
+
+#[test]
+fn api_sync_surface_exposes_public_session_context() {
+    let surface = ApiSyncSurface::starter();
+    let context = surface.upgrade_context(TEST_AUTHORITY).unwrap();
+
+    assert_eq!(context.carrier, CarrierBinding::S1EncryptedStream);
+    assert_eq!(context.family_id, "api-sync");
+    assert_eq!(context.profile_version, "2026.03");
+    assert_eq!(context.authority, TEST_AUTHORITY);
+    assert_eq!(context.request_slot_id, API_SYNC_REQUEST_SLOT);
+    assert_eq!(context.response_slot_id, API_SYNC_RESPONSE_SLOT);
 }
 
 #[test]
@@ -99,11 +118,15 @@ fn ug_capsules_round_trip_through_legal_json_slots() {
         cookie_expiry: 123,
         noise_msg2: vec![5, 6, 7],
         optional_masked_fallback_accept: false,
-        slot_binding: test_slot_binding(UpgradeMessagePhase::Response, API_SYNC_RESPONSE_SLOT),
+        slot_binding: UpgradeSlotBinding {
+            path_hint: "/v1/devices/{device_id}/state".to_string(),
+            ..test_slot_binding(UpgradeMessagePhase::Response, API_SYNC_RESPONSE_SLOT)
+        },
         padding: vec![8; 4],
     };
 
-    let mut request = surface.build_state_push_request("device-1", json!({"battery": 91}));
+    let mut request =
+        surface.build_state_push_request(TEST_AUTHORITY, "device-1", json!({"battery": 91}));
     let mut response = surface.build_state_pull_response("device-1", json!({"battery": 91}));
     surface.embed_request_capsule(&mut request, &ug1).unwrap();
     surface.embed_response_capsule(&mut response, &ug2).unwrap();
@@ -121,6 +144,7 @@ fn ug_capsules_round_trip_through_legal_json_slots() {
 #[test]
 fn end_to_end_hidden_upgrade_round_trips_inside_api_sync_messages() {
     let surface = ApiSyncSurface::starter();
+    let upgrade_context = surface.upgrade_context(TEST_AUTHORITY).unwrap();
     let (mut server, credential, carrier) = test_server_setup();
     let endpoint = EndpointId::new("edge-test");
     let now_secs = 1_700_000_000;
@@ -129,9 +153,12 @@ fn end_to_end_hidden_upgrade_round_trips_inside_api_sync_messages() {
     request_meta.preferred_carrier = CarrierBinding::S1EncryptedStream;
     request_meta.supported_carriers = vec![CarrierBinding::S1EncryptedStream];
     request_meta.public_route_hint = PublicRouteHint("api.example.com:443".to_string());
-    let prepared_ug1 = initiate_ug1(credential, request_meta, &carrier).unwrap();
+    let prepared_ug1 =
+        initiate_ug1_with_context(credential, request_meta, &carrier, upgrade_context.clone())
+            .unwrap();
 
-    let mut request = surface.build_state_push_request("device-1", json!({"battery": 91}));
+    let mut request =
+        surface.build_state_push_request(TEST_AUTHORITY, "device-1", json!({"battery": 91}));
     surface
         .embed_request_upgrade_envelope(
             &mut request,
@@ -145,9 +172,10 @@ fn end_to_end_hidden_upgrade_round_trips_inside_api_sync_messages() {
         .extract_request_upgrade_envelope(&request)
         .unwrap()
         .unwrap();
-    let ug2_envelope = match server.handle_ug1(
+    let ug2_envelope = match server.handle_ug1_with_context(
         "h2-client-a",
         &carrier,
+        &upgrade_context,
         inbound.lookup_hint,
         &inbound.envelope,
         request_len(&request),
@@ -175,7 +203,8 @@ fn end_to_end_hidden_upgrade_round_trips_inside_api_sync_messages() {
         .handle_ug2(&ug2_field.envelope, &carrier)
         .unwrap();
 
-    let mut confirm_request = surface.build_state_push_request("device-1", json!({"battery": 92}));
+    let mut confirm_request =
+        surface.build_state_push_request(TEST_AUTHORITY, "device-1", json!({"battery": 92}));
     surface
         .embed_request_upgrade_envelope(
             &mut confirm_request,
@@ -192,9 +221,10 @@ fn end_to_end_hidden_upgrade_round_trips_inside_api_sync_messages() {
     let EstablishedEnvelopeReply {
         envelope: ug4_envelope,
         session: server_session,
-    } = match server.handle_ug3(
+    } = match server.handle_ug3_with_context(
         "h2-client-a",
         &carrier,
+        &upgrade_context,
         inbound.lookup_hint,
         &inbound.envelope,
         now_secs + 1,

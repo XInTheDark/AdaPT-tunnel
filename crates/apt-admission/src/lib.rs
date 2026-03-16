@@ -28,11 +28,14 @@ mod upgrade;
 #[cfg(test)]
 mod tests;
 
-use self::upgrade::legacy_upgrade_slot_binding;
+use self::upgrade::{
+    legacy_upgrade_slot_binding, public_session_associated_data, slot_bound_associated_data,
+};
 pub use self::{
     client::{
-        initiate_c0, initiate_ug1, ClientCredential, ClientPendingS1, ClientPendingS3,
-        ClientSessionRequest, PreparedC0, PreparedC2, PreparedUg1Envelope, PreparedUg3Envelope,
+        initiate_c0, initiate_ug1, initiate_ug1_with_context, ClientCredential, ClientPendingS1,
+        ClientPendingS3, ClientSessionRequest, PreparedC0, PreparedC2, PreparedUg1Envelope,
+        PreparedUg3Envelope,
     },
     packet::{AdmissionPacket, PolicyFlags, ServerConfirmationPacket, C0, C2, S1, S3},
     server::{
@@ -40,7 +43,9 @@ pub use self::{
         EstablishedEnvelopeReply, EstablishedServerReply, EstablishedSession, PerUserCredential,
         ServerResponse,
     },
-    upgrade::{Ug1, Ug2, Ug3, Ug4, UpgradeMessagePhase, UpgradeSlotBinding},
+    upgrade::{
+        PublicSessionUpgradeContext, Ug1, Ug2, Ug3, Ug4, UpgradeMessagePhase, UpgradeSlotBinding,
+    },
 };
 
 const VERSION: &str = "APT/1-core";
