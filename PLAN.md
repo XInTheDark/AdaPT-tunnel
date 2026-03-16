@@ -12,8 +12,8 @@
 
 ## Current milestone
 
-- **Milestone:** Phase D TLS/origin-facing H2 integration — the API-sync path is slot/context-bound, runtime-owned, and now exercised over both cleartext Hyper H2 (`h2c`) and rustls-backed H2 surface-plan wiring
-- **Status:** Phase A hardening is complete; early Phase B/C/D prep is now in place with the live `D1` + optional `D2` baseline, manifest-driven harness fixtures, draft v2 structured transport config types, transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, masked fallback ticket issuance/opening bound to coarse network context, enriched `apt-origin` starter profiles, config-resolved v2 surface plans, envelope-level admission APIs, explicit public-session slot/context binding for the tested API-sync H2 path, runtime-owned API-sync client/request-handler abstractions, concrete Hyper-backed H2 adapters, and rustls-backed H2 surface-plan wiring that uses v2 authority/trust metadata while keeping HTTP encoding inside `apt-surface-h2`
+- **Milestone:** Phase D H2 hardening after TLS/origin-facing integration — the API-sync path is slot/context-bound, runtime-owned, and now exercised over both cleartext Hyper H2 (`h2c`) and rustls-backed H2 surface-plan wiring while the remaining wrapper-only legacy seams are being quarantined
+- **Status:** Phase A hardening is complete; early Phase B/C/D prep is now in place with the live `D1` + optional `D2` baseline, manifest-driven harness fixtures, draft v2 structured transport config types, transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, masked fallback ticket issuance/opening bound to coarse network context, enriched `apt-origin` starter profiles, config-resolved v2 surface plans, envelope-level admission APIs, explicit public-session slot/context binding for the tested API-sync H2 path, runtime-owned API-sync client/request-handler abstractions, concrete Hyper-backed H2 adapters, rustls-backed H2 surface-plan wiring that uses v2 authority/trust metadata while keeping HTTP encoding inside `apt-surface-h2`, and a split `apt-admission` client module that now quarantines wrapper-only `C0`/`C2` helpers away from the envelope-level hidden-upgrade core
 - **Canonical design docs:**
   - `SPEC_v2.md`
   - `docs/ARCHITECTURE_V2.md`
@@ -32,11 +32,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** TLS/origin-facing H2 surface-plan integration slice
-- **Latency impact:** small additional buffering/serialization overhead remains from HTTP body collection, plus one TLS handshake on new H2 sessions before the hidden upgrade starts
-- **Bandwidth impact:** no new AdaPT-specific wire fields; only ordinary TLS+HTTP/2 framing plus the already-modeled JSON bodies and encrypted slot payloads
-- **CPU impact:** modest extra JSON/body buffering, Hyper connection task overhead, and TLS handshake/certificate validation cost during H2 session establishment
-- **Notes:** `apt-runtime` split the H2 backend/test code by responsibility before the next feature growth, kept HTTP encoding in `apt-surface-h2`, and now supports both `h2c` and rustls-backed H2 session setup. Client-side v2 surface plans can drive real TLS+H2 API-sync hidden upgrades using authority/trust metadata, and tests now cover ordinary public traffic and hidden upgrade traffic over TLS as well as cleartext lab wiring.
+- **Chunk:** Admission wrapper quarantine and client-module split
+- **Latency impact:** no intended runtime-path change beyond the previously landed TLS/H2 overhead; this chunk is a code-structure cleanup that keeps the public-session path from inheriting more wrapper logic
+- **Bandwidth impact:** none; code-organization-only slice
+- **CPU impact:** none intended; code-organization-only slice
+- **Notes:** `apt-admission/src/client.rs` was over the repository threshold, so it was split into focused `client/envelope.rs` and `client/wrapper.rs` modules. Envelope-level `UG1`/`UG2`/`UG3`/`UG4` logic now stands on its own more clearly, while wrapper compatibility (`initiate_c0`, `PreparedC0`, `PreparedC2`, `handle_s1`, `handle_s3`) is explicitly quarantined to the wrapper module without changing behavior or test outcomes.
 
 ## Core v2 design rules
 
@@ -64,7 +64,7 @@
 | Planning/docs maintenance | active | Keep `PLAN.md`, `SPEC_v2.md`, and `docs/ARCHITECTURE_V2.md` aligned with live code and shipped scope; keep near-threshold H2 modules split by responsibility as they grow | No runtime impact |
 | Runtime/module split | active | Finish separating remaining transport-owned runtime/helpers into surface-ready modules and remove remaining coupling between the live runtime baseline and future public-session families | No intentional runtime impact; lowers maintenance risk |
 | Empirical harness | active | Extend `apt-harness` beyond the initial passive/probe/retry report helpers into baseline corpora ingestion and runtime comparison fixtures; sample fixture manifests are the current sub-step | Offline-only analysis cost |
-| Hidden-upgrade core | active | `apt-admission` now has transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, slot bindings, masked fallback tickets, and direct envelope APIs that avoid `AdmissionPacket` / `ServerConfirmationPacket` in the tested H2 path; the public-session H2 route now uses explicit surface context instead of legacy slot bindings, and the next step is deleting or quarantining the remaining wrapper-only flow where practical | Moderate implementation risk; core enabler |
+| Hidden-upgrade core | active | `apt-admission` now has transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, slot bindings, masked fallback tickets, and direct envelope APIs that avoid `AdmissionPacket` / `ServerConfirmationPacket` in the tested H2 path; wrapper compatibility is now split into focused client/server compatibility modules, and the next step is continuing to peel that compatibility surface back from the live/runtime-facing v2 path where practical | Moderate implementation risk; core enabler |
 | Structured v2 transport config | active | Draft v2 public-session transport blocks and deployment metadata now resolve into `apt-origin` starter surface plans; next step is feeding those plans into future bundle/origin/surface orchestration without changing the live runtime path yet | Minor config churn |
 | Origin family definitions | active | `apt-origin` now carries API-sync and object/origin starter profiles with request graphs, legal upgrade slots, concurrency/timing envelopes, idle rules, and shadow-lane hints; `apt-surface-h2` is the first consumer | No runtime impact yet |
 | First public-session carrier | active | `apt-surface-h2` now provides the API-sync surface/body/slot scaffold, modeled request authority, surface-derived public-session context, and a standard HTTP request/response codec; `apt-runtime` owns bridge helpers plus client/request-handler orchestration, concrete Hyper H2 backends for both `h2c` and rustls/TLS, and plan-driven client trust wiring, and the next step is moving more of the remaining legacy wrapper/runtime assumptions out of the public-session path while preparing richer origin-backed deployment behavior and capture fixtures | Main v2 milestone |
@@ -73,10 +73,10 @@
 
 ## Next tasks
 
-1. Continue shrinking or quarantining the remaining legacy `AdmissionPacket` / `ServerConfirmationPacket` wrapper assumptions now that the public-session path has its own context-bound core and real H2 backend paths.
-2. Grow `apt-harness` from manifest-driven samples into richer baseline corpora ingestion and browser/AdaPT comparison fixtures, including real H2 backend traces from both `h2c` lab runs and TLS-backed sessions.
+1. Grow `apt-harness` from manifest-driven samples into richer baseline corpora ingestion and browser/AdaPT comparison fixtures, including real H2 backend traces from both `h2c` lab runs and TLS-backed sessions.
+2. Continue shrinking or quarantining the remaining legacy `AdmissionPacket` / `ServerConfirmationPacket` wrapper assumptions, especially in runtime-facing handshake code that still drives the `D1`/`D2` migration baseline.
 3. Extend the H2 surface-plan wiring from lab self-signed TLS into richer origin-backed deployment behavior (for example stronger trust-source handling and backend/origin routing semantics) without moving HTTP encoding into runtime code.
-4. Split any near-threshold surface/runtime files before the next H2 slice lands; the backend/test modules were pre-split in this slice and should stay that way.
+4. Split any near-threshold surface/runtime files before the next H2 slice lands; the backend/test modules and admission client path were pre-split in this slice and should stay that way.
 5. Follow with the H3 sibling surface once the H2 backend path is stable enough to serve as the reference implementation.
 6. Defer cover compiler/budget-controller sophistication until the H2 public-session baseline is genuinely running over a realistic origin-backed deployment shape.
 

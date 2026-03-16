@@ -1,161 +1,6 @@
 use super::*;
 use crate::packet::{NoiseInitiatorPayload, NoiseResponderPayload};
 
-/// Provisioned client credential.
-#[derive(Clone, Debug)]
-pub struct ClientCredential {
-    /// Admission profile.
-    pub auth_profile: AuthProfile,
-    /// Optional per-user identifier.
-    pub user_id: Option<String>,
-    /// Optional stable client static private key used to keep a deployment-local
-    /// identity even when authentication is still shared-deployment based.
-    pub client_static_private: Option<[u8; 32]>,
-    /// Raw admission key.
-    pub admission_key: [u8; 32],
-    /// Server static public key.
-    pub server_static_public: [u8; 32],
-    /// Whether to emit a rotating lookup hint.
-    pub enable_lookup_hint: bool,
-}
-
-/// Client request metadata for a new session attempt.
-#[derive(Clone, Debug)]
-pub struct ClientSessionRequest {
-    /// Remote endpoint identifier.
-    pub endpoint_id: EndpointId,
-    /// Preferred carrier for the initial attempt.
-    pub preferred_carrier: CarrierBinding,
-    /// Supported carriers.
-    pub supported_carriers: Vec<CarrierBinding>,
-    /// Supported cipher suites.
-    pub supported_suites: Vec<CipherSuite>,
-    /// Desired numeric mode.
-    pub mode: Mode,
-    /// Coarse public-route hint for the current network context.
-    pub public_route_hint: PublicRouteHint,
-    /// Coarse current path profile.
-    pub path_profile: PathProfile,
-    /// Current UNIX timestamp.
-    pub now_secs: u64,
-    /// Optional masked fallback ticket.
-    pub masked_fallback_ticket: Option<SealedEnvelope>,
-    /// Requested random padding for `C0`.
-    pub c0_padding_len: usize,
-    /// Requested random padding for `C2`.
-    pub c2_padding_len: usize,
-    /// Policy flags.
-    pub policy_flags: PolicyFlags,
-}
-
-impl ClientSessionRequest {
-    /// Creates a conservative request with spec-aligned defaults.
-    #[must_use]
-    pub fn conservative(endpoint_id: EndpointId, now_secs: u64) -> Self {
-        let public_route_hint = PublicRouteHint(endpoint_id.as_str().to_string());
-        Self {
-            endpoint_id,
-            preferred_carrier: CarrierBinding::D1DatagramUdp,
-            supported_carriers: vec![
-                CarrierBinding::D1DatagramUdp,
-                CarrierBinding::D2EncryptedDatagram,
-            ],
-            supported_suites: vec![CipherSuite::NoiseXxPsk2X25519ChaChaPolyBlake2s],
-            mode: Mode::STEALTH,
-            public_route_hint,
-            path_profile: PathProfile::unknown(),
-            now_secs,
-            masked_fallback_ticket: None,
-            c0_padding_len: 24,
-            c2_padding_len: 16,
-            policy_flags: PolicyFlags {
-                allow_hybrid_pq: false,
-            },
-        }
-    }
-}
-
-/// Result of initiating the first hidden-upgrade request.
-#[derive(Debug)]
-pub struct PreparedC0 {
-    /// Encrypted first-stage packet wrapper.
-    pub packet: AdmissionPacket,
-    /// State required to process the server's first hidden-upgrade reply.
-    pub state: ClientPendingS1,
-}
-
-/// Client state waiting for the server's first hidden-upgrade reply.
-#[derive(Debug)]
-pub struct ClientPendingS1 {
-    credential: ClientCredential,
-    endpoint_id: EndpointId,
-    _preferred_carrier: CarrierBinding,
-    supported_carriers: Vec<CarrierBinding>,
-    supported_suites: Vec<CipherSuite>,
-    _mode: Mode,
-    admission_epoch_slot: u64,
-    admission_key: [u8; 32],
-    noise: NoiseHandshake,
-    _client_nonce: ClientNonce,
-    client_contribution: [u8; 32],
-    c2_padding_len: usize,
-    public_session_context: Option<PublicSessionUpgradeContext>,
-}
-
-/// Result of processing the first server reply and emitting the client confirmation.
-#[derive(Debug)]
-pub struct PreparedC2 {
-    /// Encrypted client confirmation packet wrapper.
-    pub packet: AdmissionPacket,
-    /// State required to process the final server seal.
-    pub state: ClientPendingS3,
-}
-
-/// Result of initiating the first hidden-upgrade request without any public-wire
-/// packet wrapper.
-#[derive(Debug)]
-pub struct PreparedUg1Envelope {
-    /// Optional rotating lookup hint carried by the surrounding surface.
-    pub lookup_hint: Option<[u8; 8]>,
-    /// Encrypted hidden-upgrade envelope that may be embedded into a legal slot.
-    pub envelope: SealedEnvelope,
-    /// State required to process the server's first hidden-upgrade reply.
-    pub state: ClientPendingS1,
-}
-
-/// Result of processing `UG2` and emitting `UG3` without any public-wire packet
-/// wrapper.
-#[derive(Debug)]
-pub struct PreparedUg3Envelope {
-    /// Optional rotating lookup hint carried by the surrounding surface.
-    pub lookup_hint: Option<[u8; 8]>,
-    /// Encrypted hidden-upgrade envelope that may be embedded into a legal slot.
-    pub envelope: SealedEnvelope,
-    /// State required to process the final server seal.
-    pub state: ClientPendingS3,
-}
-
-/// Client state waiting for the final server seal.
-#[derive(Debug)]
-pub struct ClientPendingS3 {
-    endpoint_id: EndpointId,
-    chosen_carrier: CarrierBinding,
-    chosen_suite: CipherSuite,
-    _mode: Mode,
-    credential_identity: CredentialIdentity,
-    secrets: SessionSecretsForRole,
-    admission_epoch_slot: u64,
-    public_session_context: Option<PublicSessionUpgradeContext>,
-}
-
-fn chosen_credential_identity(credential: &ClientCredential) -> CredentialIdentity {
-    match (&credential.auth_profile, &credential.user_id) {
-        (AuthProfile::SharedDeployment, _) => CredentialIdentity::SharedDeployment,
-        (AuthProfile::PerUser, Some(user_id)) => CredentialIdentity::User(user_id.clone()),
-        (AuthProfile::PerUser, None) => CredentialIdentity::User("unknown-user".to_string()),
-    }
-}
-
 fn handshake_prologue(
     endpoint_id: &EndpointId,
     carrier: CarrierBinding,
@@ -310,22 +155,6 @@ pub fn initiate_ug1_with_context<C: CarrierProfile>(
     initiate_ug1_impl(credential, request, carrier, Some(public_session_context))
 }
 
-/// Initiates an admission attempt and emits the first hidden-upgrade request.
-pub fn initiate_c0<C: CarrierProfile>(
-    credential: ClientCredential,
-    request: ClientSessionRequest,
-    carrier: &C,
-) -> Result<PreparedC0, AdmissionError> {
-    let prepared = initiate_ug1(credential, request, carrier)?;
-    Ok(PreparedC0 {
-        packet: AdmissionPacket {
-            lookup_hint: prepared.lookup_hint,
-            envelope: prepared.envelope,
-        },
-        state: prepared.state,
-    })
-}
-
 impl ClientPendingS1 {
     /// Handles `UG2` directly, produces the encrypted `UG3` envelope, and
     /// returns state waiting for the final server seal.
@@ -342,36 +171,14 @@ impl ClientPendingS1 {
             self.admission_epoch_slot,
         )?;
         let ug2: Ug2 = envelope.open(&self.admission_key, &aad)?;
-        let prepared = self.finish_ug2(ug2, carrier)?;
-        Ok(PreparedUg3Envelope {
-            lookup_hint: prepared.packet.lookup_hint,
-            envelope: prepared.packet.envelope,
-            state: prepared.state,
-        })
-    }
-
-    /// Handles the first server reply, produces the client confirmation, and
-    /// returns state waiting for the final server seal.
-    pub fn handle_s1<C: CarrierProfile>(
-        self,
-        packet: &AdmissionPacket,
-        carrier: &C,
-    ) -> Result<PreparedC2, AdmissionError> {
-        self.handle_ug2(&packet.envelope, carrier)
-            .map(|prepared| PreparedC2 {
-                packet: AdmissionPacket {
-                    lookup_hint: prepared.lookup_hint,
-                    envelope: prepared.envelope,
-                },
-                state: prepared.state,
-            })
+        self.finish_ug2(ug2, carrier)
     }
 
     fn finish_ug2<C: CarrierProfile>(
         mut self,
         ug2: Ug2,
         carrier: &C,
-    ) -> Result<PreparedC2, AdmissionError> {
+    ) -> Result<PreparedUg3Envelope, AdmissionError> {
         if !self.supported_suites.contains(&ug2.chosen_suite) {
             return Err(AdmissionError::Validation("server chose unsupported suite"));
         }
@@ -428,7 +235,7 @@ impl ClientPendingS1 {
         let ug3 = Ug3 {
             selected_family_ack: ug2.chosen_family,
             anti_amplification_cookie: ug2.anti_amplification_cookie.clone(),
-            noise_msg3: noise_msg3.clone(),
+            noise_msg3,
             slot_binding: phase_slot_binding(
                 &self.endpoint_id,
                 carrier.binding(),
@@ -446,15 +253,14 @@ impl ClientPendingS1 {
             UpgradeMessagePhase::Request,
             self.admission_epoch_slot,
         )?;
-        let c2_envelope = SealedEnvelope::seal(&self.admission_key, &request_aad, &ug3)?;
-        let packet = AdmissionPacket {
-            lookup_hint: self.credential.enable_lookup_hint.then(|| {
-                derive_lookup_hint(&self.credential.admission_key, self.admission_epoch_slot)
-            }),
-            envelope: c2_envelope,
-        };
-        Ok(PreparedC2 {
-            packet,
+        let ug3_envelope = SealedEnvelope::seal(&self.admission_key, &request_aad, &ug3)?;
+        let lookup_hint = self
+            .credential
+            .enable_lookup_hint
+            .then(|| derive_lookup_hint(&self.credential.admission_key, self.admission_epoch_slot));
+        Ok(PreparedUg3Envelope {
+            lookup_hint,
+            envelope: ug3_envelope,
             state: ClientPendingS3 {
                 endpoint_id: self.endpoint_id,
                 chosen_carrier: ug2.chosen_family,
@@ -475,15 +281,6 @@ impl ClientPendingS3 {
     #[must_use]
     pub const fn confirmation_recv_ctrl_key(&self) -> &[u8; 32] {
         &self.secrets.recv_ctrl
-    }
-
-    /// Handles the final server seal and finalizes the session.
-    pub fn handle_s3<C: CarrierProfile>(
-        self,
-        packet: &ServerConfirmationPacket,
-        carrier: &C,
-    ) -> Result<EstablishedSession, AdmissionError> {
-        self.handle_ug4(&packet.envelope, carrier)
     }
 
     /// Handles `UG4` directly and finalizes the session without any public-wire
