@@ -32,11 +32,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** First live user-test plumbing fixes for the H2 baseline
-- **Latency impact:** no protocol-shape change intended; H2 tunnel session timing stays the same, though macOS DNS updates should take effect more reliably at connect time
-- **Bandwidth impact:** none intended; this slice only fixes server subnet routing and macOS resolver refresh behavior around the existing H2 tunnel path
-- **CPU impact:** negligible; one extra macOS resolver refresh at connect time and explicit Linux route installation for tunnel subnets
-- **Notes:** the current user-testing focus is on post-establishment internet reachability now that H2 session establishment itself works. The next runtime fixes are aimed at making full-tunnel DNS/egress behavior match the previously working v1 operational baseline.
+- **Chunk:** First live user-test plumbing and latency fixes for the H2 baseline
+- **Latency impact:** material improvement for established-session TCP/TLS traffic over H2 by replacing the old once-per-second idle polling behavior with sub-second polling; macOS DNS updates should also take effect more reliably at connect time
+- **Bandwidth impact:** modest increase while a session is established because the H2 client now polls for inbound tunnel data at a sub-second cadence instead of only once per second
+- **CPU impact:** small steady-state increase on active sessions from the tighter H2 polling cadence, plus negligible connect-time overhead for macOS resolver refresh and explicit Linux tunnel-subnet route installation
+- **Notes:** the current user-testing focus is on post-establishment internet reachability and usable latency now that H2 session establishment itself works. The next runtime fixes are aimed at making full-tunnel DNS/egress behavior match the previously working v1 operational baseline without regressing the public-session architecture.
 
 ## Core v2 design rules
 

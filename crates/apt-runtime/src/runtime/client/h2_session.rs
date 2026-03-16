@@ -2,6 +2,9 @@ use super::super::*;
 use super::{helpers::disconnected_client_status, wait_for_shutdown_signal};
 use apt_client_control::ClientRuntimeEvent;
 use apt_tunnel::{DecodedPacket, Frame, RekeyStatus};
+
+const H2_IDLE_POLL_INTERVAL_MILLIS: u64 = 100;
+
 pub(super) async fn run_client_h2_session_loop(
     config: &ResolvedClientConfig,
     tun: TunHandle,
@@ -54,13 +57,14 @@ pub(super) async fn run_client_h2_session_loop(
     persistent_state.store(&config.state_path)?;
 
     let _session_id = session.established().session_id;
-    let mut tick = interval(Duration::from_secs(1));
+    let mut maintenance_tick = interval(Duration::from_secs(1));
+    let mut poll_tick = interval(Duration::from_millis(H2_IDLE_POLL_INTERVAL_MILLIS));
     let mut tun_rx = tun.inbound_rx;
     let tun_tx = tun.outbound_tx.clone();
     let mut pending_frames = Vec::new();
     let mut last_send_secs = now_secs();
     let mut last_recv_secs = now_secs();
-    let mut last_poll_secs = 0;
+    let mut last_poll_millis = 0;
     let mut shutdown_rx = hooks.shutdown_rx.clone();
 
     loop {
@@ -81,7 +85,7 @@ pub(super) async fn run_client_h2_session_loop(
                             .exchange_tunnel_frames_with_hyper_client(&mut backend, &frames, now_secs())
                             .await?;
                         last_send_secs = now_secs();
-                        last_poll_secs = last_send_secs;
+                        last_poll_millis = now_millis();
                         adaptive.record_outbound(
                             payload_bytes.saturating_add(approximate_frame_bytes(&frames)),
                             burst_len,
@@ -115,7 +119,7 @@ pub(super) async fn run_client_h2_session_loop(
                     None => break,
                 }
             }
-            _ = tick.tick() => {
+            _ = maintenance_tick.tick() => {
                 let now = now_secs();
                 if let Some(mode) = adaptive.maybe_observe_stability(now) {
                     hooks.emit(ClientRuntimeEvent::ModeChanged { mode: mode.value() });
@@ -142,54 +146,60 @@ pub(super) async fn run_client_h2_session_loop(
                     }
                     RekeyStatus::Healthy => {}
                 }
-                let should_poll = !frames.is_empty() || now.saturating_sub(last_poll_secs) >= 1;
-                if should_poll {
-                    let decoded = session
-                        .exchange_tunnel_frames_with_hyper_client(&mut backend, &frames, now)
-                        .await?;
-                    last_send_secs = now;
-                    last_poll_secs = now;
-                    if !frames.is_empty() {
-                        adaptive.record_outbound(
-                            approximate_frame_bytes(&frames),
-                            frames.iter().filter(|frame| matches!(frame, Frame::IpData(_))).count().max(1),
-                            now_millis(),
-                        );
-                        if frames.iter().any(|frame| matches!(frame, Frame::Ping)) {
-                            adaptive.note_keepalive_sent(now);
-                        } else {
-                            adaptive.note_activity(now);
-                        }
-                    }
-                    if process_decoded_packet(
-                        &mut session,
-                        decoded,
-                        &tun_tx,
-                        &mut pending_frames,
-                        &mut adaptive,
-                        &mut last_recv_secs,
-                    ).await? {
-                        persist_client_learning(persistent_state, &adaptive);
-                        persistent_state.last_status = Some(RuntimeStatus::Disconnected);
-                        persistent_state.store(&config.state_path)?;
-                        hooks.emit(ClientRuntimeEvent::SessionEnded {
-                            reason: Some("remote close".to_string()),
-                        });
-                        return Ok(disconnected_client_status(
-                            config,
-                            &transport,
-                            &tun.interface_name,
-                            Some(CarrierBinding::S1EncryptedStream),
-                            None,
-                            adaptive.current_mode(),
-                        ));
-                    }
-                }
+                pending_frames.extend(frames);
                 let stats = adaptive.session_stats();
                 hooks.emit(ClientRuntimeEvent::StatsTick {
                     tx_bytes: stats.tx_bytes,
                     rx_bytes: stats.rx_bytes,
                 });
+            }
+            _ = poll_tick.tick() => {
+                let poll_millis = now_millis();
+                if poll_millis.saturating_sub(last_poll_millis) < H2_IDLE_POLL_INTERVAL_MILLIS {
+                    continue;
+                }
+                let now = now_secs();
+                let frames = std::mem::take(&mut pending_frames);
+                let decoded = session
+                    .exchange_tunnel_frames_with_hyper_client(&mut backend, &frames, now)
+                    .await?;
+                last_send_secs = now;
+                last_poll_millis = poll_millis;
+                if !frames.is_empty() {
+                    adaptive.record_outbound(
+                        approximate_frame_bytes(&frames),
+                        frames.iter().filter(|frame| matches!(frame, Frame::IpData(_))).count().max(1),
+                        poll_millis,
+                    );
+                    if frames.iter().any(|frame| matches!(frame, Frame::Ping)) {
+                        adaptive.note_keepalive_sent(now);
+                    } else {
+                        adaptive.note_activity(now);
+                    }
+                }
+                if process_decoded_packet(
+                    &mut session,
+                    decoded,
+                    &tun_tx,
+                    &mut pending_frames,
+                    &mut adaptive,
+                    &mut last_recv_secs,
+                ).await? {
+                    persist_client_learning(persistent_state, &adaptive);
+                    persistent_state.last_status = Some(RuntimeStatus::Disconnected);
+                    persistent_state.store(&config.state_path)?;
+                    hooks.emit(ClientRuntimeEvent::SessionEnded {
+                        reason: Some("remote close".to_string()),
+                    });
+                    return Ok(disconnected_client_status(
+                        config,
+                        &transport,
+                        &tun.interface_name,
+                        Some(CarrierBinding::S1EncryptedStream),
+                        None,
+                        adaptive.current_mode(),
+                    ));
+                }
             }
             _ = wait_for_optional_shutdown_signal(&mut shutdown_rx) => {
                 break;
