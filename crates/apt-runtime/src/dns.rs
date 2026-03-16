@@ -132,6 +132,7 @@ fn configure_client_dns_macos(
     let mut set_args = vec!["-setdnsservers".to_string(), service.clone()];
     set_args.extend(dns_servers.iter().map(ToString::to_string));
     run_command("networksetup", &set_args)?;
+    refresh_macos_resolver_state()?;
 
     let cleanup_args = if original_dns.is_empty() {
         vec![
@@ -170,6 +171,17 @@ fn macos_post_restore_cleanup_commands() -> Vec<Vec<String>> {
         ],
         vec!["dscacheutil".to_string(), "-flushcache".to_string()],
     ]
+}
+
+#[cfg(target_os = "macos")]
+fn refresh_macos_resolver_state() -> Result<(), RuntimeError> {
+    for command in macos_post_restore_cleanup_commands() {
+        let Some((program, args)) = command.split_first() else {
+            continue;
+        };
+        run_command(program, args)?;
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]

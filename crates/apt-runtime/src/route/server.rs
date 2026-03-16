@@ -23,7 +23,22 @@ fn configure_server_network_linux(
     interface_name: &str,
     config: &ResolvedServerConfig,
 ) -> Result<RouteGuard, RuntimeError> {
-    let guard = RouteGuard::default();
+    let mut guard = RouteGuard::default();
+    ensure_linux_tunnel_route(
+        &mut guard,
+        interface_name,
+        subnet_from(config.tunnel_local_ipv4, config.tunnel_netmask),
+    )?;
+    if let (Some(tunnel_local_ipv6), Some(tunnel_ipv6_prefix_len)) =
+        (config.tunnel_local_ipv6, config.tunnel_ipv6_prefix_len)
+    {
+        ensure_linux_tunnel_route(
+            &mut guard,
+            interface_name,
+            ipv6_subnet_from(tunnel_local_ipv6, tunnel_ipv6_prefix_len),
+        )?;
+    }
+
     if config.enable_ipv4_forwarding {
         run_command("sysctl", &["-w".into(), "net.ipv4.ip_forward=1".into()])?;
     }
@@ -147,6 +162,40 @@ fn configure_server_network_linux(
         "server network configuration applied"
     );
     Ok(guard)
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_linux_tunnel_route(
+    guard: &mut RouteGuard,
+    interface_name: &str,
+    subnet: IpNet,
+) -> Result<(), RuntimeError> {
+    let mut args = Vec::new();
+    if subnet.is_ipv6() {
+        args.push("-6".to_string());
+    }
+    args.extend([
+        "route".to_string(),
+        "replace".to_string(),
+        subnet.to_string(),
+        "dev".to_string(),
+        interface_name.to_string(),
+    ]);
+    run_command("ip", &args)?;
+
+    let mut cleanup = vec!["ip".to_string()];
+    if subnet.is_ipv6() {
+        cleanup.push("-6".to_string());
+    }
+    cleanup.extend([
+        "route".to_string(),
+        "del".to_string(),
+        subnet.to_string(),
+        "dev".to_string(),
+        interface_name.to_string(),
+    ]);
+    guard.cleanup_commands.push(cleanup);
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]

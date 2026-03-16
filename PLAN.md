@@ -32,11 +32,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** H2 product/runtime cleanup after cutover
-- **Latency impact:** no intentional runtime change; the live client/server path stays on the existing H2 API-sync flow
-- **Bandwidth impact:** none intended; this slice deleted dead D1/D2 internals rather than changing the H2 message shape
-- **CPU impact:** slight reduction in compile/test surface and maintenance overhead; no intended per-packet runtime cost change
-- **Notes:** the live `apt-runtime` crate now compiles only the H2 public-session path plus the shared tunnel/session helpers it still uses. The old D1/D2 runtime transport modules, handshake loops, outer-wire helpers, and legacy runtime tests were deleted instead of quarantined, and the resolved runtime config shape no longer carries the removed D2/carrier-selection baggage.
+- **Chunk:** First live user-test plumbing fixes for the H2 baseline
+- **Latency impact:** no protocol-shape change intended; H2 tunnel session timing stays the same, though macOS DNS updates should take effect more reliably at connect time
+- **Bandwidth impact:** none intended; this slice only fixes server subnet routing and macOS resolver refresh behavior around the existing H2 tunnel path
+- **CPU impact:** negligible; one extra macOS resolver refresh at connect time and explicit Linux route installation for tunnel subnets
+- **Notes:** the current user-testing focus is on post-establishment internet reachability now that H2 session establishment itself works. The next runtime fixes are aimed at making full-tunnel DNS/egress behavior match the previously working v1 operational baseline.
 
 ## Core v2 design rules
 
@@ -62,22 +62,22 @@
 | Chunk | Status | Scope | Expected impact |
 |---|---|---|---|
 | Planning/docs maintenance | active | Keep `PLAN.md`, `SPEC_v2.md`, and `docs/ARCHITECTURE_V2.md` aligned with live code and shipped scope; keep near-threshold H2 modules split by responsibility as they grow | No runtime impact |
-| Runtime/module split | active | The H2 cutover cleanup deleted the dead D1/D2 runtime transport modules, handshake loops, wire wrappers, and legacy runtime tests from `apt-runtime`; next step is to keep the H2/H3 session drivers and shared helpers cleanly split as origin-backed behavior and the H3 sibling land | No intentional runtime impact; lowers maintenance risk |
+| Runtime/module split | active | The H2 cutover cleanup deleted the dead D1/D2 runtime transport modules, handshake loops, wire wrappers, and legacy runtime tests from `apt-runtime`; the immediate follow-up is fixing first-user-test internet-plumbing issues while keeping the H2/H3 session drivers and shared helpers cleanly split as origin-backed behavior and the H3 sibling land | No intentional protocol impact; lowers maintenance risk |
 | Empirical harness | active | `apt-harness` now supports both coarse passive summaries and richer H2 backend-trace corpora with manifest-driven evaluation; next step is feeding it more realistic captured/session-derived fixtures and additional comparison axes beyond the current authority/path/header/status heuristics | Offline-only analysis cost |
 | Hidden-upgrade core | active | `apt-admission` now has transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, slot bindings, masked fallback tickets, and direct envelope APIs throughout the crate; the old packet-wrapper compatibility layer has been deleted, and the next step is keeping future H3 work on the same wrapper-free surface | Moderate implementation risk; core enabler |
 | Structured v2 transport config | active | Draft v2 public-session transport blocks and deployment metadata now resolve into `apt-origin` starter surface plans; next step is feeding those plans into future bundle/origin/surface orchestration without changing the live runtime path yet | Minor config churn |
 | Origin family definitions | active | `apt-origin` now carries API-sync and object/origin starter profiles with request graphs, legal upgrade slots, concurrency/timing envelopes, idle rules, and shadow-lane hints; `apt-surface-h2` is the first consumer | No runtime impact yet |
-| First public-session carrier | active | `apt-surface-h2` now provides the API-sync surface/body/slot scaffold, modeled request authority, surface-derived public-session context, HTTP request/response codecs, and established-session tunnel-packet slot helpers; `apt-runtime` owns bridge helpers plus client/request-handler orchestration, connection-local H2 session state, concrete Hyper H2 backends for both `h2c` and rustls/TLS, and plan-driven client trust wiring. The immediate next step is user testing and origin-backed deployment polish before Phase E H3 work expands the same pattern; the shipped apps/docs/bundles now assume H2 directly and no longer expose legacy carrier toggles | Main v2 milestone; ready for user testing |
+| First public-session carrier | active | `apt-surface-h2` now provides the API-sync surface/body/slot scaffold, modeled request authority, surface-derived public-session context, HTTP request/response codecs, and established-session tunnel-packet slot helpers; `apt-runtime` owns bridge helpers plus client/request-handler orchestration, connection-local H2 session state, concrete Hyper H2 backends for both `h2c` and rustls/TLS, and plan-driven client trust wiring. The immediate next step is closing the first real operator-testing gaps (full-tunnel DNS/egress correctness, origin-backed deployment polish, and more fixture-backed validation) before Phase E H3 work expands the same pattern; the shipped apps/docs/bundles now assume H2 directly and no longer expose legacy carrier toggles | Main v2 milestone; in live user-testing/fixup mode |
 | Second public-session carrier | pending | Ship the H3 public-session sibling after H2 is stable | Major feature; higher protocol complexity |
 | Cover compiler + budget controller | pending | Add machine-readable cover profiles, session plans, and bounded indistinguishability budgets | Bounded CPU/latency overhead |
 
 ## Next tasks
 
-1. Hand the H2 API-sync baseline to interactive user testing now that the products, bundles, docs, and live runtime all speak the H2-first flow directly.
-2. Extend the H2 surface-plan wiring from self-signed lab TLS into richer origin-backed deployment behavior (for example stronger trust-source handling and backend/origin routing semantics) without moving HTTP encoding into runtime code.
-3. Feed `apt-harness` with more realistic captured/session-derived H2 corpora now that the repo can ingest backend-trace fixtures and compare TLS-backed vs cleartext lab sessions explicitly.
-4. Split any near-threshold surface/runtime files before the H3 slice lands; the backend/test modules and H2 runtime/session helpers should stay responsibility-scoped.
-5. Start the H3 sibling surface using the same wrapper-free hidden-upgrade core and the H2 API-sync session driver as the reference shape.
+1. Close the current first-user-test H2 reachability gaps so a connected session reliably delivers full-tunnel DNS and internet egress on the supported Linux-server/macOS-client path.
+2. Continue interactive H2 API-sync user testing now that products, bundles, docs, and the live runtime all speak the H2-first flow directly.
+3. Extend the H2 surface-plan wiring from self-signed lab TLS into richer origin-backed deployment behavior (for example stronger trust-source handling and backend/origin routing semantics) without moving HTTP encoding into runtime code.
+4. Feed `apt-harness` with more realistic captured/session-derived H2 corpora now that the repo can ingest backend-trace fixtures and compare TLS-backed vs cleartext lab sessions explicitly.
+5. Split any near-threshold surface/runtime files before the H3 slice lands; the backend/test modules and H2 runtime/session helpers should stay responsibility-scoped.
 
 ## Detailed implementation requirements for the next upcoming chunks
 
