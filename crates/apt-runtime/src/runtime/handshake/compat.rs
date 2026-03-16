@@ -5,7 +5,7 @@ pub(crate) fn decode_client_admission_packet(
     carrier: &D1Carrier,
     datagram: &[u8],
     now_secs: u64,
-) -> Option<AdmissionPacket> {
+) -> Option<AdmissionWirePacket> {
     candidate_epoch_slots(now_secs)
         .into_iter()
         .find_map(|epoch_slot| {
@@ -20,7 +20,7 @@ pub(crate) fn decode_client_d2_admission_packet(
     carrier: &D2Carrier,
     datagram: &[u8],
     now_secs: u64,
-) -> Option<AdmissionPacket> {
+) -> Option<AdmissionWirePacket> {
     candidate_epoch_slots(now_secs)
         .into_iter()
         .find_map(|epoch_slot| {
@@ -84,7 +84,7 @@ pub(crate) fn decode_server_d2_admission_packet(
 
 #[derive(Clone, Debug)]
 pub(crate) struct DecodedServerAdmissionPacket {
-    pub(crate) packet: AdmissionPacket,
+    pub(crate) packet: AdmissionWirePacket,
     pub(crate) outer_key: [u8; 32],
 }
 

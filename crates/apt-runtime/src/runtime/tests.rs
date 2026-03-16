@@ -3,7 +3,7 @@ use crate::config::{
     ResolvedAuthorizedPeer, ResolvedClientConfig, ResolvedClientD2Config, ResolvedRemoteEndpoint,
     ResolvedServerConfig, RuntimeCarrierPreference,
 };
-use apt_admission::{initiate_c0, ClientCredential, ClientSessionRequest};
+use apt_admission::{initiate_ug1, ClientCredential, ClientSessionRequest};
 use apt_carriers::D1Carrier;
 use apt_types::{AuthProfile, EndpointId, Mode, PathProfile, RekeyLimits};
 use std::{
@@ -305,7 +305,7 @@ fn server_outer_admission_decode_accepts_per_user_keys() {
     let carrier = D1Carrier::conservative();
     let server_static_public = apt_crypto::generate_static_keypair().unwrap().public;
     let now_secs = DEFAULT_ADMISSION_EPOCH_SLOT_SECS;
-    let prepared = initiate_c0(
+    let prepared = initiate_ug1(
         ClientCredential {
             auth_profile: AuthProfile::PerUser,
             user_id: Some("laptop".to_string()),
@@ -321,14 +321,21 @@ fn server_outer_admission_decode_accepts_per_user_keys() {
     let outer_key =
         derive_d1_admission_outer_key(&[0x77; 32], now_secs / DEFAULT_ADMISSION_EPOCH_SLOT_SECS)
             .unwrap();
-    let datagram =
-        encode_admission_datagram(&carrier, &config.endpoint_id, &outer_key, &prepared.packet)
-            .unwrap();
+    let datagram = encode_admission_datagram(
+        &carrier,
+        &config.endpoint_id,
+        &outer_key,
+        &AdmissionWirePacket {
+            lookup_hint: prepared.lookup_hint,
+            envelope: prepared.envelope.clone(),
+        },
+    )
+    .unwrap();
 
     let decoded = decode_server_admission_packet(&config, &carrier, &datagram, now_secs)
         .expect("per-user admission packet should decrypt with a configured user key");
     assert_eq!(decoded.outer_key, outer_key);
-    assert_eq!(decoded.packet.lookup_hint, prepared.packet.lookup_hint);
+    assert_eq!(decoded.packet.lookup_hint, prepared.lookup_hint);
 }
 
 #[test]

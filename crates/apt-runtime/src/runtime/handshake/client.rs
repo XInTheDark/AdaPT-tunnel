@@ -107,12 +107,15 @@ async fn attempt_client_handshake_d1(
             masked_fallback_ticket.clone(),
             now,
         );
-        let prepared_c0 = initiate_c0(credential, request, carrier)?;
+        let prepared_ug1 = initiate_ug1(credential, request, carrier)?;
         let c0_bytes = encode_admission_datagram(
             carrier,
             &config.endpoint_id,
             &outer_key,
-            &prepared_c0.packet,
+            &AdmissionWirePacket {
+                lookup_hint: prepared_ug1.lookup_hint,
+                envelope: prepared_ug1.envelope.clone(),
+            },
         )?;
         socket.send(&c0_bytes).await?;
 
@@ -136,17 +139,20 @@ async fn attempt_client_handshake_d1(
             Some(packet) => packet,
             None => continue,
         };
-        let prepared_c2 = prepared_c0.state.handle_s1(&s1, carrier)?;
+        let prepared_ug3 = prepared_ug1.state.handle_ug2(&s1.envelope, carrier)?;
         let c2_bytes = encode_admission_datagram(
             carrier,
             &config.endpoint_id,
             &outer_key,
-            &prepared_c2.packet,
+            &AdmissionWirePacket {
+                lookup_hint: prepared_ug3.lookup_hint,
+                envelope: prepared_ug3.envelope.clone(),
+            },
         )?;
         socket.send(&c2_bytes).await?;
 
         let confirmation_outer_key =
-            derive_d1_confirmation_outer_key(prepared_c2.state.confirmation_recv_ctrl_key())?;
+            derive_d1_confirmation_outer_key(prepared_ug3.state.confirmation_recv_ctrl_key())?;
         let s3_len = match timeout(
             Duration::from_secs(config.handshake_timeout_secs),
             socket.recv(&mut recv_buf),
@@ -157,13 +163,13 @@ async fn attempt_client_handshake_d1(
             Ok(Err(error)) => return Err(error.into()),
             Err(_) => continue,
         };
-        let s3: ServerConfirmationPacket = decode_confirmation_datagram(
+        let s3 = decode_confirmation_datagram(
             carrier,
             &config.endpoint_id,
             &confirmation_outer_key,
             &recv_buf[..s3_len],
         )?;
-        let session = prepared_c2.state.handle_s3(&s3, carrier)?;
+        let session = prepared_ug3.state.handle_ug4(&s3.envelope, carrier)?;
         return Ok(HandshakeSuccess {
             binding: CarrierBinding::D1DatagramUdp,
             established: session,
@@ -197,12 +203,15 @@ async fn attempt_client_handshake_d2(
             masked_fallback_ticket.clone(),
             now,
         );
-        let prepared_c0 = initiate_c0(credential, request, carrier)?;
+        let prepared_ug1 = initiate_ug1(credential, request, carrier)?;
         let c0_bytes = encode_admission_d2_datagram(
             carrier,
             &config.endpoint_id,
             &outer_key,
-            &prepared_c0.packet,
+            &AdmissionWirePacket {
+                lookup_hint: prepared_ug1.lookup_hint,
+                envelope: prepared_ug1.envelope.clone(),
+            },
         )?;
         connection
             .send_datagram_wait(bytes::Bytes::from(c0_bytes))
@@ -223,12 +232,15 @@ async fn attempt_client_handshake_d2(
             Some(packet) => packet,
             None => continue,
         };
-        let prepared_c2 = prepared_c0.state.handle_s1(&s1, carrier)?;
+        let prepared_ug3 = prepared_ug1.state.handle_ug2(&s1.envelope, carrier)?;
         let c2_bytes = encode_admission_d2_datagram(
             carrier,
             &config.endpoint_id,
             &outer_key,
-            &prepared_c2.packet,
+            &AdmissionWirePacket {
+                lookup_hint: prepared_ug3.lookup_hint,
+                envelope: prepared_ug3.envelope.clone(),
+            },
         )?;
         connection
             .send_datagram_wait(bytes::Bytes::from(c2_bytes))
@@ -236,7 +248,7 @@ async fn attempt_client_handshake_d2(
             .map_err(|error| RuntimeError::Quic(error.to_string()))?;
 
         let confirmation_outer_key =
-            derive_d2_confirmation_outer_key(prepared_c2.state.confirmation_recv_ctrl_key())?;
+            derive_d2_confirmation_outer_key(prepared_ug3.state.confirmation_recv_ctrl_key())?;
         let s3_bytes = match timeout(
             Duration::from_secs(config.handshake_timeout_secs),
             connection.read_datagram(),
@@ -247,13 +259,13 @@ async fn attempt_client_handshake_d2(
             Ok(Err(error)) => return Err(RuntimeError::Quic(error.to_string())),
             Err(_) => continue,
         };
-        let s3: ServerConfirmationPacket = decode_confirmation_d2_datagram(
+        let s3 = decode_confirmation_d2_datagram(
             carrier,
             &config.endpoint_id,
             &confirmation_outer_key,
             &s3_bytes,
         )?;
-        let session = prepared_c2.state.handle_s3(&s3, carrier)?;
+        let session = prepared_ug3.state.handle_ug4(&s3.envelope, carrier)?;
         return Ok(HandshakeSuccess {
             binding: CarrierBinding::D2EncryptedDatagram,
             established: session,

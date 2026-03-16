@@ -16,10 +16,11 @@ pub(super) async fn handle_server_admission_datagram(
     telemetry: &mut TelemetrySnapshot,
     observability: &ObservabilityConfig,
 ) -> Result<bool, RuntimeError> {
-    match admission.handle_c0(
+    match admission.handle_ug1(
         &peer_addr.to_string(),
         carriers.d1(),
-        &decoded.packet,
+        decoded.packet.lookup_hint,
+        &decoded.packet.envelope,
         received_len,
         now_secs(),
     ) {
@@ -28,7 +29,10 @@ pub(super) async fn handle_server_admission_datagram(
                 carriers.d1(),
                 &config.endpoint_id,
                 &decoded.outer_key,
-                &reply,
+                &AdmissionWirePacket {
+                    lookup_hint: None,
+                    envelope: reply,
+                },
             )?;
             socket.send_to(&bytes, peer_addr).await?;
             return Ok(true);
@@ -36,10 +40,11 @@ pub(super) async fn handle_server_admission_datagram(
         ServerResponse::Drop(_) => {}
     }
 
-    let server_reply = match admission.handle_c2_with_extension_builder(
+    let server_reply = match admission.handle_ug3_with_extension_builder(
         &peer_addr.to_string(),
         carriers.d1(),
-        &decoded.packet,
+        decoded.packet.lookup_hint,
+        &decoded.packet.envelope,
         now_secs(),
         |session| {
             let peer = authorize_established_session(config, session)
@@ -64,7 +69,9 @@ pub(super) async fn handle_server_admission_datagram(
         carriers.d1(),
         &config.endpoint_id,
         &confirmation_outer_key,
-        &server_reply.packet,
+        &ConfirmationWirePacket {
+            envelope: server_reply.envelope.clone(),
+        },
     )?;
     socket.send_to(&bytes, peer_addr).await?;
 
@@ -104,10 +111,11 @@ pub(super) async fn handle_server_admission_d2(
     let Some(carrier) = carriers.d2() else {
         return Ok(false);
     };
-    match admission.handle_c0(
+    match admission.handle_ug1(
         &peer.peer_addr.to_string(),
         carrier,
-        &decoded.packet,
+        decoded.packet.lookup_hint,
+        &decoded.packet.envelope,
         received_len,
         now_secs(),
     ) {
@@ -116,7 +124,10 @@ pub(super) async fn handle_server_admission_d2(
                 carrier,
                 &config.endpoint_id,
                 &decoded.outer_key,
-                &reply,
+                &AdmissionWirePacket {
+                    lookup_hint: None,
+                    envelope: reply,
+                },
             )?;
             queue_path_payload(&PathSender::D2(peer.sender.clone()), bytes)?;
             return Ok(true);
@@ -124,10 +135,11 @@ pub(super) async fn handle_server_admission_d2(
         ServerResponse::Drop(_) => {}
     }
 
-    let server_reply = match admission.handle_c2_with_extension_builder(
+    let server_reply = match admission.handle_ug3_with_extension_builder(
         &peer.peer_addr.to_string(),
         carrier,
-        &decoded.packet,
+        decoded.packet.lookup_hint,
+        &decoded.packet.envelope,
         now_secs(),
         |session| {
             let authorized = authorize_established_session(config, session)
@@ -152,7 +164,9 @@ pub(super) async fn handle_server_admission_d2(
         carrier,
         &config.endpoint_id,
         &confirmation_outer_key,
-        &server_reply.packet,
+        &ConfirmationWirePacket {
+            envelope: server_reply.envelope.clone(),
+        },
     )?;
     queue_path_payload(&PathSender::D2(peer.sender.clone()), bytes)?;
 

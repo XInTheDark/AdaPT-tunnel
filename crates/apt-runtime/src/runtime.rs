@@ -19,14 +19,14 @@ use crate::{
         derive_d1_confirmation_outer_key, derive_d1_tunnel_outer_keys,
         derive_d2_admission_outer_key, derive_d2_confirmation_outer_key,
         derive_d2_tunnel_outer_keys, encode_admission_d2_datagram, encode_admission_datagram,
-        encode_confirmation_d2_datagram, encode_confirmation_datagram, CachedTunnelOuterCrypto,
-        D1OuterKeys, D2OuterKeys,
+        encode_confirmation_d2_datagram, encode_confirmation_datagram, AdmissionWirePacket,
+        CachedTunnelOuterCrypto, ConfirmationWirePacket, D1OuterKeys, D2OuterKeys,
     },
 };
 use apt_admission::{
-    initiate_c0, AdmissionConfig, AdmissionError, AdmissionPacket, AdmissionServer,
-    AdmissionServerSecrets, ClientCredential, ClientSessionRequest, CredentialStore,
-    EstablishedSession, PerUserCredential, ServerConfirmationPacket, ServerResponse,
+    initiate_ug1, AdmissionConfig, AdmissionError, AdmissionServer, AdmissionServerSecrets,
+    ClientCredential, ClientSessionRequest, CredentialStore,
+    EstablishedSession, PerUserCredential, ServerResponse,
 };
 use apt_carriers::{CarrierError, CarrierProfile, D1Carrier, D2Carrier};
 use apt_crypto::{SealedEnvelope, SessionSecretsForRole, StaticKeypair};

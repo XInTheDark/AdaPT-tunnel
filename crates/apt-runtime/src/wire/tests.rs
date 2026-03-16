@@ -1,5 +1,4 @@
 use super::*;
-use apt_admission::{AdmissionPacket, ServerConfirmationPacket};
 use apt_carriers::{D1Carrier, D2Carrier};
 use apt_crypto::SealedEnvelope;
 use apt_types::{EndpointId, SessionId};
@@ -9,7 +8,7 @@ fn admission_datagram_round_trip() {
     let carrier = D1Carrier::conservative();
     let endpoint_id = EndpointId::new("edge-a");
     let key = derive_d1_admission_outer_key(&[3_u8; 32], 77).unwrap();
-    let packet = AdmissionPacket {
+    let packet = AdmissionWirePacket {
         lookup_hint: Some([9_u8; 8]),
         envelope: SealedEnvelope {
             nonce: [7_u8; 24],
@@ -26,7 +25,7 @@ fn confirmation_datagram_round_trip() {
     let carrier = D1Carrier::conservative();
     let endpoint_id = EndpointId::new("edge-a");
     let key = derive_d1_confirmation_outer_key(&[5_u8; 32]).unwrap();
-    let packet = ServerConfirmationPacket {
+    let packet = ConfirmationWirePacket {
         envelope: SealedEnvelope {
             nonce: [1_u8; 24],
             ciphertext: b"confirmation".to_vec(),
@@ -42,7 +41,7 @@ fn d2_admission_datagram_round_trip() {
     let carrier = D2Carrier::conservative();
     let endpoint_id = EndpointId::new("edge-a");
     let key = derive_d2_admission_outer_key(&[0x13_u8; 32], 77).unwrap();
-    let packet = AdmissionPacket {
+    let packet = AdmissionWirePacket {
         lookup_hint: Some([0x19_u8; 8]),
         envelope: SealedEnvelope {
             nonce: [0x17_u8; 24],

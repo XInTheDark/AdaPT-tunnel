@@ -8,7 +8,8 @@ mod tests;
 pub use admission::{
     decode_admission_d2_datagram, decode_admission_datagram, decode_confirmation_d2_datagram,
     decode_confirmation_datagram, encode_admission_d2_datagram, encode_admission_datagram,
-    encode_confirmation_d2_datagram, encode_confirmation_datagram,
+    encode_confirmation_d2_datagram, encode_confirmation_datagram, AdmissionWirePacket,
+    ConfirmationWirePacket,
 };
 pub use keys::{
     derive_d1_admission_outer_key, derive_d1_confirmation_outer_key, derive_d1_tunnel_outer_keys,
