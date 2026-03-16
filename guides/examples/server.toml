@@ -1,11 +1,11 @@
-# Combined Linux server daemon configuration for the current production-style APT runtime.
+# Combined Linux server daemon configuration for the current H2 API-sync runtime.
 
-bind = "0.0.0.0:51820"
-public_endpoint = "203.0.113.10:51820"
-d2_bind = "0.0.0.0:443"
-d2_public_endpoint = "203.0.113.10:443"
-d2_certificate = "file:/etc/adapt/d2-certificate.pem"
-d2_private_key = "file:/etc/adapt/d2-private-key.pem"
+bind = "0.0.0.0:443"
+public_endpoint = "203.0.113.10:443"
+authority = "api.example.com"
+certificate = "file:/etc/adapt/server-certificate.pem"
+private_key = "file:/etc/adapt/server-private-key.pem"
+deployment_strength = "self-contained"
 mode = 100
 endpoint_id = "adapt-prod"
 
@@ -35,14 +35,12 @@ nat_ipv4 = true
 push_routes = ["0.0.0.0/0"]
 push_dns = ["1.1.1.1", "1.0.0.1"]
 
-# Enable authenticated path revalidation plus the optional D2 listener.
 allow_session_migration = true
 keepalive_secs = 25
 session_idle_timeout_secs = 180
 udp_recv_buffer_bytes = 4194304
 udp_send_buffer_bytes = 4194304
 
-# One authorized client entry per stable client static public key.
 [[peers]]
 name = "laptop"
 auth_profile = "per-user"

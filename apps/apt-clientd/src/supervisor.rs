@@ -1,13 +1,12 @@
 use crate::latency::measure_tunnel_rtt_ms;
 use apt_bundle::{apply_optional_client_override, client_bundle_state_path, load_client_bundle};
 use apt_client_control::{
-    default_client_bundle_path_in, list_bundle_paths_in, ClientCarrier, ClientDaemonEvent,
-    ClientDaemonLifecycle, ClientDaemonRequest, ClientDaemonResponse, ClientDaemonSnapshot,
-    ClientLaunchOptions, ClientLogLevel, ClientRuntimeEvent,
+    default_client_bundle_path_in, list_bundle_paths_in, ClientDaemonEvent, ClientDaemonLifecycle,
+    ClientDaemonRequest, ClientDaemonResponse, ClientDaemonSnapshot, ClientLaunchOptions,
+    ClientLogLevel, ClientRuntimeEvent,
 };
 use apt_runtime::{
-    run_client_with_hooks, ClientRuntimeHooks, ClientRuntimeResult, Mode, RuntimeCarrierPreference,
-    RuntimeError,
+    run_client_with_hooks, ClientRuntimeHooks, ClientRuntimeResult, Mode, RuntimeError,
 };
 use parking_lot::Mutex;
 use std::{
@@ -88,9 +87,6 @@ impl DaemonHandle {
             ClientDaemonRequest::SetMode { mode } => {
                 SupervisorSignal::Command(SupervisorCommand::SetMode { mode, reply_tx })
             }
-            ClientDaemonRequest::SetCarrier { carrier } => {
-                SupervisorSignal::Command(SupervisorCommand::SetCarrier { carrier, reply_tx })
-            }
             ClientDaemonRequest::SetBundle { bundle_path } => {
                 SupervisorSignal::Command(SupervisorCommand::SetBundle {
                     bundle_path,
@@ -130,10 +126,6 @@ enum SupervisorCommand {
         mode: u8,
         reply_tx: oneshot::Sender<ClientDaemonResponse>,
     },
-    SetCarrier {
-        carrier: ClientCarrier,
-        reply_tx: oneshot::Sender<ClientDaemonResponse>,
-    },
     SetBundle {
         bundle_path: PathBuf,
         reply_tx: oneshot::Sender<ClientDaemonResponse>,
@@ -168,7 +160,6 @@ enum SupervisorSignal {
 struct DesiredState {
     bundle_path: PathBuf,
     mode: Option<u8>,
-    carrier: ClientCarrier,
 }
 
 #[derive(Debug)]
@@ -205,7 +196,6 @@ impl SupervisorState {
             desired: DesiredState {
                 bundle_path: default_client_bundle_path_in(&root_dir),
                 mode: Some(Mode::STEALTH.value()),
-                carrier: ClientCarrier::Auto,
             },
             snapshot,
             event_tx,
@@ -313,13 +303,9 @@ impl SupervisorState {
         if let Some(mode) = options.mode {
             self.desired.mode = Some(mode);
         }
-        if let Some(carrier) = options.carrier {
-            self.desired.carrier = carrier;
-        }
         self.update_snapshot(|snapshot| {
             snapshot.selected_bundle_path = Some(self.desired.bundle_path.clone());
             snapshot.desired_mode = self.desired.mode;
-            snapshot.desired_carrier = self.desired.carrier;
             snapshot.last_error = None;
             snapshot.reconnect_attempt = 0;
             snapshot.reconnect_in_secs = None;
@@ -344,8 +330,8 @@ impl SupervisorState {
 
     fn start_session(&mut self, reconnecting: bool) -> Result<(), RuntimeError> {
         let bundle_path = self.desired.bundle_path.clone();
-        let (resolved, bundle_server, effective_mode, effective_carrier) =
-            resolve_client_launch(&bundle_path, self.desired.mode, self.desired.carrier)?;
+        let (resolved, bundle_server, effective_mode) =
+            resolve_client_launch(&bundle_path, self.desired.mode)?;
         let generation = self.next_generation;
         self.next_generation = self.next_generation.saturating_add(1);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -393,7 +379,6 @@ impl SupervisorState {
             snapshot.selected_bundle_path = Some(bundle_path.clone());
             snapshot.server = Some(bundle_server);
             snapshot.desired_mode = Some(effective_mode);
-            snapshot.desired_carrier = effective_carrier;
             snapshot.last_error = None;
             snapshot.active_carrier = None;
             snapshot.negotiated_mode = None;
@@ -576,33 +561,6 @@ async fn run_supervisor(
                     }
                     let _ = reply_tx.send(state.current_snapshot_ack("updated requested mode"));
                 }
-                SupervisorCommand::SetCarrier { carrier, reply_tx } => {
-                    state.desired.carrier = carrier;
-                    state.reconnect_armed = false;
-                    state.update_snapshot(|snapshot| snapshot.desired_carrier = carrier);
-                    state.publish_log(
-                        ClientLogLevel::Info,
-                        format!("set requested carrier to {}", carrier.as_str()),
-                    );
-                    state.publish_snapshot();
-                    if state.should_run {
-                        state.pending_connect = true;
-                        if state.session.is_some() {
-                            state.request_session_shutdown(true);
-                        } else if let Err(error) = state.start_session(false) {
-                            state.pending_connect = false;
-                            state.should_run = false;
-                            state.publish_error(error.to_string(), true);
-                            let _ = reply_tx.send(ClientDaemonResponse::Error {
-                                message: error.to_string(),
-                            });
-                            continue;
-                        } else {
-                            state.pending_connect = false;
-                        }
-                    }
-                    let _ = reply_tx.send(state.current_snapshot_ack("updated requested carrier"));
-                }
                 SupervisorCommand::SetBundle {
                     bundle_path,
                     reply_tx,
@@ -649,13 +607,11 @@ async fn run_supervisor(
                     ClientRuntimeEvent::Starting {
                         server,
                         requested_mode,
-                        preferred_carrier,
                     } => {
                         state.update_snapshot(|snapshot| {
                             snapshot.lifecycle = ClientDaemonLifecycle::Connecting;
                             snapshot.server = Some(server.clone());
                             snapshot.desired_mode = Some(requested_mode);
-                            snapshot.desired_carrier = preferred_carrier;
                         });
                         state.publish_snapshot();
                     }
@@ -693,16 +649,6 @@ async fn run_supervisor(
                         if let Some(target) = session.server_tunnel_ipv4 {
                             state.start_latency_task(generation, target);
                         }
-                    }
-                    ClientRuntimeEvent::CarrierChanged { from, to } => {
-                        state
-                            .update_snapshot(|snapshot| snapshot.active_carrier = Some(to.clone()));
-                        let _ = state.event_tx.send(ClientDaemonEvent::CarrierChanged {
-                            from,
-                            to: to.clone(),
-                        });
-                        state.publish_log(ClientLogLevel::Info, format!("carrier changed to {to}"));
-                        state.publish_snapshot();
                     }
                     ClientRuntimeEvent::ModeChanged { mode } => {
                         state.update_snapshot(|snapshot| snapshot.negotiated_mode = Some(mode));
@@ -857,8 +803,7 @@ async fn run_supervisor(
 fn resolve_client_launch(
     bundle_path: &Path,
     mode_override: Option<u8>,
-    carrier_override: ClientCarrier,
-) -> Result<(apt_runtime::ResolvedClientConfig, String, u8, ClientCarrier), RuntimeError> {
+) -> Result<(apt_runtime::ResolvedClientConfig, String, u8), RuntimeError> {
     let mut bundle = load_client_bundle(bundle_path)
         .map_err(|error| RuntimeError::InvalidConfig(error.to_string()))?;
     bundle.config.state_path = client_bundle_state_path(bundle_path);
@@ -868,25 +813,12 @@ fn resolve_client_launch(
         bundle.config.mode =
             Mode::try_from(mode).map_err(|error| RuntimeError::InvalidConfig(error.to_string()))?;
     }
-    let runtime_carrier = runtime_carrier_preference(carrier_override);
-    bundle.config.preferred_carrier = runtime_carrier;
-    let mut resolved = bundle.config.resolve()?;
-    resolved.preferred_carrier = runtime_carrier;
-    resolved.strict_preferred_carrier = !matches!(carrier_override, ClientCarrier::Auto);
+    let resolved = bundle.config.resolve()?;
     Ok((
         resolved,
         bundle.config.server_addr,
         bundle.config.mode.value(),
-        carrier_override,
     ))
-}
-
-fn runtime_carrier_preference(carrier: ClientCarrier) -> RuntimeCarrierPreference {
-    match carrier {
-        ClientCarrier::Auto => RuntimeCarrierPreference::Auto,
-        ClientCarrier::D1 => RuntimeCarrierPreference::D1,
-        ClientCarrier::D2 => RuntimeCarrierPreference::D2,
-    }
 }
 
 fn reconnect_delay_secs(attempt: u32) -> u64 {

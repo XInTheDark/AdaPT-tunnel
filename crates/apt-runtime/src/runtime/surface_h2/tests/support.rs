@@ -2,15 +2,34 @@ use super::super::*;
 use crate::config::RuntimeCarrierPreference;
 use apt_admission::{AdmissionConfig, AdmissionServerSecrets, CredentialStore};
 use apt_crypto::generate_static_keypair;
+use apt_origin::{OriginFamilyProfile, PublicSessionTransport};
 use apt_tunnel::{DecodedPacket, Frame};
 use apt_types::{AuthProfile, EndpointId, Mode, SessionPolicy};
 use serde_json::json;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::{net::TcpListener, sync::Mutex, task::JoinHandle};
 
+fn test_client_surface_plan(endpoint: &str, authority: &str) -> crate::V2ClientSurfacePlan {
+    crate::V2ClientFamilyConfig {
+        authority: authority.to_string(),
+        endpoint: endpoint.to_string(),
+        trust: crate::V2SurfaceTrustConfig {
+            pinned_certificate: Some("BASE64CERT".to_string()),
+            ..crate::V2SurfaceTrustConfig::default()
+        },
+        cover_family: "api-sync".to_string(),
+        profile_version: OriginFamilyProfile::api_sync().profile_version,
+        deployment_strength: crate::V2DeploymentStrength::SelfContained,
+    }
+    .to_surface_plan(PublicSessionTransport::S1H2)
+    .unwrap()
+}
+
 pub(super) fn test_client_config() -> ResolvedClientConfig {
     ResolvedClientConfig {
-        server_addr: "198.51.100.10:51820".parse::<SocketAddr>().unwrap(),
+        server_addr: "198.51.100.10:443".parse::<SocketAddr>().unwrap(),
+        authority: "api.example.com".to_string(),
+        surface_plan: test_client_surface_plan("198.51.100.10:443", "api.example.com"),
         mode: Mode::STEALTH,
         preferred_carrier: RuntimeCarrierPreference::Auto,
         strict_preferred_carrier: false,

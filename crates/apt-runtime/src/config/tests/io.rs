@@ -1,4 +1,5 @@
 use super::*;
+
 #[test]
 fn key_material_loads_from_hex() {
     let value = "11".repeat(32);
@@ -30,14 +31,17 @@ fn client_load_resolves_relative_key_paths() {
     fs::write(dir.join("shared-admission.key"), "11".repeat(32)).unwrap();
     fs::write(dir.join("server-static-public.key"), "22".repeat(32)).unwrap();
     fs::write(dir.join("client-static-private.key"), "33".repeat(32)).unwrap();
+    let identity = generate_d2_tls_identity(vec!["198.51.100.10".to_string()]).unwrap();
+    fs::write(dir.join("server-cert.pem"), identity.certificate_pem).unwrap();
     fs::write(
         dir.join("client.toml"),
         r#"
-server_addr = "198.51.100.10:51820"
+server_addr = "198.51.100.10:443"
 endpoint_id = "adapt-demo"
 admission_key = "file:./shared-admission.key"
 server_static_public_key = "file:./server-static-public.key"
 client_static_private_key = "file:./client-static-private.key"
+server_certificate = "file:./server-cert.pem"
 "#,
     )
     .unwrap();
@@ -50,6 +54,11 @@ client_static_private_key = "file:./client-static-private.key"
         .contains(dir.to_string_lossy().as_ref()));
     assert!(config
         .client_static_private_key
+        .contains(dir.to_string_lossy().as_ref()));
+    assert!(config
+        .server_certificate
+        .as_deref()
+        .unwrap()
         .contains(dir.to_string_lossy().as_ref()));
     let _ = fs::remove_dir_all(dir);
 }
@@ -72,11 +81,16 @@ fn server_load_resolves_relative_key_paths() {
     ] {
         fs::write(dir.join(file), "44".repeat(32)).unwrap();
     }
+    let identity = generate_d2_tls_identity(vec!["198.51.100.10".to_string()]).unwrap();
+    fs::write(dir.join("server-cert.pem"), identity.certificate_pem).unwrap();
+    fs::write(dir.join("server-key.pem"), identity.private_key_pem).unwrap();
     fs::write(
         dir.join("server.toml"),
         r#"
-bind = "0.0.0.0:51820"
-public_endpoint = "198.51.100.10:51820"
+bind = "0.0.0.0:443"
+public_endpoint = "198.51.100.10:443"
+certificate = "file:./server-cert.pem"
+private_key = "file:./server-key.pem"
 endpoint_id = "adapt-demo"
 admission_key = "file:./shared-admission.key"
 server_static_private_key = "file:./server-static-private.key"
@@ -100,6 +114,8 @@ tunnel_ipv4 = "10.77.0.2"
     assert!(config.peers[0]
         .client_static_public_key
         .contains(dir.to_string_lossy().as_ref()));
+    assert!(config.certificate.contains(dir.to_string_lossy().as_ref()));
+    assert!(config.private_key.contains(dir.to_string_lossy().as_ref()));
     let _ = fs::remove_dir_all(dir);
 }
 
@@ -123,11 +139,16 @@ fn server_resolve_supports_per_user_authorized_peers() {
     ] {
         fs::write(dir.join(file), "55".repeat(32)).unwrap();
     }
+    let identity = generate_d2_tls_identity(vec!["198.51.100.10".to_string()]).unwrap();
+    fs::write(dir.join("server-cert.pem"), identity.certificate_pem).unwrap();
+    fs::write(dir.join("server-key.pem"), identity.private_key_pem).unwrap();
     fs::write(
         dir.join("server.toml"),
         r#"
-bind = "0.0.0.0:51820"
-public_endpoint = "198.51.100.10:51820"
+bind = "0.0.0.0:443"
+public_endpoint = "198.51.100.10:443"
+certificate = "file:./server-cert.pem"
+private_key = "file:./server-key.pem"
 endpoint_id = "adapt-demo"
 admission_key = "file:./shared-admission.key"
 server_static_private_key = "file:./server-static-private.key"

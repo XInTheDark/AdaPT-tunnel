@@ -38,21 +38,6 @@ pub(super) enum UtilsCommand {
         #[arg(long, default_value_t = false)]
         yes: bool,
     },
-    /// Enable or refresh the D2 QUIC carrier on an existing server config.
-    EnableD2 {
-        /// Path to the server config created by `apt-edge init`.
-        #[arg(long)]
-        config: Option<PathBuf>,
-        /// UDP listen address for the D2 QUIC carrier.
-        #[arg(long)]
-        d2_bind: Option<SocketAddr>,
-        /// Client-reachable host:port for the D2 QUIC carrier.
-        #[arg(long)]
-        d2_public_endpoint: Option<String>,
-        /// Use defaults for any missing values instead of prompting.
-        #[arg(long, default_value_t = false)]
-        yes: bool,
-    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -62,21 +47,15 @@ pub(super) enum Command {
         /// Directory where server.toml and key files should be written.
         #[arg(long)]
         out_dir: Option<PathBuf>,
-        /// UDP listen address for the server.
+        /// TCP/TLS listen address for the API-sync H2 service.
         #[arg(long)]
         bind: Option<SocketAddr>,
-        /// Client-reachable host:port that clients should use, for example 203.0.113.10:51820 or vpn.example.com:51820.
+        /// Client-reachable host:port that clients should use for H2, for example 203.0.113.10:443 or api.example.com:443.
         #[arg(long)]
         public_endpoint: Option<String>,
-        /// Enable the D2 QUIC-datagram carrier and generate a pinned server certificate.
-        #[arg(long, default_value_t = false)]
-        enable_d2: bool,
-        /// UDP listen address for the D2 QUIC carrier.
+        /// HTTP authority / host name that should appear on the public API-sync surface.
         #[arg(long)]
-        d2_bind: Option<SocketAddr>,
-        /// Client-reachable host:port for the D2 QUIC carrier.
-        #[arg(long)]
-        d2_public_endpoint: Option<String>,
+        authority: Option<String>,
         /// Logical deployment identifier.
         #[arg(long)]
         endpoint_id: Option<String>,

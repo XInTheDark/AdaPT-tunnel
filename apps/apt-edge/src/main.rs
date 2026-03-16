@@ -1,11 +1,9 @@
 //! User-friendly CLI for the combined APT server daemon.
 
 use apt_runtime::{
-    d2_certificate_subject_alt_names, d2_default_bind, derive_d2_public_endpoint, encode_key_hex,
-    generate_client_identity, generate_d2_tls_identity, generate_server_keyset,
+    encode_key_hex, generate_client_identity, generate_d2_tls_identity, generate_server_keyset,
     load_certificate_der, load_key32, run_server, write_key_file, write_secret_file,
-    AuthorizedPeerConfig, ClientConfig, Mode, RuntimeCarrierPreference, ServerConfig,
-    SessionPolicy,
+    AuthorizedPeerConfig, ClientConfig, Mode, ServerConfig, SessionPolicy, V2DeploymentStrength,
 };
 use apt_types::AuthProfile;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -31,7 +29,7 @@ use self::{
     bundle::{add_client, list_clients, revoke_client, write_server_keyset},
     cli::{Cli, CliAuthProfile, Command, UtilsCommand},
     import::serve_client_bundle_import,
-    init::{enable_d2_for_server, init_server, install_systemd_service_for_server},
+    init::{init_server, install_systemd_service_for_server},
     start::start_server,
     support::*,
 };
@@ -53,9 +51,7 @@ async fn run() -> CliResult {
             out_dir,
             bind,
             public_endpoint,
-            enable_d2,
-            d2_bind,
-            d2_public_endpoint,
+            authority,
             endpoint_id,
             egress_interface,
             tunnel_subnet,
@@ -69,9 +65,7 @@ async fn run() -> CliResult {
             out_dir,
             bind,
             public_endpoint,
-            enable_d2,
-            d2_bind,
-            d2_public_endpoint,
+            authority,
             endpoint_id,
             egress_interface,
             tunnel_subnet,
@@ -120,12 +114,6 @@ async fn run() -> CliResult {
             UtilsCommand::InstallSystemdService { config, yes } => {
                 install_systemd_service_for_server(config, yes)?
             }
-            UtilsCommand::EnableD2 {
-                config,
-                d2_bind,
-                d2_public_endpoint,
-                yes,
-            } => enable_d2_for_server(config, d2_bind, d2_public_endpoint, yes)?,
         },
         Command::GenKeys { out_dir } => write_server_keyset(&out_dir)?,
     }

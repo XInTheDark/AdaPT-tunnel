@@ -1,5 +1,6 @@
 use super::*;
-use crate::quic::{derive_d2_public_endpoint, load_certificate_chain, load_private_key};
+use crate::quic::{load_certificate_chain, load_private_key};
+use apt_origin::{OriginFamilyProfile, PublicSessionTransport};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthorizedPeerConfig {
@@ -20,16 +21,14 @@ pub struct AuthorizedPeerConfig {
 pub struct ServerConfig {
     pub bind: SocketAddr,
     pub public_endpoint: String,
+    #[serde(default)]
+    pub authority: String,
+    pub certificate: String,
+    pub private_key: String,
+    #[serde(default)]
+    pub deployment_strength: V2DeploymentStrength,
     #[serde(default, alias = "runtime_mode")]
     pub mode: Mode,
-    #[serde(default)]
-    pub d2_bind: Option<SocketAddr>,
-    #[serde(default)]
-    pub d2_public_endpoint: Option<String>,
-    #[serde(default)]
-    pub d2_certificate: Option<String>,
-    #[serde(default)]
-    pub d2_private_key: Option<String>,
     pub endpoint_id: String,
     pub admission_key: String,
     pub server_static_private_key: String,
@@ -84,19 +83,18 @@ impl ServerConfig {
             source,
         })?;
         let mut config: Self = toml::from_str(&raw)?;
+        if config.authority.trim().is_empty() {
+            config.authority = derive_authority_from_public_endpoint(&config.public_endpoint)?;
+        }
         maybe_upgrade_toml_file(path, &raw, &config)?;
         let base = path.parent().unwrap_or_else(|| Path::new("."));
+        resolve_file_spec_relative_to_base(&mut config.certificate, base);
+        resolve_file_spec_relative_to_base(&mut config.private_key, base);
         resolve_file_spec_relative_to_base(&mut config.admission_key, base);
         resolve_file_spec_relative_to_base(&mut config.server_static_private_key, base);
         resolve_file_spec_relative_to_base(&mut config.server_static_public_key, base);
         resolve_file_spec_relative_to_base(&mut config.cookie_key, base);
         resolve_file_spec_relative_to_base(&mut config.ticket_key, base);
-        if let Some(d2_certificate) = &mut config.d2_certificate {
-            resolve_file_spec_relative_to_base(d2_certificate, base);
-        }
-        if let Some(d2_private_key) = &mut config.d2_private_key {
-            resolve_file_spec_relative_to_base(d2_private_key, base);
-        }
         for peer in &mut config.peers {
             if let Some(admission_key) = &mut peer.admission_key {
                 resolve_file_spec_relative_to_base(admission_key, base);
@@ -123,11 +121,29 @@ impl ServerConfig {
             .map(ResolvedAuthorizedPeer::from_config)
             .collect::<Result<Vec<_>, _>>()?;
         validate_peer_assignments(self, &peers)?;
+        let _ = load_certificate_chain(&self.certificate)?;
+        let _ = load_private_key(&self.private_key)?;
+        let surface_plan = V2ServerSurfaceConfig {
+            authority: self.authority.clone(),
+            bind: self.bind,
+            public_endpoint: self.public_endpoint.clone(),
+            trust: V2SurfaceTrustConfig::default(),
+            cover_family: OriginFamilyProfile::api_sync().display_name,
+            profile_version: OriginFamilyProfile::api_sync().profile_version,
+            deployment_strength: self.deployment_strength,
+            origin_backend: None,
+        }
+        .to_surface_plan(PublicSessionTransport::S1H2)
+        .map_err(v2_origin_plan_error)?;
         Ok(ResolvedServerConfig {
             bind: self.bind,
             public_endpoint: self.public_endpoint.clone(),
+            authority: self.authority.clone(),
+            certificate_spec: self.certificate.clone(),
+            private_key_spec: self.private_key.clone(),
+            surface_plan,
             mode: self.mode,
-            d2: resolve_server_d2_config(self)?,
+            d2: None,
             endpoint_id: EndpointId::new(self.endpoint_id.clone()),
             admission_key: load_key32(&self.admission_key)?,
             server_static_private_key: load_key32(&self.server_static_private_key)?,
@@ -208,6 +224,10 @@ pub struct ResolvedServerD2Config {
 pub struct ResolvedServerConfig {
     pub bind: SocketAddr,
     pub public_endpoint: String,
+    pub authority: String,
+    pub certificate_spec: String,
+    pub private_key_spec: String,
+    pub surface_plan: V2ServerSurfacePlan,
     pub mode: Mode,
     pub d2: Option<ResolvedServerD2Config>,
     pub endpoint_id: EndpointId,
@@ -256,48 +276,6 @@ pub enum ServerSessionExtension {
     TunnelParameters(SessionTransportParameters),
 }
 
-fn resolve_server_d2_config(
-    config: &ServerConfig,
-) -> Result<Option<ResolvedServerD2Config>, RuntimeError> {
-    let any_present = config.d2_bind.is_some()
-        || config.d2_public_endpoint.is_some()
-        || config.d2_certificate.is_some()
-        || config.d2_private_key.is_some();
-    if !any_present {
-        return Ok(None);
-    }
-
-    let Some(bind) = config.d2_bind else {
-        return Err(RuntimeError::InvalidConfig(
-            "D2 is partially configured, but d2_bind is missing".to_string(),
-        ));
-    };
-    let public_endpoint = match &config.d2_public_endpoint {
-        Some(value) => value.clone(),
-        None => derive_d2_public_endpoint(&config.public_endpoint).ok_or_else(|| {
-            RuntimeError::InvalidConfig(
-                "D2 is configured, but d2_public_endpoint could not be derived".to_string(),
-            )
-        })?,
-    };
-    let certificate_spec = config.d2_certificate.clone().ok_or_else(|| {
-        RuntimeError::InvalidConfig("D2 is configured, but d2_certificate is missing".to_string())
-    })?;
-    let private_key_spec = config.d2_private_key.clone().ok_or_else(|| {
-        RuntimeError::InvalidConfig("D2 is configured, but d2_private_key is missing".to_string())
-    })?;
-
-    let _ = load_certificate_chain(&certificate_spec)?;
-    let _ = load_private_key(&private_key_spec)?;
-
-    Ok(Some(ResolvedServerD2Config {
-        bind,
-        public_endpoint,
-        certificate_spec,
-        private_key_spec,
-    }))
-}
-
 fn validate_ipv6_config(config: &ServerConfig) -> Result<(), RuntimeError> {
     if config.tunnel_local_ipv6.is_some() != config.tunnel_ipv6_prefix_len.is_some() {
         return Err(RuntimeError::InvalidConfig(
@@ -344,4 +322,29 @@ fn validate_peer_assignments(
         }
     }
     Ok(())
+}
+
+fn derive_authority_from_public_endpoint(endpoint: &str) -> Result<String, RuntimeError> {
+    let trimmed = endpoint.trim();
+    if trimmed.is_empty() {
+        return Err(RuntimeError::InvalidConfig(
+            "public_endpoint cannot be empty".to_string(),
+        ));
+    }
+    if let Ok(socket_addr) = trimmed.parse::<SocketAddr>() {
+        return Ok(socket_addr.ip().to_string());
+    }
+    trimmed
+        .rsplit_once(':')
+        .map(|(host, _)| host.trim_matches('[').trim_matches(']').to_string())
+        .filter(|host| !host.trim().is_empty())
+        .ok_or_else(|| {
+            RuntimeError::InvalidConfig(format!(
+                "unable to derive H2 authority from public_endpoint `{trimmed}`"
+            ))
+        })
+}
+
+fn v2_origin_plan_error(error: V2OriginPlanError) -> RuntimeError {
+    RuntimeError::InvalidConfig(format!("invalid H2 surface plan: {error:?}"))
 }

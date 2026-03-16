@@ -124,10 +124,6 @@ fn handle_event(
                 Ok(None)
             }
         }
-        ClientDaemonEvent::CarrierChanged { to, .. } => {
-            println!("[daemon] carrier changed to {to}");
-            Ok(None)
-        }
         ClientDaemonEvent::ModeChanged { mode } => {
             println!("[daemon] adaptive mode changed to {mode}");
             Ok(None)

@@ -68,9 +68,6 @@ async fn attach_to_session(
                             saw_session_activity = true;
                             println!("connected: server={} carrier={} mode={} iface={}", session.server, session.carrier, session.negotiated_mode, session.interface_name);
                         }
-                        ClientDaemonEvent::CarrierChanged { from, to } => {
-                            println!("carrier changed: {} -> {}", from.unwrap_or_else(|| "unknown".to_string()), to);
-                        }
                         ClientDaemonEvent::ModeChanged { mode } => {
                             println!("adaptive mode changed to {mode}");
                         }

@@ -94,6 +94,8 @@ where
     I: HyperRead + HyperWrite + Unpin + Send + 'static,
 {
     let connection_state = Arc::new(Mutex::new(ApiSyncH2ConnectionState::default()));
+    let connection_state_for_close = Arc::clone(&connection_state);
+    let public_service_for_close = Arc::clone(&public_service);
     let service = service_fn(move |request| {
         let request_handler = request_handler.clone();
         let admission = Arc::clone(&admission);
@@ -119,10 +121,22 @@ where
             Ok::<_, std::convert::Infallible>(http_response_with_body(response))
         }
     });
-    ServerBuilder::new(TokioExecutor::new())
+    let result = ServerBuilder::new(TokioExecutor::new())
         .serve_connection(io, service)
         .await
-        .map_err(|error| RuntimeError::Http(format!("h2 server connection failed: {error}")))
+        .map_err(|error| RuntimeError::Http(format!("h2 server connection failed: {error}")));
+    if let Some(established_session) = connection_state_for_close
+        .lock()
+        .await
+        .established_session()
+        .cloned()
+    {
+        public_service_for_close
+            .lock()
+            .await
+            .note_closed_session(&established_session);
+    }
+    result
 }
 
 async fn handle_http_request<S>(
@@ -150,6 +164,9 @@ where
         &source_id,
         now_secs,
     )?;
+    if let Some(established_session) = handled.established_session() {
+        public_service.note_established_session(request_handler.surface(), established_session)?;
+    }
     request_handler
         .surface()
         .encode_http_response(&handled.into_response())

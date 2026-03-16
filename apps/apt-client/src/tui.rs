@@ -4,8 +4,8 @@ use crate::{
     paths::ensure_user_owned_override,
 };
 use apt_client_control::{
-    ClientCarrier, ClientDaemonEvent, ClientDaemonLifecycle, ClientDaemonRequest,
-    ClientDaemonResponse, ClientDaemonSnapshot,
+    ClientDaemonEvent, ClientDaemonLifecycle, ClientDaemonRequest, ClientDaemonResponse,
+    ClientDaemonSnapshot,
 };
 use crossterm::{
     event::{self, Event as CEvent, KeyCode, KeyEventKind, KeyModifiers},
@@ -125,13 +125,6 @@ impl App {
                     session.carrier, session.negotiated_mode, session.interface_name
                 ));
             }
-            ClientDaemonEvent::CarrierChanged { from, to } => {
-                self.push_log(format!(
-                    "carrier changed: {} -> {}",
-                    from.unwrap_or_else(|| "unknown".to_string()),
-                    to
-                ));
-            }
             ClientDaemonEvent::ModeChanged { mode } => {
                 self.push_log(format!("adaptive mode changed to {mode}"));
             }
@@ -179,15 +172,6 @@ async fn apply_initial_options(
         apply_response(
             app,
             send_request(ClientDaemonRequest::SetMode { mode }).await?,
-        );
-    }
-    if let Some(carrier) = options.launch.carrier {
-        apply_response(
-            app,
-            send_request(ClientDaemonRequest::SetCarrier {
-                carrier: carrier.into(),
-            })
-            .await?,
         );
     }
     refresh_known_bundles(app).await?;
@@ -246,7 +230,6 @@ async fn handle_input(
                         options: apt_client_control::ClientLaunchOptions {
                             bundle_path: Some(bundle_path),
                             mode: app.snapshot.desired_mode,
-                            carrier: Some(app.snapshot.desired_carrier),
                         },
                     })
                     .await?,
@@ -255,13 +238,6 @@ async fn handle_input(
         }
         KeyCode::Char('r') => {
             apply_response(app, send_request(ClientDaemonRequest::ReconnectNow).await?);
-        }
-        KeyCode::Char('k') => {
-            let next = next_carrier(app.snapshot.desired_carrier);
-            apply_response(
-                app,
-                send_request(ClientDaemonRequest::SetCarrier { carrier: next }).await?,
-            );
         }
         KeyCode::Char('b') => {
             if app.known_bundles.is_empty() {
@@ -365,14 +341,6 @@ fn apply_response(app: &mut App, response: ClientDaemonResponse) {
     }
 }
 
-fn next_carrier(current: ClientCarrier) -> ClientCarrier {
-    match current {
-        ClientCarrier::Auto => ClientCarrier::D1,
-        ClientCarrier::D1 => ClientCarrier::D2,
-        ClientCarrier::D2 => ClientCarrier::Auto,
-    }
-}
-
 fn next_bundle(app: &App) -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
     let current = app.snapshot.selected_bundle_path.as_ref();
     let next_index = current
@@ -449,7 +417,7 @@ fn summary_widget(app: &App) -> Paragraph<'static> {
         .snapshot
         .active_carrier
         .clone()
-        .unwrap_or_else(|| app.snapshot.desired_carrier.as_str().to_string());
+        .unwrap_or_else(|| "h2".to_string());
     let mode = app
         .snapshot
         .negotiated_mode
@@ -546,7 +514,7 @@ fn actions_widget(app: &App) -> Paragraph<'static> {
         "c connect"
     };
     Paragraph::new(vec![Line::from(format!(
-        "{}  •  r reconnect  •  +/- mode  •  k carrier  •  b cycle bundle  •  e edit bundle  •  q quit",
+        "{}  •  r reconnect  •  +/- mode  •  b cycle bundle  •  e edit bundle  •  q quit",
         connect_label
     ))])
     .block(Block::default().title("Actions").borders(Borders::ALL))

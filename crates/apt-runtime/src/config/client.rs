@@ -1,13 +1,22 @@
 use super::*;
-use crate::quic::{load_certificate_der, resolve_d2_remote_endpoint};
+use crate::quic::load_certificate_chain;
+use apt_origin::{OriginFamilyProfile, PublicSessionTransport};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientConfig {
     pub server_addr: String,
+    #[serde(default)]
+    pub authority: String,
+    #[serde(default)]
+    pub server_name: Option<String>,
+    #[serde(default)]
+    pub server_roots: Option<String>,
+    #[serde(default)]
+    pub server_certificate: Option<String>,
+    #[serde(default)]
+    pub deployment_strength: V2DeploymentStrength,
     #[serde(default, alias = "runtime_mode")]
     pub mode: Mode,
-    #[serde(default = "default_preferred_carrier")]
-    pub preferred_carrier: RuntimeCarrierPreference,
     #[serde(default = "default_auth_profile")]
     pub auth_profile: AuthProfile,
     pub endpoint_id: String,
@@ -24,12 +33,6 @@ pub struct ClientConfig {
     pub routes: Vec<IpNet>,
     #[serde(default)]
     pub use_server_pushed_routes: bool,
-    #[serde(default = "default_enable_d2_fallback")]
-    pub enable_d2_fallback: bool,
-    #[serde(default)]
-    pub d2_server_addr: Option<String>,
-    #[serde(default)]
-    pub d2_server_certificate: Option<String>,
     #[serde(default)]
     pub session_policy: SessionPolicy,
     #[serde(default = "default_allow_session_migration")]
@@ -60,7 +63,9 @@ impl ClientConfig {
             source,
         })?;
         let mut config: Self = toml::from_str(&raw)?;
-        config.preferred_carrier = config.preferred_carrier.normalize_legacy();
+        if config.authority.trim().is_empty() {
+            config.authority = derive_authority_from_endpoint(&config.server_addr)?;
+        }
         maybe_upgrade_toml_file(path, &raw, &config)?;
         let base = path.parent().unwrap_or_else(|| Path::new("."));
         if config.state_path.is_relative() {
@@ -69,8 +74,11 @@ impl ClientConfig {
         resolve_file_spec_relative_to_base(&mut config.admission_key, base);
         resolve_file_spec_relative_to_base(&mut config.server_static_public_key, base);
         resolve_file_spec_relative_to_base(&mut config.client_static_private_key, base);
-        if let Some(d2_server_certificate) = &mut config.d2_server_certificate {
-            resolve_file_spec_relative_to_base(d2_server_certificate, base);
+        if let Some(server_roots) = &mut config.server_roots {
+            resolve_file_spec_relative_to_base(server_roots, base);
+        }
+        if let Some(server_certificate) = &mut config.server_certificate {
+            resolve_file_spec_relative_to_base(server_certificate, base);
         }
         Ok(config)
     }
@@ -95,10 +103,40 @@ impl ClientConfig {
                 "per-user client configs require client_identity to be set".to_string(),
             ));
         }
+        if self.server_roots.is_none() && self.server_certificate.is_none() {
+            return Err(RuntimeError::InvalidConfig(
+                "client config requires server_certificate or server_roots for H2 TLS trust"
+                    .to_string(),
+            ));
+        }
+        if let Some(roots) = self.server_roots.as_deref() {
+            let _ = load_certificate_chain(roots)?;
+        }
+        if let Some(certificate) = self.server_certificate.as_deref() {
+            let _ = load_certificate_chain(certificate)?;
+        }
+        let server_addr = resolve_socket_addr(&self.server_addr)?;
+        let surface_plan = V2ClientFamilyConfig {
+            authority: self.authority.clone(),
+            endpoint: self.server_addr.clone(),
+            trust: V2SurfaceTrustConfig {
+                server_name: self.server_name.clone(),
+                roots: self.server_roots.clone(),
+                pinned_certificate: self.server_certificate.clone(),
+                pinned_spki: None,
+            },
+            cover_family: OriginFamilyProfile::api_sync().display_name,
+            profile_version: OriginFamilyProfile::api_sync().profile_version,
+            deployment_strength: self.deployment_strength,
+        }
+        .to_surface_plan(PublicSessionTransport::S1H2)
+        .map_err(v2_origin_plan_error)?;
         Ok(ResolvedClientConfig {
-            server_addr: resolve_socket_addr(&self.server_addr)?,
+            server_addr,
+            authority: self.authority.clone(),
+            surface_plan,
             mode: self.mode,
-            preferred_carrier: self.preferred_carrier.normalize_legacy(),
+            preferred_carrier: RuntimeCarrierPreference::Auto,
             strict_preferred_carrier: false,
             auth_profile: self.auth_profile,
             endpoint_id: EndpointId::new(self.endpoint_id.clone()),
@@ -110,8 +148,8 @@ impl ClientConfig {
             interface_name: self.interface_name.clone(),
             routes: self.routes.clone(),
             use_server_pushed_routes: self.use_server_pushed_routes,
-            enable_d2_fallback: self.enable_d2_fallback,
-            d2: resolve_client_d2_config(self)?,
+            enable_d2_fallback: false,
+            d2: None,
             session_policy: self.session_policy.clone(),
             allow_session_migration: self.allow_session_migration,
             standby_health_check_secs: self.standby_health_check_secs,
@@ -142,6 +180,8 @@ pub struct ResolvedClientD2Config {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedClientConfig {
     pub server_addr: SocketAddr,
+    pub authority: String,
+    pub surface_plan: V2ClientSurfacePlan,
     pub mode: Mode,
     pub preferred_carrier: RuntimeCarrierPreference,
     pub strict_preferred_carrier: bool,
@@ -169,25 +209,27 @@ pub struct ResolvedClientConfig {
     pub state_path: PathBuf,
 }
 
-fn resolve_client_d2_config(
-    config: &ClientConfig,
-) -> Result<Option<ResolvedClientD2Config>, RuntimeError> {
-    let any_present = config.d2_server_addr.is_some() || config.d2_server_certificate.is_some();
-    if !any_present {
-        return Ok(None);
+fn derive_authority_from_endpoint(endpoint: &str) -> Result<String, RuntimeError> {
+    let trimmed = endpoint.trim();
+    if trimmed.is_empty() {
+        return Err(RuntimeError::InvalidConfig(
+            "server_addr cannot be empty".to_string(),
+        ));
     }
-    let Some(endpoint_spec) = config.d2_server_addr.as_deref() else {
-        return Err(RuntimeError::InvalidConfig(
-            "D2 is partially configured, but d2_server_addr is missing".to_string(),
-        ));
-    };
-    let Some(certificate_spec) = config.d2_server_certificate.as_deref() else {
-        return Err(RuntimeError::InvalidConfig(
-            "D2 is partially configured, but d2_server_certificate is missing".to_string(),
-        ));
-    };
-    Ok(Some(ResolvedClientD2Config {
-        endpoint: resolve_d2_remote_endpoint(endpoint_spec)?,
-        server_certificate_der: load_certificate_der(certificate_spec)?,
-    }))
+    if let Ok(socket_addr) = trimmed.parse::<SocketAddr>() {
+        return Ok(socket_addr.ip().to_string());
+    }
+    trimmed
+        .rsplit_once(':')
+        .map(|(host, _)| host.trim_matches('[').trim_matches(']').to_string())
+        .filter(|host| !host.trim().is_empty())
+        .ok_or_else(|| {
+            RuntimeError::InvalidConfig(format!(
+                "unable to derive H2 authority from server_addr `{trimmed}`"
+            ))
+        })
+}
+
+fn v2_origin_plan_error(error: V2OriginPlanError) -> RuntimeError {
+    RuntimeError::InvalidConfig(format!("invalid H2 surface plan: {error:?}"))
 }

@@ -1,6 +1,6 @@
 use super::*;
 use apt_admission::{
-    initiate_ug1_with_context, AdmissionServer, ClientPendingS1, ClientPendingS3,
+    initiate_ug1_with_context, AdmissionError, AdmissionServer, ClientPendingS1, ClientPendingS3,
     EstablishedEnvelopeReply, EstablishedSession, ServerResponse,
 };
 use apt_crypto::SealedEnvelope;
@@ -29,10 +29,7 @@ pub fn prepare_api_sync_ug1_request(
     now_secs: u64,
 ) -> Result<PreparedApiSyncUg1Request, RuntimeError> {
     let carrier = ApiSyncH2Carrier::conservative();
-    let authority = persistent_state
-        .active_network_profile()
-        .map(|profile| profile.context.public_route.0.clone())
-        .unwrap_or_else(|| config.endpoint_id.as_str().to_string());
+    let authority = config.surface_plan.authority.clone();
     let upgrade_context = surface.upgrade_context(&authority)?;
     let request = client_session_request(
         config,
@@ -172,6 +169,27 @@ pub fn respond_api_sync_ug3_request(
     source_id: &str,
     now_secs: u64,
 ) -> Result<Option<(ApiSyncResponse, EstablishedSession)>, RuntimeError> {
+    respond_api_sync_ug3_request_with_extension_builder(
+        admission,
+        surface,
+        request,
+        source_id,
+        now_secs,
+        |_| Ok(Vec::new()),
+    )
+}
+
+pub fn respond_api_sync_ug3_request_with_extension_builder<F>(
+    admission: &mut AdmissionServer,
+    surface: &ApiSyncSurface,
+    request: &ApiSyncRequest,
+    source_id: &str,
+    now_secs: u64,
+    extension_builder: F,
+) -> Result<Option<(ApiSyncResponse, EstablishedSession)>, RuntimeError>
+where
+    F: FnOnce(&EstablishedSession) -> Result<Vec<Vec<u8>>, AdmissionError>,
+{
     let carrier = ApiSyncH2Carrier::conservative();
     let Some(upgrade) = surface.extract_request_upgrade_envelope(request)? else {
         return Ok(None);
@@ -180,13 +198,14 @@ pub fn respond_api_sync_ug3_request(
     let device_id = request.body["device_id"]
         .as_str()
         .unwrap_or("shared-device");
-    match admission.handle_ug3_with_context(
+    match admission.handle_ug3_with_context_and_extension_builder(
         source_id,
         &carrier,
         &upgrade_context,
         upgrade.lookup_hint,
         &upgrade.envelope,
         now_secs,
+        extension_builder,
     ) {
         ServerResponse::Reply(EstablishedEnvelopeReply { envelope, session }) => {
             let mut public_response =

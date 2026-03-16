@@ -1,5 +1,5 @@
 use crate::client_bundle_override_path;
-use apt_runtime::{ClientConfig, Mode, RuntimeCarrierPreference, SessionPolicy};
+use apt_runtime::{ClientConfig, Mode, SessionPolicy, V2DeploymentStrength};
 use ipnet::IpNet;
 use serde::Deserialize;
 use std::{
@@ -12,16 +12,17 @@ use std::{
 #[serde(default)]
 pub struct ClientOverrideConfig {
     pub server_addr: Option<String>,
+    pub authority: Option<String>,
+    pub server_name: Option<String>,
+    pub server_roots: Option<String>,
+    pub server_certificate: Option<String>,
     #[serde(alias = "runtime_mode")]
     pub mode: Option<Mode>,
-    pub preferred_carrier: Option<RuntimeCarrierPreference>,
+    pub deployment_strength: Option<V2DeploymentStrength>,
     pub bind: Option<SocketAddr>,
     pub interface_name: Option<String>,
     pub routes: Option<Vec<IpNet>>,
     pub use_server_pushed_routes: Option<bool>,
-    pub enable_d2_fallback: Option<bool>,
-    pub d2_server_addr: Option<String>,
-    pub d2_server_certificate: Option<String>,
     pub session_policy: Option<SessionPolicy>,
     pub allow_session_migration: Option<bool>,
     pub standby_health_check_secs: Option<u64>,
@@ -39,7 +40,6 @@ pub fn apply_optional_client_override(
     bundle_path: &Path,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let override_path = client_bundle_override_path(bundle_path);
-    super::strip_legacy_s1_surface(config);
     if !override_path.exists() {
         return Ok(override_path);
     }
@@ -76,11 +76,23 @@ impl ClientOverrideConfig {
                 config.server_addr = server_addr.to_string();
             }
         }
+        if let Some(authority) = self.authority.as_ref() {
+            config.authority = normalized_string_or_existing(authority, &config.authority);
+        }
+        if let Some(server_name) = self.server_name.as_ref() {
+            config.server_name = normalized_optional_string(server_name);
+        }
+        if let Some(server_roots) = self.server_roots.as_ref() {
+            config.server_roots = normalize_optional_file_spec(server_roots, base);
+        }
+        if let Some(server_certificate) = self.server_certificate.as_ref() {
+            config.server_certificate = normalize_optional_file_spec(server_certificate, base);
+        }
         if let Some(mode) = self.mode {
             config.mode = mode;
         }
-        if let Some(preferred_carrier) = self.preferred_carrier {
-            config.preferred_carrier = preferred_carrier;
+        if let Some(deployment_strength) = self.deployment_strength {
+            config.deployment_strength = deployment_strength;
         }
         if let Some(bind) = self.bind {
             config.bind = bind;
@@ -93,16 +105,6 @@ impl ClientOverrideConfig {
         }
         if let Some(use_server_pushed_routes) = self.use_server_pushed_routes {
             config.use_server_pushed_routes = use_server_pushed_routes;
-        }
-        if let Some(enable_d2_fallback) = self.enable_d2_fallback {
-            config.enable_d2_fallback = enable_d2_fallback;
-        }
-        if let Some(d2_server_addr) = self.d2_server_addr.as_ref() {
-            config.d2_server_addr = normalized_optional_string(d2_server_addr);
-        }
-        if let Some(d2_server_certificate) = self.d2_server_certificate.as_ref() {
-            config.d2_server_certificate =
-                normalize_optional_file_spec(d2_server_certificate, base);
         }
         if let Some(session_policy) = self.session_policy.as_ref() {
             config.session_policy = session_policy.clone();
@@ -138,13 +140,16 @@ impl ClientOverrideConfig {
                 state_path.clone()
             };
         }
-        super::strip_legacy_s1_surface(config);
     }
 }
 
 fn normalized_optional_string(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn normalized_string_or_existing(value: &str, current: &str) -> String {
+    normalized_optional_string(value).unwrap_or_else(|| current.to_string())
 }
 
 fn normalize_optional_file_spec(value: &str, base: &Path) -> Option<String> {
@@ -172,9 +177,13 @@ mod tests {
 
     fn test_config() -> ClientConfig {
         ClientConfig {
-            server_addr: "198.51.100.10:51820".to_string(),
+            server_addr: "198.51.100.10:443".to_string(),
+            authority: "api.example.com".to_string(),
+            server_name: Some("api.example.com".to_string()),
+            server_roots: None,
+            server_certificate: Some("BASE64-H2-CERT".to_string()),
+            deployment_strength: V2DeploymentStrength::SelfContained,
             mode: Mode::STEALTH,
-            preferred_carrier: RuntimeCarrierPreference::Auto,
             auth_profile: AuthProfile::PerUser,
             endpoint_id: "adapt-demo".to_string(),
             admission_key: "11".repeat(32),
@@ -185,9 +194,6 @@ mod tests {
             interface_name: None,
             routes: Vec::new(),
             use_server_pushed_routes: true,
-            enable_d2_fallback: true,
-            d2_server_addr: Some("198.51.100.10:443".to_string()),
-            d2_server_certificate: Some("BASE64-D2-CERT".to_string()),
             session_policy: SessionPolicy::default(),
             allow_session_migration: true,
             standby_health_check_secs: 0,
@@ -206,12 +212,14 @@ mod tests {
         let mut config = test_config();
         ClientOverrideConfig {
             interface_name: Some(String::new()),
-            d2_server_addr: Some(String::new()),
+            server_name: Some(String::new()),
+            server_certificate: Some(String::new()),
             ..ClientOverrideConfig::default()
         }
         .apply_to(&mut config, Path::new("/tmp/client.override.toml"));
         assert_eq!(config.interface_name, None);
-        assert_eq!(config.d2_server_addr, None);
+        assert_eq!(config.server_name, None);
+        assert_eq!(config.server_certificate, None);
     }
 
     #[test]
@@ -232,24 +240,29 @@ mod tests {
     fn relative_file_specs_resolve_against_override_file() {
         let mut config = test_config();
         ClientOverrideConfig {
-            d2_server_certificate: Some("file:certs/d2.pem".to_string()),
+            server_certificate: Some("file:certs/server.pem".to_string()),
+            server_roots: Some("file:certs/root.pem".to_string()),
             ..ClientOverrideConfig::default()
         }
         .apply_to(&mut config, Path::new("/etc/adapt/client.override.toml"));
         assert_eq!(
-            config.d2_server_certificate.as_deref(),
-            Some("file:/etc/adapt/certs/d2.pem")
+            config.server_certificate.as_deref(),
+            Some("file:/etc/adapt/certs/server.pem")
+        );
+        assert_eq!(
+            config.server_roots.as_deref(),
+            Some("file:/etc/adapt/certs/root.pem")
         );
     }
 
     #[test]
-    fn preferred_carrier_s1_is_sanitized_back_to_auto() {
+    fn authority_override_keeps_existing_value_when_blank() {
         let mut config = test_config();
         ClientOverrideConfig {
-            preferred_carrier: Some(RuntimeCarrierPreference::S1),
+            authority: Some(String::new()),
             ..ClientOverrideConfig::default()
         }
-        .apply_to(&mut config, Path::new("/etc/adapt/client.override.toml"));
-        assert_eq!(config.preferred_carrier, RuntimeCarrierPreference::Auto);
+        .apply_to(&mut config, Path::new("/tmp/client.override.toml"));
+        assert_eq!(config.authority, "api.example.com");
     }
 }

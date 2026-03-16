@@ -1,10 +1,11 @@
 # Logical client configuration embedded inside a single-file `.aptbundle`.
 
-server_addr = "203.0.113.10:51820"
-d2_server_addr = "203.0.113.10:443"
-d2_server_certificate = "file:/etc/adapt/d2-certificate.pem"
+server_addr = "203.0.113.10:443"
+authority = "api.example.com"
+server_name = "api.example.com"
+server_certificate = "file:/etc/adapt/server-certificate.pem"
+deployment_strength = "self-contained"
 mode = 100
-preferred_carrier = "auto"
 auth_profile = "per-user"
 endpoint_id = "adapt-prod"
 
@@ -23,11 +24,8 @@ bind = "0.0.0.0:0"
 # Normally leave this empty and let the server push routes.
 routes = []
 use_server_pushed_routes = true
-
-# Prefer D2 when it is configured, then fall back to opaque D1 only as needed.
-enable_d2_fallback = true
 allow_session_migration = true
-# 0 means "use the persona-selected sparse standby probe cadence".
+# 0 means "use the default sparse standby cadence".
 standby_health_check_secs = 0
 
 keepalive_secs = 25

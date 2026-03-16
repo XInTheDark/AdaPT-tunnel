@@ -134,17 +134,11 @@ fn discover_client_network_context_macos(
 }
 
 fn configured_public_route_hint(config: &ResolvedClientConfig) -> PublicRouteHint {
-    let mut endpoints = vec![format!("d1:{}", canonical_socket_addr(config.server_addr))];
-    if let Some(d2) = &config.d2 {
-        endpoints.push(format!(
-            "d2:{}@{}",
-            d2.endpoint.server_name.to_ascii_lowercase(),
-            canonical_socket_addr(d2.endpoint.addr)
-        ));
-    }
-    endpoints.sort();
-    endpoints.dedup();
-    PublicRouteHint(endpoints.join("|"))
+    PublicRouteHint(format!(
+        "h2:{}@{}",
+        config.authority.to_ascii_lowercase(),
+        canonical_socket_addr(config.server_addr)
+    ))
 }
 
 fn canonical_socket_addr(addr: std::net::SocketAddr) -> String {

@@ -59,6 +59,25 @@ impl ApiSyncH2ClientSession {
         &self.established
     }
 
+    pub fn collect_due_control_frames(&mut self, now_secs: u64) -> Vec<Frame> {
+        self.tunnel.collect_due_control_frames(now_secs)
+    }
+
+    #[must_use]
+    pub fn rekey_status(&self, now_secs: u64) -> apt_tunnel::RekeyStatus {
+        self.tunnel.rekey_status(now_secs)
+    }
+
+    pub fn initiate_rekey(&mut self, now_secs: u64) -> Result<Frame, RuntimeError> {
+        self.tunnel
+            .initiate_rekey(now_secs)
+            .map_err(RuntimeError::from)
+    }
+
+    pub fn next_control_id(&mut self) -> u64 {
+        self.tunnel.next_control_id()
+    }
+
     pub fn prepare_tunnel_request(
         &mut self,
         frames: &[Frame],

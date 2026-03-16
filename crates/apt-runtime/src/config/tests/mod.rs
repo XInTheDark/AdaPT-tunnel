@@ -1,5 +1,5 @@
 use super::*;
-use crate::{generate_d2_tls_identity, load_certificate_der};
+use crate::generate_d2_tls_identity;
 use std::{
     fs,
     time::{SystemTime, UNIX_EPOCH},

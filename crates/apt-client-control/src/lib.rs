@@ -13,28 +13,19 @@ pub const DEFAULT_CLIENT_ROOT_DIR_NAME: &str = ".adapt-tunnel";
 pub const DEFAULT_CLIENT_BUNDLE_FILE_NAME: &str = "client.aptbundle";
 pub const DEFAULT_CLIENT_SOCKET_FILE_NAME: &str = "clientd.sock";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum ClientCarrier {
-    Auto,
-    D1,
-    D2,
+    #[default]
+    H2,
 }
 
 impl ClientCarrier {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Auto => "auto",
-            Self::D1 => "d1",
-            Self::D2 => "d2",
+            Self::H2 => "h2",
         }
-    }
-}
-
-impl Default for ClientCarrier {
-    fn default() -> Self {
-        Self::Auto
     }
 }
 
@@ -42,7 +33,6 @@ impl Default for ClientCarrier {
 pub struct ClientLaunchOptions {
     pub bundle_path: Option<PathBuf>,
     pub mode: Option<u8>,
-    pub carrier: Option<ClientCarrier>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,7 +67,6 @@ pub struct ClientDaemonSnapshot {
     pub lifecycle: ClientDaemonLifecycle,
     pub selected_bundle_path: Option<PathBuf>,
     pub desired_mode: Option<u8>,
-    pub desired_carrier: ClientCarrier,
     pub server: Option<String>,
     pub active_carrier: Option<String>,
     pub negotiated_mode: Option<u8>,
@@ -103,7 +92,6 @@ impl Default for ClientDaemonSnapshot {
             lifecycle: ClientDaemonLifecycle::Idle,
             selected_bundle_path: None,
             desired_mode: Some(Mode::STEALTH.value()),
-            desired_carrier: ClientCarrier::Auto,
             server: None,
             active_carrier: None,
             negotiated_mode: None,
@@ -142,10 +130,6 @@ pub enum ClientDaemonEvent {
     SessionEstablished {
         session: ClientSessionInfo,
     },
-    CarrierChanged {
-        from: Option<String>,
-        to: String,
-    },
     ModeChanged {
         mode: u8,
     },
@@ -168,28 +152,11 @@ pub enum ClientDaemonEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ClientRuntimeEvent {
-    Starting {
-        server: String,
-        requested_mode: u8,
-        preferred_carrier: ClientCarrier,
-    },
-    SessionEstablished {
-        session: ClientSessionInfo,
-    },
-    CarrierChanged {
-        from: Option<String>,
-        to: String,
-    },
-    ModeChanged {
-        mode: u8,
-    },
-    StatsTick {
-        tx_bytes: u64,
-        rx_bytes: u64,
-    },
-    SessionEnded {
-        reason: Option<String>,
-    },
+    Starting { server: String, requested_mode: u8 },
+    SessionEstablished { session: ClientSessionInfo },
+    ModeChanged { mode: u8 },
+    StatsTick { tx_bytes: u64, rx_bytes: u64 },
+    SessionEnded { reason: Option<String> },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -199,7 +166,6 @@ pub enum ClientDaemonRequest {
     Disconnect,
     ReconnectNow,
     SetMode { mode: u8 },
-    SetCarrier { carrier: ClientCarrier },
     SetBundle { bundle_path: PathBuf },
     GetSnapshot,
     Subscribe,
@@ -299,9 +265,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn carrier_strings_match_cli_values() {
-        assert_eq!(ClientCarrier::Auto.as_str(), "auto");
-        assert_eq!(ClientCarrier::D1.as_str(), "d1");
-        assert_eq!(ClientCarrier::D2.as_str(), "d2");
+    fn carrier_string_matches_h2_surface() {
+        assert_eq!(ClientCarrier::H2.as_str(), "h2");
     }
 }

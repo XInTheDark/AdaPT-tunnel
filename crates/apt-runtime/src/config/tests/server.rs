@@ -1,6 +1,7 @@
 use super::*;
+
 #[test]
-fn server_load_upgrades_missing_phase_two_fields() {
+fn server_load_upgrades_missing_h2_fields() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -17,12 +18,17 @@ fn server_load_upgrades_missing_phase_two_fields() {
     ] {
         fs::write(dir.join(file), "44".repeat(32)).unwrap();
     }
+    let identity = generate_d2_tls_identity(vec!["203.0.113.10".to_string()]).unwrap();
+    fs::write(dir.join("server-cert.pem"), identity.certificate_pem).unwrap();
+    fs::write(dir.join("server-key.pem"), identity.private_key_pem).unwrap();
     let config_path = dir.join("server.toml");
     fs::write(
         &config_path,
         r#"
-bind = "0.0.0.0:51820"
-public_endpoint = "203.0.113.10:51820"
+bind = "0.0.0.0:443"
+public_endpoint = "203.0.113.10:443"
+certificate = "file:./server-cert.pem"
+private_key = "file:./server-key.pem"
 endpoint_id = "adapt-demo"
 admission_key = "file:./shared-admission.key"
 server_static_private_key = "file:./server-static-private.key"
@@ -41,8 +47,9 @@ tunnel_ipv4 = "10.77.0.2"
     .unwrap();
     let loaded = ServerConfig::load(&config_path).unwrap();
     assert_eq!(loaded.mode, Mode::STEALTH);
+    assert_eq!(loaded.authority, "203.0.113.10");
     let upgraded = fs::read_to_string(&config_path).unwrap();
-    assert!(upgraded.contains("allow_session_migration = true"));
+    assert!(upgraded.contains("authority = \"203.0.113.10\""));
     let _ = fs::remove_dir_all(dir);
 }
 
@@ -64,12 +71,18 @@ fn server_load_migrates_legacy_runtime_mode_field_to_numeric_mode() {
     ] {
         fs::write(dir.join(file), "44".repeat(32)).unwrap();
     }
+    let identity = generate_d2_tls_identity(vec!["203.0.113.10".to_string()]).unwrap();
+    fs::write(dir.join("server-cert.pem"), identity.certificate_pem).unwrap();
+    fs::write(dir.join("server-key.pem"), identity.private_key_pem).unwrap();
     let config_path = dir.join("server.toml");
     fs::write(
         &config_path,
         r#"
-bind = "0.0.0.0:51820"
-public_endpoint = "203.0.113.10:51820"
+bind = "0.0.0.0:443"
+public_endpoint = "203.0.113.10:443"
+authority = "api.example.com"
+certificate = "file:./server-cert.pem"
+private_key = "file:./server-key.pem"
 runtime_mode = "speed"
 endpoint_id = "adapt-demo"
 admission_key = "file:./shared-admission.key"
@@ -98,13 +111,13 @@ tunnel_ipv4 = "10.77.0.2"
 #[test]
 fn server_resolve_rejects_unimplemented_hybrid_pq() {
     let config = ServerConfig {
-        bind: "0.0.0.0:51820".parse().unwrap(),
-        public_endpoint: "203.0.113.10:51820".to_string(),
+        bind: "0.0.0.0:443".parse().unwrap(),
+        public_endpoint: "203.0.113.10:443".to_string(),
+        authority: "api.example.com".to_string(),
+        certificate: "CERT".to_string(),
+        private_key: "KEY".to_string(),
+        deployment_strength: V2DeploymentStrength::SelfContained,
         mode: Mode::STEALTH,
-        d2_bind: None,
-        d2_public_endpoint: None,
-        d2_certificate: None,
-        d2_private_key: None,
         endpoint_id: "adapt-demo".to_string(),
         admission_key: "11".repeat(32),
         server_static_private_key: "22".repeat(32),
@@ -139,27 +152,27 @@ fn server_resolve_rejects_unimplemented_hybrid_pq() {
 }
 
 #[test]
-fn server_resolve_derives_d2_public_endpoint_when_enabled() {
+fn server_resolve_loads_tls_material_into_surface_plan() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("adapt-server-d2-{unique}"));
+    let dir = std::env::temp_dir().join(format!("adapt-server-h2-{unique}"));
     fs::create_dir_all(&dir).unwrap();
     let identity = generate_d2_tls_identity(vec!["198.51.100.10".to_string()]).unwrap();
-    let cert_path = dir.join("d2-cert.pem");
-    let key_path = dir.join("d2-key.pem");
+    let cert_path = dir.join("server-cert.pem");
+    let key_path = dir.join("server-key.pem");
     fs::write(&cert_path, identity.certificate_pem).unwrap();
     fs::write(&key_path, identity.private_key_pem).unwrap();
 
     let config = ServerConfig {
-        bind: "0.0.0.0:51820".parse().unwrap(),
-        public_endpoint: "198.51.100.10:51820".to_string(),
+        bind: "0.0.0.0:443".parse().unwrap(),
+        public_endpoint: "198.51.100.10:443".to_string(),
+        authority: "api.example.com".to_string(),
+        certificate: format!("file:{}", cert_path.display()),
+        private_key: format!("file:{}", key_path.display()),
+        deployment_strength: V2DeploymentStrength::SelfContained,
         mode: Mode::STEALTH,
-        d2_bind: Some("0.0.0.0:443".parse().unwrap()),
-        d2_public_endpoint: None,
-        d2_certificate: Some(format!("file:{}", cert_path.display())),
-        d2_private_key: Some(format!("file:{}", key_path.display())),
         endpoint_id: "adapt-demo".to_string(),
         admission_key: "11".repeat(32),
         server_static_private_key: "22".repeat(32),
@@ -188,11 +201,10 @@ fn server_resolve_derives_d2_public_endpoint_when_enabled() {
         peers: Vec::new(),
     };
     let resolved = config.resolve().unwrap();
-    let d2 = resolved.d2.unwrap();
-    assert_eq!(d2.public_endpoint, "198.51.100.10:443");
+    assert_eq!(resolved.surface_plan.authority, "api.example.com");
     assert_eq!(
-        load_certificate_der(&d2.certificate_spec).unwrap(),
-        identity.certificate_der
+        resolved.certificate_spec,
+        format!("file:{}", cert_path.display())
     );
     let _ = fs::remove_dir_all(dir);
 }

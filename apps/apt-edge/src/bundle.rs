@@ -111,11 +111,15 @@ pub(super) fn add_client(
     server_config.store(&config_path)?;
 
     let server_static_public_key = load_key32(&server_config.server_static_public_key)?;
-    let d2_bundle = build_client_d2_bundle_fields(&server_config)?;
+    let client_trust = build_client_h2_trust_material(&server_config)?;
     let client_config = ClientConfig {
         server_addr: server_config.public_endpoint.clone(),
+        authority: server_config.authority.clone(),
+        server_name: Some(server_config.authority.clone()),
+        server_roots: None,
+        server_certificate: Some(client_trust.certificate),
+        deployment_strength: server_config.deployment_strength,
         mode: server_config.mode,
-        preferred_carrier: RuntimeCarrierPreference::Auto,
         auth_profile,
         endpoint_id: server_config.endpoint_id.clone(),
         admission_key: encode_key_hex(&bundle_admission_key),
@@ -126,9 +130,6 @@ pub(super) fn add_client(
         interface_name: None,
         routes: Vec::new(),
         use_server_pushed_routes: true,
-        enable_d2_fallback: d2_bundle.is_some(),
-        d2_server_addr: d2_bundle.as_ref().map(|value| value.endpoint.clone()),
-        d2_server_certificate: d2_bundle.as_ref().map(|value| value.certificate.clone()),
         session_policy: SessionPolicy::default(),
         allow_session_migration: true,
         standby_health_check_secs: 0,
@@ -360,38 +361,16 @@ fn render_client_listing(peers: &[AuthorizedPeerConfig]) -> String {
 }
 
 #[derive(Clone, Debug)]
-struct ClientD2BundleFields {
-    endpoint: String,
+struct ClientH2TrustMaterial {
     certificate: String,
 }
 
-fn build_client_d2_bundle_fields(
+fn build_client_h2_trust_material(
     server_config: &ServerConfig,
-) -> CliResult<Option<ClientD2BundleFields>> {
-    let any_present = server_config.d2_bind.is_some()
-        || server_config.d2_public_endpoint.is_some()
-        || server_config.d2_certificate.is_some()
-        || server_config.d2_private_key.is_some();
-    if !any_present {
-        return Ok(None);
-    }
-
-    let endpoint = match server_config.d2_public_endpoint.as_ref() {
-        Some(value) => value.clone(),
-        None => derive_d2_public_endpoint(&server_config.public_endpoint).ok_or_else(|| {
-            "D2 is partially configured, but d2_public_endpoint could not be derived".to_string()
-        })?,
-    };
-    let certificate_spec = server_config
-        .d2_certificate
-        .as_deref()
-        .ok_or_else(|| "D2 is partially configured, but d2_certificate is missing".to_string())?;
-    let certificate =
-        base64::engine::general_purpose::STANDARD.encode(load_certificate_der(certificate_spec)?);
-    Ok(Some(ClientD2BundleFields {
-        endpoint,
-        certificate,
-    }))
+) -> CliResult<ClientH2TrustMaterial> {
+    let certificate = base64::engine::general_purpose::STANDARD
+        .encode(load_certificate_der(&server_config.certificate)?);
+    Ok(ClientH2TrustMaterial { certificate })
 }
 
 #[cfg(test)]

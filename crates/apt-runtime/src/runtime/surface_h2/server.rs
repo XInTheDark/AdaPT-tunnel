@@ -1,4 +1,5 @@
 use super::*;
+use apt_admission::{AdmissionError, EstablishedSession};
 use apt_surface_h2::{ApiSyncRequestTunnelEnvelope, ApiSyncResponseTunnelEnvelope};
 use apt_tunnel::{DecodedPacket, Frame, TunnelSession};
 use apt_types::MINIMUM_REPLAY_WINDOW;
@@ -9,6 +10,23 @@ pub trait ApiSyncPublicService {
         surface: &ApiSyncSurface,
         request: &ApiSyncRequest,
     ) -> Result<ApiSyncResponse, RuntimeError>;
+
+    fn build_ug4_extensions(
+        &mut self,
+        _established_session: &EstablishedSession,
+    ) -> Result<Vec<Vec<u8>>, AdmissionError> {
+        Ok(Vec::new())
+    }
+
+    fn note_established_session(
+        &mut self,
+        _surface: &ApiSyncSurface,
+        _established_session: &EstablishedSession,
+    ) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
+    fn note_closed_session(&mut self, _established_session: &EstablishedSession) {}
 
     fn handle_established_request(
         &mut self,
@@ -236,7 +254,14 @@ impl ApiSyncH2RequestHandler {
             Err(error) => return Err(error),
         }
 
-        match respond_api_sync_ug3_request(admission, &self.surface, request, source_id, now_secs) {
+        match respond_api_sync_ug3_request_with_extension_builder(
+            admission,
+            &self.surface,
+            request,
+            source_id,
+            now_secs,
+            |session| public_service.build_ug4_extensions(session),
+        ) {
             Ok(Some((response, established_session))) => {
                 connection_state.note_established_session(established_session.clone(), now_secs);
                 Ok(ApiSyncHandledRequest::HiddenUpgrade {

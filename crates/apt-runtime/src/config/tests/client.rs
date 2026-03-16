@@ -1,6 +1,7 @@
 use super::*;
+
 #[test]
-fn client_load_upgrades_missing_phase_two_fields() {
+fn client_load_upgrades_missing_h2_fields() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -10,24 +11,26 @@ fn client_load_upgrades_missing_phase_two_fields() {
     fs::write(dir.join("shared-admission.key"), "11".repeat(32)).unwrap();
     fs::write(dir.join("server-static-public.key"), "22".repeat(32)).unwrap();
     fs::write(dir.join("client-static-private.key"), "33".repeat(32)).unwrap();
+    let identity = generate_d2_tls_identity(vec!["198.51.100.10".to_string()]).unwrap();
+    fs::write(dir.join("server-cert.pem"), identity.certificate_pem).unwrap();
     let config_path = dir.join("client.toml");
     fs::write(
         &config_path,
         r#"
-server_addr = "198.51.100.10:51820"
+server_addr = "198.51.100.10:443"
 endpoint_id = "adapt-demo"
 admission_key = "file:./shared-admission.key"
 server_static_public_key = "file:./server-static-public.key"
 client_static_private_key = "file:./client-static-private.key"
+server_certificate = "file:./server-cert.pem"
 "#,
     )
     .unwrap();
     let loaded = ClientConfig::load(&config_path).unwrap();
     assert_eq!(loaded.mode, Mode::STEALTH);
+    assert_eq!(loaded.authority, "198.51.100.10");
     let upgraded = fs::read_to_string(&config_path).unwrap();
-    assert!(upgraded.contains("mode = 100"));
-    assert!(upgraded.contains("preferred_carrier = \"auto\""));
-    assert!(upgraded.contains("enable_d2_fallback = true"));
+    assert!(upgraded.contains("authority = \"198.51.100.10\""));
     let _ = fs::remove_dir_all(dir);
 }
 
@@ -42,16 +45,20 @@ fn client_load_migrates_legacy_runtime_mode_field_to_numeric_mode() {
     fs::write(dir.join("shared-admission.key"), "11".repeat(32)).unwrap();
     fs::write(dir.join("server-static-public.key"), "22".repeat(32)).unwrap();
     fs::write(dir.join("client-static-private.key"), "33".repeat(32)).unwrap();
+    let identity = generate_d2_tls_identity(vec!["198.51.100.10".to_string()]).unwrap();
+    fs::write(dir.join("server-cert.pem"), identity.certificate_pem).unwrap();
     let config_path = dir.join("client.toml");
     fs::write(
         &config_path,
         r#"
-server_addr = "198.51.100.10:51820"
+server_addr = "198.51.100.10:443"
+authority = "api.example.com"
 runtime_mode = "balanced"
 endpoint_id = "adapt-demo"
 admission_key = "file:./shared-admission.key"
 server_static_public_key = "file:./server-static-public.key"
 client_static_private_key = "file:./client-static-private.key"
+server_certificate = "file:./server-cert.pem"
 "#,
     )
     .unwrap();
@@ -66,9 +73,13 @@ client_static_private_key = "file:./client-static-private.key"
 #[test]
 fn client_resolve_rejects_unimplemented_hybrid_pq() {
     let config = ClientConfig {
-        server_addr: "198.51.100.10:51820".to_string(),
+        server_addr: "198.51.100.10:443".to_string(),
+        authority: "api.example.com".to_string(),
+        server_name: None,
+        server_roots: None,
+        server_certificate: Some("PEM".to_string()),
+        deployment_strength: V2DeploymentStrength::SelfContained,
         mode: Mode::STEALTH,
-        preferred_carrier: RuntimeCarrierPreference::D1,
         auth_profile: AuthProfile::SharedDeployment,
         endpoint_id: "adapt-demo".to_string(),
         admission_key: "11".repeat(32),
@@ -79,9 +90,6 @@ fn client_resolve_rejects_unimplemented_hybrid_pq() {
         interface_name: None,
         routes: Vec::new(),
         use_server_pushed_routes: true,
-        enable_d2_fallback: false,
-        d2_server_addr: None,
-        d2_server_certificate: None,
         session_policy: SessionPolicy {
             allow_hybrid_pq: true,
         },
@@ -100,12 +108,18 @@ fn client_resolve_rejects_unimplemented_hybrid_pq() {
 }
 
 #[test]
-fn client_resolve_supports_inline_d2_certificate_material() {
+fn client_resolve_supports_inline_pinned_certificate_material() {
     let identity = generate_d2_tls_identity(vec!["127.0.0.1".to_string()]).unwrap();
     let config = ClientConfig {
-        server_addr: "198.51.100.10:51820".to_string(),
+        server_addr: "127.0.0.1:443".to_string(),
+        authority: "api.example.com".to_string(),
+        server_name: Some("api.example.com".to_string()),
+        server_roots: None,
+        server_certificate: Some(
+            base64::engine::general_purpose::STANDARD.encode(&identity.certificate_der),
+        ),
+        deployment_strength: V2DeploymentStrength::SelfContained,
         mode: Mode::STEALTH,
-        preferred_carrier: RuntimeCarrierPreference::D1,
         auth_profile: AuthProfile::SharedDeployment,
         endpoint_id: "adapt-demo".to_string(),
         admission_key: "11".repeat(32),
@@ -116,11 +130,6 @@ fn client_resolve_supports_inline_d2_certificate_material() {
         interface_name: None,
         routes: Vec::new(),
         use_server_pushed_routes: true,
-        enable_d2_fallback: true,
-        d2_server_addr: Some("127.0.0.1:443".to_string()),
-        d2_server_certificate: Some(
-            base64::engine::general_purpose::STANDARD.encode(&identity.certificate_der),
-        ),
         session_policy: SessionPolicy::default(),
         allow_session_migration: true,
         standby_health_check_secs: 0,
@@ -133,9 +142,10 @@ fn client_resolve_supports_inline_d2_certificate_material() {
         state_path: PathBuf::from("client-state.toml"),
     };
     let resolved = config.resolve().unwrap();
-    assert_eq!(resolved.d2.as_ref().unwrap().endpoint.addr.port(), 443);
+    assert_eq!(resolved.server_addr.port(), 443);
+    assert_eq!(resolved.surface_plan.authority, "api.example.com");
     assert_eq!(
-        resolved.d2.unwrap().server_certificate_der,
-        identity.certificate_der
+        resolved.surface_plan.trust.pinned_certificate.as_deref(),
+        config.server_certificate.as_deref()
     );
 }

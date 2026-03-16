@@ -1,73 +1,52 @@
 # AdaPT Tunnel
 
-Rust workspace implementing the **Adaptive Persona Tunnel (APT/1-core)** described in `SPEC_v1.md`.
+Rust workspace implementing the AdaPT tunnel core and the current v2 **H2 public-session** product flow.
 
 ## Current status
 
-The project now has two layers:
+The `v2` branch now ships a real H2 API-sync baseline end to end:
 
-1. a tested **APT protocol core**
-2. an initial **user-facing VPN runtime and CLI flow** built around a combined server daemon and client
+- `apt-admission` runs on wrapper-free `UG1` / `UG2` / `UG3` / `UG4` envelopes
+- `apt-surface-h2` models the public API-sync surface and its legal hidden-upgrade slots
+- `apt-runtime` drives real Hyper `h2c` and rustls/TLS H2 sessions, completes hidden upgrade, and carries encrypted tunnel packets inside ordinary API-sync request/response bodies
+- `apt-edge`, `apt-client`, `apt-clientd`, and `apt-tunneld` now use the H2 flow directly
+- generated bundles and configs are H2-first and pin the server certificate by default
+- `apt-harness` includes H2-oriented browser/backend fixture comparison support
 
-Implemented today:
-
-Experimental v2 public-session status on the `v2` branch:
-
-- `apt-admission` now runs entirely on wrapper-free `UG1` / `UG2` / `UG3` / `UG4` envelopes
-- `apt-surface-h2` + `apt-runtime` now complete the H2 API-sync baseline over both Hyper `h2c` and rustls/TLS H2
-- the H2 baseline now carries post-upgrade encrypted tunnel packets inside the same legal API-sync request/response JSON slots used for the hidden upgrade
-- `apt-harness` includes browser-vs-AdaPT H2 fixture support and backend-trace comparisons for the current H2 lab path
-
-Quick validation commands for the current H2 baseline:
+Quick validation commands:
 
 ```bash
 cargo test -q -p apt-runtime runtime::surface_h2::tests::h2c
 cargo test -q -p apt-runtime runtime::surface_h2::tests::tls
-cargo test -q -p apt-harness
+cargo test -q
 ```
 
-- shared protocol/runtime types
-- cryptographic helpers and Noise `XXpsk2` session establishment
-- admission handshake (`C0 -> S1 -> C2 -> S3`)
-- encrypted inner tunnel packet core with replay protection and rekey support
-- carrier helpers and live runtime paths for `D1` datagram and `D2` QUIC-datagram transport
-- first-cut persona, policy, and observability layers
-- combined server daemon runtime over `D1` plus optional `D2` (`apt-edge start`)
-- client runtime with `auto` preference, `D2`-first fallback when configured, and `D1` as the opaque fallback path (`apt-client up`)
-- targeted client-side QA bring-up with tunnel ping, DNS/public-egress checks, and a download throughput probe (`apt-client test`)
-- guided server initialization (`apt-edge init`)
-- guided D2 enablement / certificate generation for existing deployments (`apt-edge utils enable-d2`)
-- shared/per-user client bundle provisioning, temporary import handoff, and revocation (`apt-edge add-client`, `apt-client import`, `apt-edge revoke-client`)
-- TUN interface wiring, route/NAT orchestration, and best-effort pushed DNS automation
-- authenticated path revalidation and sparse standby probing
-
-## The main way to use AdaPT going forward
-
-The intended day-to-day workflow is now CLI-driven.
+## Main workflow
 
 ### Server operator flow
 
-#### 1) Create the server setup
+#### 1) Initialize the server
 
 ```bash
 sudo apt-edge init
 ```
 
-When `apt-edge init` asks for the client-facing endpoint, use the server's **real reachable address and port**:
+When `apt-edge init` asks for the client-facing endpoint, use the server's **real reachable host:port**, for example:
 
-- a public IP is fine, for example `203.0.113.10:51820`
-- a DNS name is also fine, for example `vpn.example.com:51820`
+- `203.0.113.10:443`
+- `api.example.com:443`
 
-Do **not** leave an example placeholder there. Whatever you enter is copied into generated client bundles.
-
-This guided command creates:
+The guided setup creates:
 
 - `/etc/adapt/server.toml` by default
-- the server key files
-- a `bundles/` directory for single-file client bundles
-- optionally, a boot-persistent `systemd` service when you say yes to the startup prompt, pass `--install-systemd-service`, or later run `apt-edge utils install-systemd-service`
+- server admission/static/cookie/ticket keys
+- `server-certificate.pem` and `server-private-key.pem` for the H2 API-sync surface
+- `bundles/` for single-file client bundles
+- optionally a boot-persistent `systemd` service
 
-#### 2) Create a ready-to-use client bundle
+If you already know the public authority/host name the H2 surface should present, pass `--authority api.example.com`.
+
+#### 2) Generate a client bundle
 
 ```bash
 sudo apt-edge add-client --config /etc/adapt/server.toml --name laptop --auth per-user
@@ -75,16 +54,14 @@ sudo apt-edge add-client --config /etc/adapt/server.toml --name laptop --auth pe
 
 This command:
 
-- allocates a client tunnel IP
+- allocates the client tunnel IP
 - authorizes the client in `server.toml`
 - defaults to a dedicated per-user admission key in the guided flow
 - generates the client static identity
-- writes a single `.aptbundle` file for manual fallback
-- starts a short-lived temporary import service and prints an `apt-client import` command plus one-time key
+- writes a single `.aptbundle` file
+- starts a temporary import service and prints a one-time `apt-client import` command unless you pass `--no-import`
 
-If you need the older shared-deployment admission model for a specific client, pass `--auth shared` instead.
-
-If you later need to revoke that client cleanly:
+To revoke a client later:
 
 ```bash
 sudo apt-edge revoke-client --config /etc/adapt/server.toml --name laptop
@@ -93,10 +70,12 @@ sudo apt-edge revoke-client --config /etc/adapt/server.toml --name laptop
 #### 3) Start the server
 
 ```bash
-sudo apt-edge start
+sudo apt-edge start --config /etc/adapt/server.toml
 ```
 
-If you enable the startup-service option during `apt-edge init`, the command also writes `/etc/systemd/system/apt-edge.service`, enables it, and starts it immediately. If you skip that during setup, you can install or refresh the same unit later with `apt-edge utils install-systemd-service --config /etc/adapt/server.toml`. In either case, you can manage it with:
+If you enabled the startup-service option during `apt-edge init`, the server is also installed and started under `systemd`.
+
+Useful follow-up commands:
 
 ```bash
 sudo systemctl status apt-edge
@@ -105,19 +84,19 @@ sudo journalctl -u apt-edge -f
 
 ### Client flow
 
-The easiest flow is to run the one-time import command that `apt-edge add-client` prints, then install the privileged local daemon once and connect without `sudo` afterwards:
+The easiest path is:
 
 ```bash
-apt-client import --server vpn.example.com:40123 --key <temporary-key>
+apt-client import --server api.example.com:40123 --key <temporary-key>
 sudo apt-client service install
 apt-client up
-# or run an automated QA pass that brings the tunnel up temporarily and tears it back down
+# or run the built-in QA pass
 apt-client test
 ```
 
 That imports the generated bundle into `~/.adapt-tunnel/client.aptbundle` by default.
 
-If you prefer the manual fallback path, copy the generated client bundle file into `~/.adapt-tunnel/client.aptbundle` on the client device, then run:
+Manual fallback:
 
 ```bash
 mkdir -p ~/.adapt-tunnel
@@ -126,60 +105,15 @@ sudo apt-client service install
 apt-client up
 ```
 
-With that default install path, the client stores its persistent state in `~/.adapt-tunnel/client.state.toml`.
-On first use, the client also creates a blank optional override file at `~/.adapt-tunnel/client.override.toml` for local non-secret tweaks.
+With the default install path:
+
+- bundle: `~/.adapt-tunnel/client.aptbundle`
+- state: `~/.adapt-tunnel/client.state.toml`
+- local override file: `~/.adapt-tunnel/client.override.toml`
 
 On macOS, the client should normally let the OS auto-create a `utun` interface instead of hardcoding a custom TUN name.
 
-When the session comes up, the client now logs the assigned tunnel IP, interface, and routes. If the server pushed DNS servers, the client also applies them automatically where the local platform supports it. The server logs when a client session is established.
-
-If you prefer not to install the bundle into `~/.adapt-tunnel`, you can still run it directly with `--bundle /path/to/laptop.aptbundle`.
-In that direct-launch case, the client creates a sidecar override file next to the bundle, for example `laptop.override.toml`.
-
 ## Recommended quickstart
-
-### Install from the latest GitHub Release
-
-If you want a download-and-install flow instead of manually unpacking a tarball, use the installer script:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/XInTheDark/AdaPT-tunnel/master/scripts/install.sh | sudo bash -s -- install
-```
-
-By default, the installer:
-
-- auto-detects the current platform
-- prefers the static `x86_64-unknown-linux-musl` asset on `x86_64` Linux
-- installs binaries into `/usr/local/bin`
-- installs docs/update metadata into `/usr/local/share/adapt`
-- installs an updater command named `adapt-install`
-- installs an uninstall command named `adapt-uninstall`
-
-To update an existing installation later:
-
-```bash
-sudo adapt-install update
-```
-
-To remove the installed release binaries/docs later:
-
-```bash
-sudo adapt-uninstall
-```
-
-To also remove the standard config and state directories:
-
-```bash
-sudo adapt-uninstall --purge-all
-```
-
-You can point the installer at another GitHub repo or base if needed:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/XInTheDark/AdaPT-tunnel/master/scripts/install.sh | sudo bash -s -- install --repo your-org/AdaPT-tunnel
-```
-
-For GitHub Enterprise or other custom endpoints, the same script also supports `--api-base` and `--web-base`.
 
 ### On the server
 
@@ -189,48 +123,45 @@ sudo apt-edge add-client --config /etc/adapt/server.toml --name laptop --auth pe
 sudo apt-edge start
 ```
 
-If you want the server to come back automatically after reboot, answer `y` to the startup-service prompt during `apt-edge init`, pass `--install-systemd-service`, or later run `apt-edge utils install-systemd-service --config /etc/adapt/server.toml`.
-
 ### On the client
 
-Run the one-time `apt-client import --server ... --key ...` command shown by `apt-edge add-client`, install the local daemon once, then either connect normally or run the built-in QA pass:
-
 ```bash
+apt-client import --server <temporary-host:port> --key <temporary-key>
 sudo apt-client service install
 apt-client up
-# or
+```
+
+Or run the QA helper instead of a persistent session:
+
+```bash
 apt-client test
 ```
 
 ## CLI reference
 
-### `apt-edge`
+### `apt-edge init`
 
-#### `apt-edge init`
-Guided setup for a new server.
-
-This writes a fresh `server.toml` and key set for the target directory. If you point it at an existing deployment directory, it does not preserve the current authorized client list from the old config.
+Guided setup for a new H2 API-sync server.
 
 Useful options:
 
 - `--out-dir` — where to write the server files
-- `--bind` — UDP listen address
+- `--bind` — TCP/TLS listen address for the public H2 service
 - `--public-endpoint` — public host:port clients should use
+- `--authority` — HTTP authority / host name exposed by the public API-sync surface
 - `--endpoint-id` — deployment identifier
 - `--egress-interface` — Linux egress interface for NAT
 - `--tunnel-subnet` — tunnel subnet, for example `10.77.0.0/24`
 - `--tunnel-subnet6` — optional IPv6 tunnel subnet, for example `fd77:77::/64`
 - `--interface-name` — server TUN name
-- `--enable-d2` — enable the `D2` QUIC-datagram carrier and generate a pinned server certificate
-- `--d2-bind` — UDP listen address for the `D2` QUIC carrier
-- `--d2-public-endpoint` — client-reachable `D2` endpoint, usually `host:443`
 - `--push-route` — route(s) to push to clients
 - `--dns` — DNS server(s) to push to clients
 - `--install-systemd-service` — write, enable, and start `/etc/systemd/system/apt-edge.service`
 - `--yes` — skip prompts and use defaults for omitted values
 
-#### `apt-edge add-client`
-Generate a ready-to-use client bundle and authorize it on the server.
+### `apt-edge add-client`
+
+Generate a ready-to-use H2 client bundle and authorize it on the server.
 
 Useful options:
 
@@ -246,14 +177,16 @@ Useful options:
 - `--client-ipv6` — manually choose the client tunnel IPv6 when the server IPv6 tunnel is enabled
 - `--yes` — skip prompts for missing values
 
-#### `apt-edge list-clients`
+### `apt-edge list-clients`
+
 List the clients currently authorized in the server config.
 
 Useful options:
 
 - `--config` — server config path
 
-#### `apt-edge revoke-client`
+### `apt-edge revoke-client`
+
 Remove an authorized client from the server config and delete its local credential files when they live under the config root.
 
 Useful options:
@@ -262,17 +195,8 @@ Useful options:
 - `--name` — client name to revoke
 - `--yes` — skip prompts for missing values
 
-#### `apt-edge utils enable-d2`
-Enable or refresh the `D2` QUIC-datagram carrier on an existing server config.
+### `apt-edge utils install-systemd-service`
 
-Useful options:
-
-- `--config` — server config path
-- `--d2-bind` — UDP listen address for the `D2` QUIC carrier
-- `--d2-public-endpoint` — client-reachable `D2` endpoint, usually `host:443`
-- `--yes` — skip prompts for missing values
-
-#### `apt-edge utils install-systemd-service`
 Install or refresh `/etc/systemd/system/apt-edge.service` for an existing server config.
 
 Useful options:
@@ -280,17 +204,17 @@ Useful options:
 - `--config` — server config path
 - `--yes` — skip prompts for missing values
 
-#### `apt-edge start`
-Start the combined server daemon.
+### `apt-edge start`
 
-Useful option:
+Start the combined H2 server daemon.
+
+Useful options:
 
 - `--config` — server config path
 - `--mode 0..100` — one-shot numeric mode override (`0` = speed, `50` = balanced, `100` = stealth)
 
-### `apt-client`
+### `apt-client import`
 
-#### `apt-client import`
 Import a client bundle from the short-lived temporary endpoint printed by `apt-edge add-client`.
 
 Useful options:
@@ -299,9 +223,8 @@ Useful options:
 - `--key` — one-time temporary import key printed by `apt-edge add-client`
 - `--bundle` — optional custom path where the imported single-file bundle should be written
 
-By default the imported bundle is stored at `~/.adapt-tunnel/client.aptbundle`.
+### `apt-client service install|uninstall|status`
 
-#### `apt-client service install|uninstall|status`
 Install, remove, or inspect the privileged local client daemon that owns TUN/routes/DNS setup.
 
 Typical first-time setup:
@@ -310,29 +233,23 @@ Typical first-time setup:
 sudo apt-client service install
 ```
 
-After that, normal client connects and tests do not need `sudo` anymore.
+### `apt-client up`
 
-#### `apt-client up`
 Connect through the local client daemon using a generated client bundle and stay attached to its live events.
 
 Useful options:
 
 - `--bundle` — path to the single-file client bundle
 - `--mode 0..100` — one-shot numeric mode override (`0` = speed, `50` = balanced, `100` = stealth)
-- `--carrier auto|d1|d2` — one-shot preferred-carrier override
 
-If omitted, the client first checks `~/.adapt-tunnel/client.aptbundle`, then the current-directory dev fallbacks. It also auto-creates a blank optional override TOML next to the selected bundle so local client-only settings can be edited without changing the bundle itself.
+### `apt-client test`
 
-#### `apt-client test`
-Bring the tunnel up temporarily through the local daemon and run a lightweight QA pass. The command automatically disconnects after the checks finish.
-
-By default it always tests tunnel reachability with IPv4 ping, tries IPv6 ping when the session exposes an IPv6 tunnel address, and then runs DNS/public-egress/download checks when the active routes include a default route.
+Bring the tunnel up temporarily through the local daemon and run a lightweight QA pass.
 
 Useful options:
 
 - `--bundle` — path to the single-file client bundle
 - `--mode 0..100` — one-shot numeric mode override for the QA run
-- `--carrier auto|d1|d2` — one-shot preferred-carrier override for the QA run
 - `--connect-timeout-secs` — fail if the tunnel does not come up in time
 - `--ping-count` — number of ICMP probes per tunnel ping check
 - `--dns-host` — hostname used for the DNS resolution check
@@ -342,89 +259,32 @@ Useful options:
 - `--speedtest-timeout-secs` — timeout for the throughput probe
 - `--skip-dns`, `--skip-public-ip`, `--skip-speedtest` — disable specific checks
 
-#### `apt-client tui`
-Launch the terminal dashboard wrapper for the local daemon. It shows live status/stats/logs and lets you connect, disconnect, retry, change mode, change carrier, and change bundle from one screen.
+### `apt-client tui`
 
-## GitHub release assets
-
-GitHub Actions now builds downloadable release bundles automatically when a GitHub Release is published.
-
-Each release attaches tarballs for:
-
-- `x86_64-unknown-linux-gnu`
-- `x86_64-unknown-linux-musl`
-- `x86_64-apple-darwin`
-- `aarch64-apple-darwin`
-
-Linux compatibility note:
-
-- the `x86_64-unknown-linux-musl` bundle is a static Linux build and is the safest default choice when you are deploying onto an unknown or older Linux distribution
-- the `x86_64-unknown-linux-gnu` bundle is built on an `ubuntu-22.04` baseline instead of `ubuntu-latest`
-- this keeps the shipped GNU/Linux binary from unnecessarily depending on the newest glibc available on GitHub-hosted runners
-
-Each bundle includes:
-
-- `apt-edge`
-- `apt-client`
-- `apt-clientd`
-- `apt-tunneld`
-- `install.sh`
-- `uninstall.sh`
-- the deployment/testing guides
-- example config files
-
-That means most operators can download a release bundle directly instead of building from source.
+Launch the terminal dashboard wrapper for the local daemon. It shows live status, stats, logs, bundle selection, and mode control for the H2 session flow.
 
 ## Guides
 
-### CLI-first setup
-- `guides/DEPLOYMENT.md` — step-by-step guided deployment using the user-friendly CLI flow
-- `guides/MANUAL-TESTING.md` — how to validate the tunnel manually after setup
-
-### Manual / advanced setup
-- `guides/MANUAL-CONFIG-SETUP.md` — raw config-file-oriented setup and manual details
-- `guides/examples/server.toml` — example server config
-- `guides/examples/client.toml` — reference for the logical client config embedded inside a bundle
-
-## WireGuard relationship
-
-APT is **not implemented on top of WireGuard** in this repository.
-
-Per `SPEC_v1.md`, the design uses a **WireGuard-like discipline** for the inner encrypted tunnel:
-
-- full IP packets inside encrypted frames
-- unreliable data delivery
-- explicit replay protection
-- rekeying/key phases
-
-But the actual handshake and control design here are APT-specific:
-
-- Noise `XXpsk2` admission handshake
-- APT admission cookies and tickets
-- APT tunnel/control frames
-- APT persona/policy layers
+- `guides/DEPLOYMENT.md` — step-by-step guided H2 deployment
+- `guides/MANUAL-CONFIG-SETUP.md` — raw config-file reference for the current H2 product flow
+- `guides/MANUAL-TESTING.md` — manual validation checklist for H2 deployments
+- `guides/examples/server.toml` — reference H2 server config
+- `guides/examples/client.toml` — reference logical client config embedded inside a bundle
 
 ## Important current limitations
 
-This is now much more usable than the earlier prototype, but it is still the first production-oriented cut rather than the final hardened VPN product.
-
-Current limitations include:
-
 - server runtime target is Linux
 - client runtime target is Linux/macOS
-- DNS automation is best-effort rather than universal: Linux currently uses `resolvectl`, and macOS temporarily overrides the primary network service DNS while the tunnel is up
-- the live carrier set is now `D1` plus optional `D2`; the v2 `S1`/H2 and `D2`/H3 public-session families are still roadmap work
-- IPv6 tunnel addressing, routing, and Linux server forwarding/NAT are supported when the host IPv6 stack is enabled; guided `apt-edge init` now leaves IPv6 off unless you opt in
-- the public-session stealth surfaces from `SPEC_v2.md` are not landed yet; today’s runtime remains the hardened migration baseline rather than the final outer-session design
-- config auto-upgrade rewrites parsed TOML with new defaulted fields, so comments/formatting in older configs may be normalized on startup
+- DNS automation is still best-effort rather than universal
+- the shipped product path is H2 API-sync; the H3 sibling remains roadmap work
+- the default generated TLS identity is self-signed and aimed at self-contained/lab deployments unless you replace it with origin-backed certificate material
+- IPv6 tunnel addressing, routing, and Linux server forwarding/NAT are supported when the host IPv6 stack is enabled
+- H2 is testing-ready, but the broader origin-backed deployment polish and H3 follow-on work are still in progress
 
 ## Validation status
 
 The repository currently validates with:
 
 ```bash
-cargo check --workspace
-cargo test --workspace
+cargo test -q
 ```
-
-The README is now CLI-first on purpose; the more manual/raw setup details live under `guides/`.

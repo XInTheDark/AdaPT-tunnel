@@ -5,6 +5,7 @@ use crate::config::{
 };
 use apt_admission::{initiate_ug1, ClientCredential, ClientSessionRequest};
 use apt_carriers::D1Carrier;
+use apt_origin::{OriginFamilyProfile, PublicSessionTransport};
 use apt_types::{AuthProfile, EndpointId, Mode, PathProfile, RekeyLimits};
 use std::{
     collections::HashMap,
@@ -12,6 +13,40 @@ use std::{
     path::PathBuf,
 };
 
+fn test_client_surface_plan(endpoint: &str, authority: &str) -> crate::V2ClientSurfacePlan {
+    crate::V2ClientFamilyConfig {
+        authority: authority.to_string(),
+        endpoint: endpoint.to_string(),
+        trust: crate::V2SurfaceTrustConfig {
+            pinned_certificate: Some("BASE64CERT".to_string()),
+            ..crate::V2SurfaceTrustConfig::default()
+        },
+        cover_family: "api-sync".to_string(),
+        profile_version: OriginFamilyProfile::api_sync().profile_version,
+        deployment_strength: crate::V2DeploymentStrength::SelfContained,
+    }
+    .to_surface_plan(PublicSessionTransport::S1H2)
+    .unwrap()
+}
+
+fn test_server_surface_plan(
+    bind: SocketAddr,
+    endpoint: &str,
+    authority: &str,
+) -> crate::V2ServerSurfacePlan {
+    crate::V2ServerSurfaceConfig {
+        authority: authority.to_string(),
+        bind,
+        public_endpoint: endpoint.to_string(),
+        trust: crate::V2SurfaceTrustConfig::default(),
+        cover_family: "api-sync".to_string(),
+        profile_version: OriginFamilyProfile::api_sync().profile_version,
+        deployment_strength: crate::V2DeploymentStrength::SelfContained,
+        origin_backend: None,
+    }
+    .to_surface_plan(PublicSessionTransport::S1H2)
+    .unwrap()
+}
 fn test_runtime_carriers() -> RuntimeCarriers {
     RuntimeCarriers::new(1_380, false)
 }
@@ -52,7 +87,9 @@ fn test_tunnel_session() -> TunnelSession {
 
 fn test_client_config() -> ResolvedClientConfig {
     ResolvedClientConfig {
-        server_addr: "198.51.100.10:51820".parse::<SocketAddr>().unwrap(),
+        server_addr: "198.51.100.10:443".parse::<SocketAddr>().unwrap(),
+        authority: "api.example.com".to_string(),
+        surface_plan: test_client_surface_plan("198.51.100.10:443", "api.example.com"),
         mode: Mode::STEALTH,
         preferred_carrier: RuntimeCarrierPreference::Auto,
         strict_preferred_carrier: false,
@@ -83,8 +120,16 @@ fn test_client_config() -> ResolvedClientConfig {
 
 fn test_server_config() -> ResolvedServerConfig {
     ResolvedServerConfig {
-        bind: "0.0.0.0:51820".parse::<SocketAddr>().unwrap(),
-        public_endpoint: "198.51.100.10:51820".to_string(),
+        bind: "0.0.0.0:443".parse::<SocketAddr>().unwrap(),
+        public_endpoint: "198.51.100.10:443".to_string(),
+        authority: "api.example.com".to_string(),
+        certificate_spec: "file:/tmp/server-cert.pem".to_string(),
+        private_key_spec: "file:/tmp/server-key.pem".to_string(),
+        surface_plan: test_server_surface_plan(
+            "0.0.0.0:443".parse::<SocketAddr>().unwrap(),
+            "198.51.100.10:443",
+            "api.example.com",
+        ),
         mode: Mode::STEALTH,
         d2: None,
         endpoint_id: EndpointId::new("adapt-test".to_string()),

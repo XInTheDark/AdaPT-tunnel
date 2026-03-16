@@ -1,5 +1,4 @@
-use apt_client_control::ClientCarrier;
-use clap::{value_parser, Args, Parser, Subcommand, ValueEnum};
+use clap::{value_parser, Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 20;
@@ -9,23 +8,6 @@ const DEFAULT_PUBLIC_IP_URL: &str = "https://api.ipify.org";
 const DEFAULT_SPEEDTEST_BYTES: usize = 25_000_000;
 const DEFAULT_SPEEDTEST_TIMEOUT_SECS: u64 = 45;
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-pub(crate) enum CliCarrier {
-    Auto,
-    D1,
-    D2,
-}
-
-impl From<CliCarrier> for ClientCarrier {
-    fn from(value: CliCarrier) -> Self {
-        match value {
-            CliCarrier::Auto => Self::Auto,
-            CliCarrier::D1 => Self::D1,
-            CliCarrier::D2 => Self::D2,
-        }
-    }
-}
-
 impl ClientLaunchArgs {
     pub(crate) fn to_launch_options(
         &self,
@@ -34,7 +16,6 @@ impl ClientLaunchArgs {
         apt_client_control::ClientLaunchOptions {
             bundle_path: bundle.or_else(|| self.bundle.clone()),
             mode: self.mode,
-            carrier: self.carrier.map(Into::into),
         }
     }
 }
@@ -47,9 +28,6 @@ pub(crate) struct ClientLaunchArgs {
     /// Override the numeric mode for this launch only (0 = speed, 100 = stealth).
     #[arg(long, value_parser = value_parser!(u8).range(0..=100))]
     pub mode: Option<u8>,
-    /// Override the preferred carrier for this launch only.
-    #[arg(long, value_enum)]
-    pub carrier: Option<CliCarrier>,
 }
 
 #[derive(Debug, Clone, Args)]

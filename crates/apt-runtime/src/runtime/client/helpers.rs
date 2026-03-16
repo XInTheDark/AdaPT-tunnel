@@ -1,6 +1,5 @@
 use super::*;
-use crate::config::RuntimeCarrierPreference;
-use apt_client_control::{ClientCarrier, ClientRuntimeEvent, ClientSessionInfo};
+use apt_client_control::{ClientRuntimeEvent, ClientSessionInfo};
 
 pub(super) fn record_mode_change(
     telemetry: &mut TelemetrySnapshot,
@@ -43,10 +42,6 @@ pub(super) fn promote_client_path(
         None,
         observability,
     );
-    hooks.emit(ClientRuntimeEvent::CarrierChanged {
-        from: from.map(|carrier| carrier.as_str().to_string()),
-        to: binding.as_str().to_string(),
-    });
 }
 
 pub(super) fn promote_standby_if_available(
@@ -102,15 +97,6 @@ pub(super) fn disconnected_client_status(
     )
 }
 
-pub(super) fn runtime_carrier(preference: RuntimeCarrierPreference) -> ClientCarrier {
-    match preference {
-        RuntimeCarrierPreference::Auto => ClientCarrier::Auto,
-        RuntimeCarrierPreference::D1 => ClientCarrier::D1,
-        RuntimeCarrierPreference::D2 => ClientCarrier::D2,
-        RuntimeCarrierPreference::S1 => ClientCarrier::Auto,
-    }
-}
-
 pub(super) fn session_info(
     config: &ResolvedClientConfig,
     transport: &SessionTransportParameters,
@@ -122,7 +108,10 @@ pub(super) fn session_info(
     ClientSessionInfo {
         server: config.server_addr.to_string(),
         interface_name: interface_name.to_string(),
-        carrier: carrier.as_str().to_string(),
+        carrier: match carrier {
+            CarrierBinding::S1EncryptedStream => "h2".to_string(),
+            _ => carrier.as_str().to_string(),
+        },
         negotiated_mode: negotiated_mode.value(),
         tunnel_ipv4: Some(transport.client_ipv4),
         tunnel_ipv6: transport.client_ipv6,

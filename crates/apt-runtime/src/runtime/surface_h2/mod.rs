@@ -16,7 +16,8 @@ pub use self::backend::{
 };
 pub use self::bridge::{
     handle_api_sync_ug2_response, handle_api_sync_ug4_response, prepare_api_sync_ug1_request,
-    respond_api_sync_ug1_request, respond_api_sync_ug3_request, PreparedApiSyncUg1Request,
+    respond_api_sync_ug1_request, respond_api_sync_ug3_request,
+    respond_api_sync_ug3_request_with_extension_builder, PreparedApiSyncUg1Request,
     PreparedApiSyncUg3Request,
 };
 pub use self::client::{ApiSyncH2ClientDriver, ApiSyncH2ClientSession};

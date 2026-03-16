@@ -246,13 +246,13 @@ mod tests {
     #[test]
     fn next_client_ipv6_skips_used_assignments() {
         let config = ServerConfig {
-            bind: "0.0.0.0:51820".parse().unwrap(),
-            public_endpoint: "203.0.113.10:51820".to_string(),
+            bind: "0.0.0.0:443".parse().unwrap(),
+            public_endpoint: "203.0.113.10:443".to_string(),
+            authority: "api.example.com".to_string(),
+            certificate: "file:/tmp/server-cert.pem".to_string(),
+            private_key: "file:/tmp/server-key.pem".to_string(),
+            deployment_strength: V2DeploymentStrength::SelfContained,
             mode: Mode::STEALTH,
-            d2_bind: None,
-            d2_public_endpoint: None,
-            d2_certificate: None,
-            d2_private_key: None,
             endpoint_id: "adapt-demo".to_string(),
             admission_key: "11".repeat(32),
             server_static_private_key: "22".repeat(32),
