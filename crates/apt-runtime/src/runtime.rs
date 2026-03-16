@@ -60,10 +60,17 @@ mod pathio;
 mod scheduler;
 mod server;
 mod support;
+mod surface_h2;
 mod transport;
 
 #[cfg(test)]
 mod tests;
+
+pub use self::surface_h2::{
+    handle_api_sync_ug2_response, handle_api_sync_ug4_response, prepare_api_sync_ug1_request,
+    respond_api_sync_ug1_request, respond_api_sync_ug3_request, PreparedApiSyncUg1Request,
+    PreparedApiSyncUg3Request,
+};
 
 use self::{d2::*, handshake::*, packets::*, pathio::*, scheduler::*, support::*, transport::*};
 

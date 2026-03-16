@@ -12,8 +12,8 @@
 
 ## Current milestone
 
-- **Milestone:** Phase C/D envelope bridge — wrapper-free hidden-upgrade flow now exists, runtime H2 wiring next
-- **Status:** Phase A hardening is complete; early Phase B/C/D prep is now in place with the live `D1` + optional `D2` baseline, manifest-driven harness fixtures, draft v2 structured transport config types, transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, masked fallback ticket issuance/opening bound to coarse network context, enriched `apt-origin` starter profiles, config-resolved v2 surface plans, and an `apt-surface-h2` crate that now exercises a strict end-to-end API-sync hidden-upgrade flow using envelope-level admission APIs rather than `AdmissionPacket` / `ServerConfirmationPacket` wrappers
+- **Milestone:** Phase D runtime bridge — `apt-runtime` now owns API-sync H2 surface orchestration helpers, real session wiring next
+- **Status:** Phase A hardening is complete; early Phase B/C/D prep is now in place with the live `D1` + optional `D2` baseline, manifest-driven harness fixtures, draft v2 structured transport config types, transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, masked fallback ticket issuance/opening bound to coarse network context, enriched `apt-origin` starter profiles, config-resolved v2 surface plans, envelope-level admission APIs, and an `apt-runtime` H2 bridge module that prepares/responds to API-sync hidden-upgrade request/response bodies in front of `apt-surface-h2`
 - **Canonical design docs:**
   - `SPEC_v2.md`
   - `docs/ARCHITECTURE_V2.md`
@@ -32,11 +32,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** Phase C/D envelope-level hidden-upgrade bridge for API-sync H2
-- **Latency impact:** none on the live shipped datapath; this slice adds direct envelope APIs and in-memory H2 surface orchestration rather than networked runtime wiring
-- **Bandwidth impact:** none on live traffic yet; the new path only models how encrypted hidden-upgrade envelopes fit into legal API-sync JSON fields
-- **CPU impact:** negligible; extra work is limited to base64/JSON slot insertion in tests and future surface helpers
-- **Notes:** `apt-admission` now exposes `UG1`/`UG2`/`UG3`/`UG4` envelope-level APIs independent of `AdmissionPacket` / `ServerConfirmationPacket`, and `apt-surface-h2` uses them in a strict end-to-end API-sync flow test with an `S1`/H2 carrier profile stub
+- **Chunk:** Phase D runtime-owned API-sync H2 bridge helpers
+- **Latency impact:** none on the live shipped datapath yet; the new helpers are bridge/orchestration code and are currently exercised via tests
+- **Bandwidth impact:** none on live traffic yet; they only model how legal API-sync bodies carry the encrypted hidden-upgrade envelopes
+- **CPU impact:** negligible; limited to JSON/base64 slot work around the hidden-upgrade envelopes
+- **Notes:** `apt-runtime` now contains a thin `surface_h2` bridge that prepares `UG1`/`UG3` requests and consumes `UG2`/`UG4` API-sync responses via `apt-surface-h2`, giving the runtime crate ownership of the public-session orchestration layer before real networked H2 session code lands
 
 ## Core v2 design rules
 
@@ -67,18 +67,18 @@
 | Hidden-upgrade core | active | `apt-admission` now has transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, slot bindings, masked fallback tickets, and direct envelope APIs that avoid `AdmissionPacket` / `ServerConfirmationPacket` in the tested H2 path; next step is deleting or quarantining remaining legacy wrapper-only flow where practical | Moderate implementation risk; core enabler |
 | Structured v2 transport config | active | Draft v2 public-session transport blocks and deployment metadata now resolve into `apt-origin` starter surface plans; next step is feeding those plans into future bundle/origin/surface orchestration without changing the live runtime path yet | Minor config churn |
 | Origin family definitions | active | `apt-origin` now carries API-sync and object/origin starter profiles with request graphs, legal upgrade slots, concurrency/timing envelopes, idle rules, and shadow-lane hints; `apt-surface-h2` is the first consumer | No runtime impact yet |
-| First public-session carrier | active | `apt-surface-h2` now provides the API-sync surface/body/slot scaffold plus a strict end-to-end hidden-upgrade test path over envelope-level admission APIs; next step is wiring it into runtime/client-server orchestration for real H2 sessions | Main v2 milestone |
+| First public-session carrier | active | `apt-surface-h2` now provides the API-sync surface/body/slot scaffold, and `apt-runtime` owns thin bridge helpers for preparing/responding to hidden-upgrade messages; next step is wiring those helpers into real H2 client/server orchestration | Main v2 milestone |
 | Second public-session carrier | pending | Ship the H3 public-session sibling after H2 is stable | Major feature; higher protocol complexity |
 | Cover compiler + budget controller | pending | Add machine-readable cover profiles, session plans, and bounded indistinguishability budgets | Bounded CPU/latency overhead |
 
 ## Next tasks
 
 1. Split any remaining mixed transport/runtime code into surface-oriented modules before new v2 crates land.
-2. Wire `apt-surface-h2` into runtime/client-server orchestration so real H2 API-sync messages, not only tests, can carry `UG1`/`UG2`/`UG3`/`UG4`.
+2. Wire the new `apt-runtime` H2 bridge helpers into real H2 client/server orchestration so API-sync sessions are more than in-memory/test flows.
 3. Delete or isolate the remaining legacy `AdmissionPacket` / `ServerConfirmationPacket` wrapper assumptions after the new envelope-level path.
-4. Grow `apt-harness` from manifest-driven samples into richer baseline corpora ingestion and browser/AdaPT comparison fixtures.
-5. Follow with the H3 sibling surface once the H2 reference path is stable.
-6. Then add cover compiler/budget work once both public-session baselines exist.
+4. Split any near-threshold surface/runtime files before the next H2 slice lands, especially `apt-surface-h2` helpers that are approaching the repo size limits.
+5. Grow `apt-harness` from manifest-driven samples into richer baseline corpora ingestion and browser/AdaPT comparison fixtures.
+6. Follow with the H3 sibling surface and later cover compiler/budget work once the H2 reference path is stable.
 
 ## Detailed implementation requirements for the next upcoming chunks
 

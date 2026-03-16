@@ -21,6 +21,8 @@ pub enum RuntimeError {
     Tunnel(#[from] apt_tunnel::TunnelError),
     #[error("serialization failure: {0}")]
     Serialization(#[from] Box<bincode::ErrorKind>),
+    #[error("surface-h2 failure: {0}")]
+    SurfaceH2(#[from] apt_surface_h2::SurfaceH2Error),
     #[error("quic transport failure: {0}")]
     Quic(String),
     #[error("invalid key material: {0}")]
