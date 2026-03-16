@@ -219,6 +219,15 @@ pub struct EstablishedServerReply {
     pub session: EstablishedSession,
 }
 
+/// Server response after `UG3` without any public-wire packet wrapper.
+#[derive(Debug)]
+pub struct EstablishedEnvelopeReply {
+    /// Encrypted `UG4` envelope that may be embedded into a legal surface slot.
+    pub envelope: SealedEnvelope,
+    /// Local session material.
+    pub session: EstablishedSession,
+}
+
 /// Stateful admission server.
 #[derive(Debug)]
 pub struct AdmissionServer {
@@ -323,40 +332,36 @@ impl AdmissionServer {
         Ok(())
     }
 
-    pub(super) fn open_c0(
+    pub(super) fn open_ug1_envelope(
         &self,
-        packet: &AdmissionPacket,
+        lookup_hint: Option<[u8; 8]>,
+        envelope: &SealedEnvelope,
         carrier: CarrierBinding,
         now_secs: u64,
     ) -> Result<(Ug1, ResolvedCredential), AdmissionError> {
         let now_slot = epoch_slot(now_secs, self.config.defaults.epoch_slot_secs);
         let aad = admission_associated_data(&self.config.endpoint_id, carrier);
-        for resolved in self
-            .credentials
-            .resolve_candidates(packet.lookup_hint, now_slot)
-        {
+        for resolved in self.credentials.resolve_candidates(lookup_hint, now_slot) {
             let admission_key = derive_admission_key(&resolved.admission_key, resolved.epoch_slot);
-            if let Ok(ug1) = packet.envelope.open::<Ug1>(&admission_key, &aad) {
+            if let Ok(ug1) = envelope.open::<Ug1>(&admission_key, &aad) {
                 return Ok((ug1, resolved));
             }
         }
         Err(AdmissionError::Validation("unable to decrypt c0"))
     }
 
-    pub(super) fn open_c2(
+    pub(super) fn open_ug3_envelope(
         &self,
-        packet: &AdmissionPacket,
+        lookup_hint: Option<[u8; 8]>,
+        envelope: &SealedEnvelope,
         carrier: CarrierBinding,
         now_secs: u64,
     ) -> Result<(Ug3, ResolvedCredential), AdmissionError> {
         let now_slot = epoch_slot(now_secs, self.config.defaults.epoch_slot_secs);
         let aad = admission_associated_data(&self.config.endpoint_id, carrier);
-        for resolved in self
-            .credentials
-            .resolve_candidates(packet.lookup_hint, now_slot)
-        {
+        for resolved in self.credentials.resolve_candidates(lookup_hint, now_slot) {
             let admission_key = derive_admission_key(&resolved.admission_key, resolved.epoch_slot);
-            if let Ok(ug3) = packet.envelope.open::<Ug3>(&admission_key, &aad) {
+            if let Ok(ug3) = envelope.open::<Ug3>(&admission_key, &aad) {
                 return Ok((ug3, resolved));
             }
         }

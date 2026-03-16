@@ -110,6 +110,30 @@ pub struct PreparedC2 {
     pub state: ClientPendingS3,
 }
 
+/// Result of initiating the first hidden-upgrade request without any public-wire
+/// packet wrapper.
+#[derive(Debug)]
+pub struct PreparedUg1Envelope {
+    /// Optional rotating lookup hint carried by the surrounding surface.
+    pub lookup_hint: Option<[u8; 8]>,
+    /// Encrypted hidden-upgrade envelope that may be embedded into a legal slot.
+    pub envelope: SealedEnvelope,
+    /// State required to process the server's first hidden-upgrade reply.
+    pub state: ClientPendingS1,
+}
+
+/// Result of processing `UG2` and emitting `UG3` without any public-wire packet
+/// wrapper.
+#[derive(Debug)]
+pub struct PreparedUg3Envelope {
+    /// Optional rotating lookup hint carried by the surrounding surface.
+    pub lookup_hint: Option<[u8; 8]>,
+    /// Encrypted hidden-upgrade envelope that may be embedded into a legal slot.
+    pub envelope: SealedEnvelope,
+    /// State required to process the final server seal.
+    pub state: ClientPendingS3,
+}
+
 /// Client state waiting for the final server seal.
 #[derive(Debug)]
 pub struct ClientPendingS3 {
@@ -130,11 +154,11 @@ fn chosen_credential_identity(credential: &ClientCredential) -> CredentialIdenti
 }
 
 /// Initiates an admission attempt and emits the first hidden-upgrade request.
-pub fn initiate_c0<C: CarrierProfile>(
+pub fn initiate_ug1<C: CarrierProfile>(
     credential: ClientCredential,
     request: ClientSessionRequest,
     carrier: &C,
-) -> Result<PreparedC0, AdmissionError> {
+) -> Result<PreparedUg1Envelope, AdmissionError> {
     if request.preferred_carrier != carrier.binding() {
         return Err(AdmissionError::Validation(
             "carrier mismatch for initiate_c0",
@@ -187,11 +211,9 @@ pub fn initiate_c0<C: CarrierProfile>(
         .enable_lookup_hint
         .then(|| derive_lookup_hint(&credential.admission_key, current_epoch_slot));
     let envelope = SealedEnvelope::seal(&per_epoch_admission_key, &aad, &ug1)?;
-    Ok(PreparedC0 {
-        packet: AdmissionPacket {
-            lookup_hint,
-            envelope,
-        },
+    Ok(PreparedUg1Envelope {
+        lookup_hint,
+        envelope,
         state: ClientPendingS1 {
             credential,
             endpoint_id: request.endpoint_id,
@@ -209,16 +231,63 @@ pub fn initiate_c0<C: CarrierProfile>(
     })
 }
 
+/// Initiates an admission attempt and emits the first hidden-upgrade request.
+pub fn initiate_c0<C: CarrierProfile>(
+    credential: ClientCredential,
+    request: ClientSessionRequest,
+    carrier: &C,
+) -> Result<PreparedC0, AdmissionError> {
+    let prepared = initiate_ug1(credential, request, carrier)?;
+    Ok(PreparedC0 {
+        packet: AdmissionPacket {
+            lookup_hint: prepared.lookup_hint,
+            envelope: prepared.envelope,
+        },
+        state: prepared.state,
+    })
+}
+
 impl ClientPendingS1 {
+    /// Handles `UG2` directly, produces the encrypted `UG3` envelope, and
+    /// returns state waiting for the final server seal.
+    pub fn handle_ug2<C: CarrierProfile>(
+        self,
+        envelope: &SealedEnvelope,
+        carrier: &C,
+    ) -> Result<PreparedUg3Envelope, AdmissionError> {
+        let aad = admission_associated_data(&self.endpoint_id, carrier.binding());
+        let ug2: Ug2 = envelope.open(&self.admission_key, &aad)?;
+        let prepared = self.finish_ug2(ug2, carrier)?;
+        Ok(PreparedUg3Envelope {
+            lookup_hint: prepared.packet.lookup_hint,
+            envelope: prepared.packet.envelope,
+            state: prepared.state,
+        })
+    }
+
     /// Handles the first server reply, produces the client confirmation, and
     /// returns state waiting for the final server seal.
     pub fn handle_s1<C: CarrierProfile>(
-        mut self,
+        self,
         packet: &AdmissionPacket,
         carrier: &C,
     ) -> Result<PreparedC2, AdmissionError> {
+        self.handle_ug2(&packet.envelope, carrier)
+            .map(|prepared| PreparedC2 {
+                packet: AdmissionPacket {
+                    lookup_hint: prepared.lookup_hint,
+                    envelope: prepared.envelope,
+                },
+                state: prepared.state,
+            })
+    }
+
+    fn finish_ug2<C: CarrierProfile>(
+        mut self,
+        ug2: Ug2,
+        carrier: &C,
+    ) -> Result<PreparedC2, AdmissionError> {
         let aad = admission_associated_data(&self.endpoint_id, carrier.binding());
-        let ug2: Ug2 = packet.envelope.open(&self.admission_key, &aad)?;
         if !self.supported_suites.contains(&ug2.chosen_suite) {
             return Err(AdmissionError::Validation("server chose unsupported suite"));
         }
@@ -310,8 +379,18 @@ impl ClientPendingS3 {
         packet: &ServerConfirmationPacket,
         carrier: &C,
     ) -> Result<EstablishedSession, AdmissionError> {
+        self.handle_ug4(&packet.envelope, carrier)
+    }
+
+    /// Handles `UG4` directly and finalizes the session without any public-wire
+    /// server-confirmation packet wrapper.
+    pub fn handle_ug4<C: CarrierProfile>(
+        self,
+        envelope: &SealedEnvelope,
+        carrier: &C,
+    ) -> Result<EstablishedSession, AdmissionError> {
         let aad = admission_associated_data(&self.endpoint_id, carrier.binding());
-        let ug4: Ug4 = packet.envelope.open(&self.secrets.recv_ctrl, &aad)?;
+        let ug4: Ug4 = envelope.open(&self.secrets.recv_ctrl, &aad)?;
         if ug4.slot_binding.phase != UpgradeMessagePhase::Response {
             return Err(AdmissionError::Validation("unexpected upgrade-slot phase"));
         }

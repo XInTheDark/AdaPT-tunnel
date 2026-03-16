@@ -295,6 +295,7 @@ name = "apt-surface-h2"
 version = "0.1.0"
 dependencies = [
  "apt-admission",
+ "apt-carriers",
  "apt-crypto",
  "apt-origin",
  "apt-types",

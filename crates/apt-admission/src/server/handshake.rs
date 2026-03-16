@@ -2,21 +2,24 @@ use super::*;
 use crate::packet::{CookiePayload, NoiseInitiatorPayload, NoiseResponderPayload};
 
 impl AdmissionServer {
-    /// Handles a `C0` packet and returns either `S1` or an invalid-input action.
-    pub fn handle_c0<C: CarrierProfile>(
+    /// Handles `UG1` directly and returns an encrypted `UG2` envelope or an
+    /// invalid-input action without any public-wire packet wrapper.
+    pub fn handle_ug1<C: CarrierProfile>(
         &mut self,
         source_id: &str,
         carrier: &C,
-        packet: &AdmissionPacket,
+        lookup_hint: Option<[u8; 8]>,
+        envelope: &SealedEnvelope,
         received_len: usize,
         now_secs: u64,
-    ) -> ServerResponse<AdmissionPacket> {
-        let result = (|| -> Result<AdmissionPacket, AdmissionError> {
+    ) -> ServerResponse<SealedEnvelope> {
+        let result = (|| -> Result<SealedEnvelope, AdmissionError> {
             let active_binding = carrier.binding();
             if !self.config.allowed_carriers.contains(&active_binding) {
                 return Err(AdmissionError::Validation("carrier not allowed"));
             }
-            let (ug1, resolved) = self.open_c0(packet, active_binding, now_secs)?;
+            let (ug1, resolved) =
+                self.open_ug1_envelope(lookup_hint, envelope, active_binding, now_secs)?;
             if ug1.endpoint_id != self.config.endpoint_id {
                 return Err(AdmissionError::Validation("endpoint mismatch"));
             }
@@ -109,34 +112,51 @@ impl AdmissionServer {
                 padding: random_padding(12),
             };
             let aad = admission_associated_data(&self.config.endpoint_id, active_binding);
-            let envelope = SealedEnvelope::seal(
+            let response_envelope = SealedEnvelope::seal(
                 &derive_admission_key(&resolved.admission_key, ug1.slot_binding.epoch_slot),
                 &aad,
                 &ug2,
             )?;
-            let encoded_len = AdmissionPacket {
-                lookup_hint: None,
-                envelope: envelope.clone(),
-            }
-            .encode()
-            .len();
+            let encoded_len = response_envelope.nonce.len() + response_envelope.ciphertext.len();
             if encoded_len > carrier.anti_amplification_budget(received_len) {
                 return Err(AdmissionError::Validation(
                     "s1 exceeds anti-amplification budget",
                 ));
             }
-            Ok(AdmissionPacket {
-                lookup_hint: None,
-                envelope,
-            })
+            Ok(response_envelope)
         })();
 
         match result {
-            Ok(packet) => ServerResponse::Reply(packet),
+            Ok(reply_envelope) => ServerResponse::Reply(reply_envelope),
             Err(AdmissionError::Validation(_)) | Err(AdmissionError::Replay) => {
                 ServerResponse::Drop(carrier.invalid_input_behavior())
             }
             Err(_) => ServerResponse::Drop(carrier.invalid_input_behavior()),
+        }
+    }
+
+    /// Handles a `C0` packet and returns either `S1` or an invalid-input action.
+    pub fn handle_c0<C: CarrierProfile>(
+        &mut self,
+        source_id: &str,
+        carrier: &C,
+        packet: &AdmissionPacket,
+        received_len: usize,
+        now_secs: u64,
+    ) -> ServerResponse<AdmissionPacket> {
+        match self.handle_ug1(
+            source_id,
+            carrier,
+            packet.lookup_hint,
+            &packet.envelope,
+            received_len,
+            now_secs,
+        ) {
+            ServerResponse::Reply(envelope) => ServerResponse::Reply(AdmissionPacket {
+                lookup_hint: None,
+                envelope,
+            }),
+            ServerResponse::Drop(behavior) => ServerResponse::Drop(behavior),
         }
     }
 
@@ -154,6 +174,26 @@ impl AdmissionServer {
         })
     }
 
+    /// Handles `UG3` directly and returns either `UG4` plus session material or
+    /// an invalid-input action without any public-wire packet wrapper.
+    pub fn handle_ug3<C: CarrierProfile>(
+        &mut self,
+        source_id: &str,
+        carrier: &C,
+        lookup_hint: Option<[u8; 8]>,
+        envelope: &SealedEnvelope,
+        now_secs: u64,
+    ) -> ServerResponse<EstablishedEnvelopeReply> {
+        self.handle_ug3_with_extension_builder(
+            source_id,
+            carrier,
+            lookup_hint,
+            envelope,
+            now_secs,
+            |_| Ok(Vec::new()),
+        )
+    }
+
     /// Handles a `C2` packet while allowing the runtime to attach encrypted
     /// `S3` extensions such as tunnel address assignments.
     pub fn handle_c2_with_extensions<C: CarrierProfile>(
@@ -164,9 +204,43 @@ impl AdmissionServer {
         now_secs: u64,
         s3_extensions: Vec<Vec<u8>>,
     ) -> ServerResponse<EstablishedServerReply> {
-        self.handle_c2_with_extension_builder(source_id, carrier, packet, now_secs, move |_| {
-            Ok(s3_extensions)
-        })
+        match self.handle_ug3_with_extensions(
+            source_id,
+            carrier,
+            packet.lookup_hint,
+            &packet.envelope,
+            now_secs,
+            s3_extensions,
+        ) {
+            ServerResponse::Reply(reply) => ServerResponse::Reply(EstablishedServerReply {
+                packet: ServerConfirmationPacket {
+                    envelope: reply.envelope,
+                },
+                session: reply.session,
+            }),
+            ServerResponse::Drop(behavior) => ServerResponse::Drop(behavior),
+        }
+    }
+
+    /// Handles `UG3` while allowing the runtime to attach encrypted `UG4`
+    /// extensions such as tunnel address assignments.
+    pub fn handle_ug3_with_extensions<C: CarrierProfile>(
+        &mut self,
+        source_id: &str,
+        carrier: &C,
+        lookup_hint: Option<[u8; 8]>,
+        envelope: &SealedEnvelope,
+        now_secs: u64,
+        ug4_extensions: Vec<Vec<u8>>,
+    ) -> ServerResponse<EstablishedEnvelopeReply> {
+        self.handle_ug3_with_extension_builder(
+            source_id,
+            carrier,
+            lookup_hint,
+            envelope,
+            now_secs,
+            move |_| Ok(ug4_extensions),
+        )
     }
 
     /// Handles a `C2` packet while allowing the caller to compute encrypted
@@ -183,9 +257,43 @@ impl AdmissionServer {
         C: CarrierProfile,
         F: FnOnce(&EstablishedSession) -> Result<Vec<Vec<u8>>, AdmissionError>,
     {
-        let result = (|| -> Result<EstablishedServerReply, AdmissionError> {
+        match self.handle_ug3_with_extension_builder(
+            source_id,
+            carrier,
+            packet.lookup_hint,
+            &packet.envelope,
+            now_secs,
+            extension_builder,
+        ) {
+            ServerResponse::Reply(reply) => ServerResponse::Reply(EstablishedServerReply {
+                packet: ServerConfirmationPacket {
+                    envelope: reply.envelope,
+                },
+                session: reply.session,
+            }),
+            ServerResponse::Drop(behavior) => ServerResponse::Drop(behavior),
+        }
+    }
+
+    /// Handles `UG3` while allowing the caller to compute encrypted `UG4`
+    /// extensions from the tentative established session.
+    pub fn handle_ug3_with_extension_builder<C, F>(
+        &mut self,
+        source_id: &str,
+        carrier: &C,
+        lookup_hint: Option<[u8; 8]>,
+        envelope: &SealedEnvelope,
+        now_secs: u64,
+        extension_builder: F,
+    ) -> ServerResponse<EstablishedEnvelopeReply>
+    where
+        C: CarrierProfile,
+        F: FnOnce(&EstablishedSession) -> Result<Vec<Vec<u8>>, AdmissionError>,
+    {
+        let result = (|| -> Result<EstablishedEnvelopeReply, AdmissionError> {
             let active_binding = carrier.binding();
-            let (ug3, resolved) = self.open_c2(packet, active_binding, now_secs)?;
+            let (ug3, resolved) =
+                self.open_ug3_envelope(lookup_hint, envelope, active_binding, now_secs)?;
             if ug3.slot_binding.phase != UpgradeMessagePhase::Request {
                 return Err(AdmissionError::Validation("unexpected upgrade-slot phase"));
             }
@@ -276,7 +384,7 @@ impl AdmissionServer {
                 client_static_public,
                 optional_extensions: Vec::new(),
             };
-            let s3_extensions = extension_builder(&tentative_session)?;
+            let ug4_extensions = extension_builder(&tentative_session)?;
             let ug4 = Ug4 {
                 session_id,
                 tunnel_mtu: self.config.tunnel_mtu,
@@ -290,15 +398,13 @@ impl AdmissionServer {
                     "legacy-ug4",
                     cookie_payload.slot_binding.epoch_slot,
                 ),
-                optional_extensions: s3_extensions.clone(),
+                optional_extensions: ug4_extensions.clone(),
             };
-            let confirmation = ServerConfirmationPacket {
-                envelope: SealedEnvelope::seal(
-                    &secrets.send_ctrl,
-                    &admission_associated_data(&self.config.endpoint_id, active_binding),
-                    &ug4,
-                )?,
-            };
+            let response_envelope = SealedEnvelope::seal(
+                &tentative_session.secrets.send_ctrl,
+                &admission_associated_data(&self.config.endpoint_id, active_binding),
+                &ug4,
+            )?;
             let session = EstablishedSession {
                 session_id,
                 role: SessionRole::Responder,
@@ -306,16 +412,16 @@ impl AdmissionServer {
                 chosen_suite: cookie_payload.chosen_suite,
                 mode: cookie_payload.chosen_mode,
                 credential_identity: resolved.identity,
-                secrets,
+                secrets: tentative_session.secrets,
                 tunnel_mtu: self.config.tunnel_mtu,
                 rekey_limits: self.config.rekey_limits,
                 masked_fallback_ticket,
                 client_identity: client_payload.user_identity,
                 client_static_public,
-                optional_extensions: s3_extensions,
+                optional_extensions: ug4_extensions,
             };
-            Ok(EstablishedServerReply {
-                packet: confirmation,
+            Ok(EstablishedEnvelopeReply {
+                envelope: response_envelope,
                 session,
             })
         })();

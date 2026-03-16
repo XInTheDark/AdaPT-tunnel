@@ -31,13 +31,14 @@ mod tests;
 use self::upgrade::legacy_upgrade_slot_binding;
 pub use self::{
     client::{
-        initiate_c0, ClientCredential, ClientPendingS1, ClientPendingS3, ClientSessionRequest,
-        PreparedC0, PreparedC2,
+        initiate_c0, initiate_ug1, ClientCredential, ClientPendingS1, ClientPendingS3,
+        ClientSessionRequest, PreparedC0, PreparedC2, PreparedUg1Envelope, PreparedUg3Envelope,
     },
     packet::{AdmissionPacket, PolicyFlags, ServerConfirmationPacket, C0, C2, S1, S3},
     server::{
         AdmissionConfig, AdmissionServer, AdmissionServerSecrets, CredentialStore,
-        EstablishedServerReply, EstablishedSession, PerUserCredential, ServerResponse,
+        EstablishedEnvelopeReply, EstablishedServerReply, EstablishedSession, PerUserCredential,
+        ServerResponse,
     },
     upgrade::{Ug1, Ug2, Ug3, Ug4, UpgradeMessagePhase, UpgradeSlotBinding},
 };
