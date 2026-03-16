@@ -1,6 +1,7 @@
 use crate::{
-    assess_retry_pattern, build_harness_report, compare_passive_capture, ActiveProbeResult,
-    HarnessReport, PassiveCapture, RetryTrace,
+    assess_retry_pattern, build_h2_harness_report, build_harness_report, compare_h2_backend_trace,
+    compare_passive_capture, ActiveProbeResult, H2BackendTrace, HarnessReport, PassiveCapture,
+    RetryTrace,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -26,12 +27,25 @@ pub enum HarnessFixtureError {
     },
 }
 
+/// Supported on-disk capture formats for fixture corpora.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaptureFormat {
+    #[default]
+    PassiveSummary,
+    H2BackendTrace,
+}
+
 /// One logical comparison row inside a fixture manifest.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FixtureEntry {
     pub name: String,
     pub baseline_capture: PathBuf,
+    #[serde(default)]
+    pub baseline_format: CaptureFormat,
     pub subject_capture: PathBuf,
+    #[serde(default)]
+    pub subject_format: CaptureFormat,
     pub probes: PathBuf,
     pub retry_trace: PathBuf,
 }
@@ -78,18 +92,44 @@ fn evaluate_fixture_entry(
     root: &Path,
     entry: &FixtureEntry,
 ) -> Result<FixtureEvaluation, HarnessFixtureError> {
-    let baseline: PassiveCapture = load_json_file(&root.join(&entry.baseline_capture))?;
-    let subject: PassiveCapture = load_json_file(&root.join(&entry.subject_capture))?;
+    let baseline = load_capture_file(&root.join(&entry.baseline_capture), entry.baseline_format)?;
+    let subject = load_capture_file(&root.join(&entry.subject_capture), entry.subject_format)?;
     let probes: Vec<ActiveProbeResult> = load_json_file(&root.join(&entry.probes))?;
     let retry: RetryTrace = load_json_file(&root.join(&entry.retry_trace))?;
-    Ok(FixtureEvaluation {
-        name: entry.name.clone(),
-        report: build_harness_report(
-            compare_passive_capture(&subject, &baseline),
+    let report = match (&baseline, &subject) {
+        (LoadedCapture::H2Trace(baseline), LoadedCapture::H2Trace(subject)) => {
+            let baseline_passive = baseline.to_passive_capture();
+            let subject_passive = subject.to_passive_capture();
+            build_h2_harness_report(
+                compare_passive_capture(&subject_passive, &baseline_passive),
+                Some(compare_h2_backend_trace(subject, baseline)),
+                &probes,
+                assess_retry_pattern(&retry),
+            )
+        }
+        _ => build_harness_report(
+            compare_passive_capture(
+                &subject.to_passive_capture(),
+                &baseline.to_passive_capture(),
+            ),
             &probes,
             assess_retry_pattern(&retry),
         ),
+    };
+    Ok(FixtureEvaluation {
+        name: entry.name.clone(),
+        report,
     })
+}
+
+fn load_capture_file(
+    path: &Path,
+    format: CaptureFormat,
+) -> Result<LoadedCapture, HarnessFixtureError> {
+    match format {
+        CaptureFormat::PassiveSummary => load_json_file(path).map(LoadedCapture::Passive),
+        CaptureFormat::H2BackendTrace => load_json_file(path).map(LoadedCapture::H2Trace),
+    }
 }
 
 fn load_json_file<T>(path: &Path) -> Result<T, HarnessFixtureError>
@@ -104,4 +144,18 @@ where
         path: path.to_path_buf(),
         source,
     })
+}
+
+enum LoadedCapture {
+    Passive(PassiveCapture),
+    H2Trace(H2BackendTrace),
+}
+
+impl LoadedCapture {
+    fn to_passive_capture(&self) -> PassiveCapture {
+        match self {
+            Self::Passive(capture) => capture.clone(),
+            Self::H2Trace(trace) => trace.to_passive_capture(),
+        }
+    }
 }

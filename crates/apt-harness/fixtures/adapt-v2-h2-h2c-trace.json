@@ -1,0 +1,49 @@
+{
+  "label": "adapt-v2-h2-h2c-trace",
+  "family": "adapt-v2-s1-h2",
+  "transport_security": "cleartext",
+  "alpn": "h2",
+  "exchanges": [
+    {
+      "stream_id": 1,
+      "authority": "api.example.com",
+      "method": "POST",
+      "path": "/v1/devices/device-1/sync",
+      "request_headers": [
+        { "name": "content-type", "value": "application/json" },
+        { "name": "x-client-version", "value": "adapt-runtime-lab" }
+      ],
+      "response_headers": [
+        { "name": "content-type", "value": "application/json" },
+        { "name": "cache-control", "value": "no-store" },
+        { "name": "x-request-id", "value": "lab-1" }
+      ],
+      "status": 200,
+      "request_body_bytes": 188,
+      "response_body_bytes": 252,
+      "start_ms": 0,
+      "end_ms": 13
+    },
+    {
+      "stream_id": 3,
+      "authority": "api.example.com",
+      "method": "POST",
+      "path": "/v1/devices/device-1/sync",
+      "request_headers": [
+        { "name": "content-type", "value": "application/json" },
+        { "name": "x-client-version", "value": "adapt-runtime-lab" }
+      ],
+      "response_headers": [
+        { "name": "content-type", "value": "application/json" },
+        { "name": "cache-control", "value": "no-store" },
+        { "name": "x-request-id", "value": "lab-2" }
+      ],
+      "status": 200,
+      "request_body_bytes": 212,
+      "response_body_bytes": 276,
+      "start_ms": 11,
+      "end_ms": 29
+    }
+  ],
+  "error_codes": []
+}

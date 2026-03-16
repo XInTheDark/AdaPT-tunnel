@@ -1,4 +1,4 @@
-use crate::trace::{PassiveCapture, RetryTrace, TraceFamily};
+use crate::trace::{H2BackendTrace, PassiveCapture, RetryTrace, TraceFamily};
 use serde::{Deserialize, Serialize};
 
 /// Passive mismatch summary between a subject capture and its baseline family.
@@ -26,6 +26,39 @@ impl PassiveDelta {
             && self.size_overlap_percent >= 60
             && self.gap_overlap_percent >= 60
             && self.error_mismatch_count == 0
+    }
+}
+
+/// Coarse H2 semantic mismatch summary derived from richer backend traces.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct H2SemanticDelta {
+    pub baseline_family: TraceFamily,
+    pub subject_family: TraceFamily,
+    pub transport_security_match: bool,
+    pub authority_match_percent: u8,
+    pub method_match_percent: u8,
+    pub path_match_percent: u8,
+    pub status_mismatch_count: u16,
+    pub request_header_name_overlap_percent: u8,
+    pub response_header_name_overlap_percent: u8,
+}
+
+impl H2SemanticDelta {
+    /// Returns true when the subject keeps the same broad H2 semantics as the baseline.
+    #[must_use]
+    pub fn is_close_to_baseline(&self) -> bool {
+        self.authority_match_percent >= 75
+            && self.method_match_percent >= 75
+            && self.path_match_percent >= 75
+            && self.status_mismatch_count == 0
+            && self.request_header_name_overlap_percent >= 60
+            && self.response_header_name_overlap_percent >= 60
+    }
+
+    /// Returns true when the semantic delta should surface as a warning even if the rest is close.
+    #[must_use]
+    pub fn has_warning_signal(&self) -> bool {
+        !self.transport_security_match
     }
 }
 
@@ -58,6 +91,66 @@ pub fn compare_passive_capture(
     }
 }
 
+/// Compares richer H2 backend traces using coarse authority/path/header/states heuristics.
+#[must_use]
+pub fn compare_h2_backend_trace(
+    subject: &H2BackendTrace,
+    baseline: &H2BackendTrace,
+) -> H2SemanticDelta {
+    let pair_count = subject.exchanges.len().max(baseline.exchanges.len()).max(1);
+    let zipped = subject
+        .exchanges
+        .iter()
+        .zip(&baseline.exchanges)
+        .collect::<Vec<_>>();
+    let authority_matches = zipped
+        .iter()
+        .filter(|(left, right)| left.authority == right.authority)
+        .count();
+    let method_matches = zipped
+        .iter()
+        .filter(|(left, right)| left.method == right.method)
+        .count();
+    let path_matches = zipped
+        .iter()
+        .filter(|(left, right)| left.path == right.path)
+        .count();
+    let status_mismatch_count = zipped
+        .iter()
+        .filter(|(left, right)| left.status != right.status)
+        .count() as u16
+        + subject.exchanges.len().abs_diff(baseline.exchanges.len()) as u16;
+    H2SemanticDelta {
+        baseline_family: baseline.family.clone(),
+        subject_family: subject.family.clone(),
+        transport_security_match: subject.transport_security == baseline.transport_security,
+        authority_match_percent: match_percent(authority_matches, pair_count),
+        method_match_percent: match_percent(method_matches, pair_count),
+        path_match_percent: match_percent(path_matches, pair_count),
+        status_mismatch_count,
+        request_header_name_overlap_percent: set_overlap_percent(
+            &subject
+                .request_header_names()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            &baseline
+                .request_header_names()
+                .into_iter()
+                .collect::<Vec<_>>(),
+        ),
+        response_header_name_overlap_percent: set_overlap_percent(
+            &subject
+                .response_header_names()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            &baseline
+                .response_header_names()
+                .into_iter()
+                .collect::<Vec<_>>(),
+        ),
+    }
+}
+
 /// Determines whether the retry ladder is deterministic enough to be suspicious.
 #[must_use]
 pub fn assess_retry_pattern(trace: &RetryTrace) -> RetryAssessment {
@@ -81,12 +174,19 @@ pub fn assess_retry_pattern(trace: &RetryTrace) -> RetryAssessment {
     }
 }
 
+fn match_percent(matches: usize, total: usize) -> u8 {
+    ((matches.saturating_mul(100)) / total.max(1)).min(100) as u8
+}
+
 fn overlap_percent(left: &[u32], right: &[u32]) -> u8 {
     if left.is_empty() || right.is_empty() {
         return 100;
     }
     let left_range = range(left);
     let right_range = range(right);
+    if left_range.0 == left_range.1 && right_range.0 == right_range.1 {
+        return scalar_closeness_percent(left_range.0, right_range.0);
+    }
     let overlap_start = left_range.0.max(right_range.0);
     let overlap_end = left_range.1.min(right_range.1);
     if overlap_end < overlap_start {
@@ -99,6 +199,35 @@ fn overlap_percent(left: &[u32], right: &[u32]) -> u8 {
     } else {
         ((overlap.saturating_mul(100)) / union).min(100) as u8
     }
+}
+
+fn scalar_closeness_percent(left: u32, right: u32) -> u8 {
+    let max = left.max(right);
+    if max == 0 {
+        return 100;
+    }
+    let diff = left.abs_diff(right);
+    100_u8.saturating_sub(((diff.saturating_mul(100)) / max).min(100) as u8)
+}
+
+fn set_overlap_percent<T>(left: &[T], right: &[T]) -> u8
+where
+    T: Ord + Clone,
+{
+    if left.is_empty() || right.is_empty() {
+        return 100;
+    }
+    let left = left
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let right = right
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let intersection = left.intersection(&right).count();
+    let union = left.union(&right).count();
+    ((intersection.saturating_mul(100)) / union.max(1)).min(100) as u8
 }
 
 fn range(values: &[u32]) -> (u32, u32) {

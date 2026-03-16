@@ -10,14 +10,20 @@ mod corpus;
 mod report;
 mod trace;
 
-pub use compare::{assess_retry_pattern, compare_passive_capture, PassiveDelta, RetryAssessment};
-pub use corpus::{
-    evaluate_fixture_manifest, load_fixture_manifest, FixtureEntry, FixtureEvaluation,
-    FixtureManifest, HarnessFixtureError,
+pub use compare::{
+    assess_retry_pattern, compare_h2_backend_trace, compare_passive_capture, H2SemanticDelta,
+    PassiveDelta, RetryAssessment,
 };
-pub use report::{build_harness_report, HarnessReport, HarnessVerdict, ProbeSummary};
+pub use corpus::{
+    evaluate_fixture_manifest, load_fixture_manifest, CaptureFormat, FixtureEntry,
+    FixtureEvaluation, FixtureManifest, HarnessFixtureError,
+};
+pub use report::{
+    build_h2_harness_report, build_harness_report, HarnessReport, HarnessVerdict, ProbeSummary,
+};
 pub use trace::{
-    ActiveProbeResult, PassiveCapture, ProbeDisposition, RetryAttempt, RetryTrace, TraceFamily,
+    ActiveProbeResult, H2BackendTrace, H2Exchange, H2HeaderField, H2TransportSecurity,
+    PassiveCapture, ProbeDisposition, RetryAttempt, RetryTrace, TraceFamily,
 };
 
 #[cfg(test)]

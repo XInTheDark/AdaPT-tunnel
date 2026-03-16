@@ -1,0 +1,47 @@
+{
+  "label": "browser-h2-trace",
+  "family": "browser-h2",
+  "transport_security": "tls",
+  "alpn": "h2",
+  "exchanges": [
+    {
+      "stream_id": 1,
+      "authority": "api.example.com",
+      "method": "POST",
+      "path": "/v1/devices/device-1/sync",
+      "request_headers": [
+        { "name": "content-type", "value": "application/json" },
+        { "name": "x-client-version", "value": "browser-2026.03" }
+      ],
+      "response_headers": [
+        { "name": "content-type", "value": "application/json" },
+        { "name": "cache-control", "value": "no-store" }
+      ],
+      "status": 200,
+      "request_body_bytes": 192,
+      "response_body_bytes": 256,
+      "start_ms": 0,
+      "end_ms": 14
+    },
+    {
+      "stream_id": 3,
+      "authority": "api.example.com",
+      "method": "POST",
+      "path": "/v1/devices/device-1/sync",
+      "request_headers": [
+        { "name": "content-type", "value": "application/json" },
+        { "name": "x-client-version", "value": "browser-2026.03" }
+      ],
+      "response_headers": [
+        { "name": "content-type", "value": "application/json" },
+        { "name": "cache-control", "value": "no-store" }
+      ],
+      "status": 200,
+      "request_body_bytes": 208,
+      "response_body_bytes": 272,
+      "start_ms": 12,
+      "end_ms": 28
+    }
+  ],
+  "error_codes": []
+}

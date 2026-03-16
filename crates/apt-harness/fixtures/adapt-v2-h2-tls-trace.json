@@ -1,0 +1,49 @@
+{
+  "label": "adapt-v2-h2-tls-trace",
+  "family": "adapt-v2-s1-h2",
+  "transport_security": "tls",
+  "alpn": "h2",
+  "exchanges": [
+    {
+      "stream_id": 1,
+      "authority": "api.example.com",
+      "method": "POST",
+      "path": "/v1/devices/device-1/sync",
+      "request_headers": [
+        { "name": "content-type", "value": "application/json" },
+        { "name": "x-client-version", "value": "adapt-runtime-2026.03" }
+      ],
+      "response_headers": [
+        { "name": "content-type", "value": "application/json" },
+        { "name": "cache-control", "value": "no-store" },
+        { "name": "x-request-id", "value": "tls-1" }
+      ],
+      "status": 200,
+      "request_body_bytes": 194,
+      "response_body_bytes": 258,
+      "start_ms": 0,
+      "end_ms": 15
+    },
+    {
+      "stream_id": 3,
+      "authority": "api.example.com",
+      "method": "POST",
+      "path": "/v1/devices/device-1/sync",
+      "request_headers": [
+        { "name": "content-type", "value": "application/json" },
+        { "name": "x-client-version", "value": "adapt-runtime-2026.03" }
+      ],
+      "response_headers": [
+        { "name": "content-type", "value": "application/json" },
+        { "name": "cache-control", "value": "no-store" },
+        { "name": "x-request-id", "value": "tls-2" }
+      ],
+      "status": 200,
+      "request_body_bytes": 210,
+      "response_body_bytes": 276,
+      "start_ms": 13,
+      "end_ms": 30
+    }
+  ],
+  "error_codes": []
+}
