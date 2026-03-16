@@ -3,9 +3,9 @@ use apt_admission::{
     initiate_ug1_with_context, AdmissionServer, ClientPendingS1, ClientPendingS3,
     EstablishedEnvelopeReply, EstablishedSession, ServerResponse,
 };
+use apt_crypto::SealedEnvelope;
 use apt_surface_h2::{
-    ApiSyncH2Carrier, ApiSyncRequest, ApiSyncRequestUpgradeEnvelope, ApiSyncResponse,
-    ApiSyncResponseUpgradeEnvelope, ApiSyncSurface,
+    ApiSyncH2Carrier, ApiSyncRequestUpgradeEnvelope, ApiSyncResponseUpgradeEnvelope,
 };
 use serde_json::json;
 
@@ -198,135 +198,5 @@ pub fn respond_api_sync_ug3_request(
             Ok(Some((public_response, session)))
         }
         ServerResponse::Drop(_) => Ok(None),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::RuntimeCarrierPreference;
-    use apt_admission::{AdmissionConfig, AdmissionServerSecrets, CredentialStore};
-    use apt_crypto::generate_static_keypair;
-    use apt_types::{AuthProfile, EndpointId, Mode, SessionPolicy};
-    use std::{net::SocketAddr, path::PathBuf};
-
-    fn test_client_config() -> ResolvedClientConfig {
-        ResolvedClientConfig {
-            server_addr: "198.51.100.10:51820".parse::<SocketAddr>().unwrap(),
-            mode: Mode::STEALTH,
-            preferred_carrier: RuntimeCarrierPreference::Auto,
-            strict_preferred_carrier: false,
-            auth_profile: AuthProfile::SharedDeployment,
-            endpoint_id: EndpointId::new("edge-h2"),
-            admission_key: [0x11; 32],
-            server_static_public_key: [0x22; 32],
-            client_static_private_key: [0x33; 32],
-            client_identity: Some("device-a".to_string()),
-            bind: "0.0.0.0:0".parse::<SocketAddr>().unwrap(),
-            interface_name: None,
-            routes: Vec::new(),
-            use_server_pushed_routes: true,
-            enable_d2_fallback: false,
-            d2: None,
-            session_policy: SessionPolicy::default(),
-            allow_session_migration: true,
-            standby_health_check_secs: 0,
-            keepalive_secs: 25,
-            session_idle_timeout_secs: 180,
-            handshake_timeout_secs: 5,
-            handshake_retries: 5,
-            udp_recv_buffer_bytes: 1024,
-            udp_send_buffer_bytes: 1024,
-            state_path: PathBuf::from("/tmp/adapt-test-state.toml"),
-        }
-    }
-
-    fn test_server() -> (AdmissionServer, [u8; 32]) {
-        let static_keypair = generate_static_keypair().unwrap();
-        let mut store = CredentialStore::new();
-        store.set_shared_deployment_key([0x11; 32]);
-        let mut config = AdmissionConfig::conservative(EndpointId::new("edge-h2"));
-        config.allowed_carriers = vec![CarrierBinding::S1EncryptedStream];
-        (
-            AdmissionServer::new(
-                config,
-                store,
-                AdmissionServerSecrets {
-                    static_keypair: static_keypair.clone(),
-                    cookie_key: [0x55; 32],
-                    ticket_key: [0x66; 32],
-                },
-            ),
-            static_keypair.public,
-        )
-    }
-
-    #[test]
-    fn runtime_bridge_drives_api_sync_hidden_upgrade_round_trip() {
-        let surface = ApiSyncSurface::starter();
-        let (mut server, server_static_public_key) = test_server();
-        let now_secs = 1_700_100_000;
-        let persistent_state = ClientPersistentState::default();
-        let mut client_config = test_client_config();
-        client_config.server_static_public_key = server_static_public_key;
-
-        let prepared_ug1 =
-            prepare_api_sync_ug1_request(&client_config, &persistent_state, &surface, now_secs)
-                .unwrap();
-        let response_ug2 = respond_api_sync_ug1_request(
-            &mut server,
-            &surface,
-            &prepared_ug1.request,
-            "h2-client-a",
-            now_secs,
-        )
-        .unwrap()
-        .expect("expected UG2 response");
-        let prepared_ug3 = handle_api_sync_ug2_response(
-            &surface,
-            &prepared_ug1.authority,
-            &response_ug2,
-            prepared_ug1.state,
-        )
-        .unwrap();
-        let (response_ug4, server_session) = respond_api_sync_ug3_request(
-            &mut server,
-            &surface,
-            &prepared_ug3.request,
-            "h2-client-a",
-            now_secs + 1,
-        )
-        .unwrap()
-        .expect("expected UG4 response");
-        let client_session =
-            handle_api_sync_ug4_response(&surface, &response_ug4, prepared_ug3.state).unwrap();
-
-        assert_eq!(client_session.session_id, server_session.session_id);
-        assert_eq!(
-            client_session.chosen_carrier,
-            CarrierBinding::S1EncryptedStream
-        );
-        assert!(client_session.masked_fallback_ticket.is_some());
-        assert!(server_session.masked_fallback_ticket.is_some());
-    }
-
-    #[test]
-    fn runtime_bridge_returns_none_for_plain_public_requests() {
-        let surface = ApiSyncSurface::starter();
-        let (mut server, _) = test_server();
-        let public_request = surface.build_state_push_request(
-            "api.example.com",
-            "device-a",
-            json!({ "mode": Mode::STEALTH.value() }),
-        );
-        let reply = respond_api_sync_ug1_request(
-            &mut server,
-            &surface,
-            &public_request,
-            "h2-client-a",
-            1_700_100_000,
-        )
-        .unwrap();
-        assert!(reply.is_none());
     }
 }

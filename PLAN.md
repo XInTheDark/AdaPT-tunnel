@@ -12,8 +12,8 @@
 
 ## Current milestone
 
-- **Milestone:** Phase D H2 integrity tightening — the API-sync bridge is in place and the public-session path is now slot/context-bound; real H2 session wiring next
-- **Status:** Phase A hardening is complete; early Phase B/C/D prep is now in place with the live `D1` + optional `D2` baseline, manifest-driven harness fixtures, draft v2 structured transport config types, transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, masked fallback ticket issuance/opening bound to coarse network context, enriched `apt-origin` starter profiles, config-resolved v2 surface plans, envelope-level admission APIs, an `apt-runtime` H2 bridge module, and explicit public-session slot/context binding for the tested API-sync H2 path (family/profile/authority/slot/path metadata is now carried in the surface context and bound into the encrypted envelope flow rather than reusing legacy `legacy-admission` metadata)
+- **Milestone:** Phase D H2 orchestration scaffold — the API-sync path is slot/context-bound and now has runtime-owned client/handler abstractions over request/response exchanges; actual H2 backend wiring next
+- **Status:** Phase A hardening is complete; early Phase B/C/D prep is now in place with the live `D1` + optional `D2` baseline, manifest-driven harness fixtures, draft v2 structured transport config types, transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, masked fallback ticket issuance/opening bound to coarse network context, enriched `apt-origin` starter profiles, config-resolved v2 surface plans, envelope-level admission APIs, an `apt-runtime` H2 bridge module, explicit public-session slot/context binding for the tested API-sync H2 path, and runtime-owned API-sync client/request-handler abstractions that drive hidden upgrade and preserve ordinary public-service semantics on plain or malformed requests
 - **Canonical design docs:**
   - `SPEC_v2.md`
   - `docs/ARCHITECTURE_V2.md`
@@ -32,11 +32,11 @@
 
 ## Latest shipped chunk impact note
 
-- **Chunk:** Public-session slot/context binding for the H2 API-sync bridge
-- **Latency impact:** negligible; a few extra small serializations for slot/context-bound AAD derivation during the hidden-upgrade exchange
-- **Bandwidth impact:** minimal metadata growth inside encrypted `UG*` slot bindings and the modeled API-sync request authority field
-- **CPU impact:** negligible relative to the existing handshake crypto
-- **Notes:** the tested H2 path now derives request/response envelope AAD from explicit surface context (`family_id`, `profile_version`, `authority`, slot IDs, path hints, optional graph branch) instead of legacy admission-shaped bindings, and the API-sync request model now carries authority so runtime/server helpers can derive the same context from the public request itself
+- **Chunk:** Runtime-owned API-sync H2 client/request-handler abstractions
+- **Latency impact:** none in the current in-memory/tested form beyond the existing bridge exchanges
+- **Bandwidth impact:** none beyond the previously landed slot/context-bound envelope metadata
+- **CPU impact:** negligible; primarily additional orchestration branches and public-service fallback handling
+- **Notes:** `apt-runtime` now exposes a focused API-sync client driver and request handler that orchestrate the H2 hidden-upgrade flow over abstract request/response exchanges while preserving ordinary public-service semantics on plain or malformed inputs; this is still not a real HTTP/2 backend, but it creates the runtime-facing public-surface/session boundary needed for the next slice
 
 ## Core v2 design rules
 
@@ -67,18 +67,18 @@
 | Hidden-upgrade core | active | `apt-admission` now has transport-agnostic `UG1`/`UG2`/`UG3`/`UG4` capsule types, slot bindings, masked fallback tickets, and direct envelope APIs that avoid `AdmissionPacket` / `ServerConfirmationPacket` in the tested H2 path; the public-session H2 route now uses explicit surface context instead of legacy slot bindings, and the next step is deleting or quarantining the remaining wrapper-only flow where practical | Moderate implementation risk; core enabler |
 | Structured v2 transport config | active | Draft v2 public-session transport blocks and deployment metadata now resolve into `apt-origin` starter surface plans; next step is feeding those plans into future bundle/origin/surface orchestration without changing the live runtime path yet | Minor config churn |
 | Origin family definitions | active | `apt-origin` now carries API-sync and object/origin starter profiles with request graphs, legal upgrade slots, concurrency/timing envelopes, idle rules, and shadow-lane hints; `apt-surface-h2` is the first consumer | No runtime impact yet |
-| First public-session carrier | active | `apt-surface-h2` now provides the API-sync surface/body/slot scaffold, modeled request authority, and surface-derived public-session context; `apt-runtime` owns thin bridge helpers for preparing/responding to hidden-upgrade messages against that context, and the next step is wiring those helpers into real H2 client/server orchestration | Main v2 milestone |
+| First public-session carrier | active | `apt-surface-h2` now provides the API-sync surface/body/slot scaffold, modeled request authority, and surface-derived public-session context; `apt-runtime` owns thin bridge helpers plus client/request-handler orchestration over abstract request/response exchanges, and the next step is wiring those abstractions into a real H2 backend | Main v2 milestone |
 | Second public-session carrier | pending | Ship the H3 public-session sibling after H2 is stable | Major feature; higher protocol complexity |
 | Cover compiler + budget controller | pending | Add machine-readable cover profiles, session plans, and bounded indistinguishability budgets | Bounded CPU/latency overhead |
 
 ## Next tasks
 
-1. Wire the slot/context-bound `apt-runtime` H2 bridge into real H2 client/server orchestration so API-sync sessions are more than in-memory/test flows.
-2. Introduce a clearer runtime-facing public-surface/session abstraction so H2/H3 families stop leaning on legacy carrier-shaped assumptions any more than strictly necessary.
-3. Delete or isolate the remaining legacy `AdmissionPacket` / `ServerConfirmationPacket` wrapper assumptions after the new envelope-level path.
-4. Split any near-threshold surface/runtime files before the next H2 slice lands, especially the new H2/runtime orchestration modules as they grow.
-5. Grow `apt-harness` from manifest-driven samples into richer baseline corpora ingestion and browser/AdaPT comparison fixtures.
-6. Follow with the H3 sibling surface and later cover compiler/budget work once the H2 reference path is stable.
+1. Wire the new runtime-owned API-sync client/request-handler abstractions into a real H2 backend adapter so API-sync sessions are more than abstract request/response test flows.
+2. Continue shrinking or quarantining the remaining legacy `AdmissionPacket` / `ServerConfirmationPacket` wrapper assumptions now that the public-session path has its own context-bound core and runtime orchestration boundary.
+3. Split any near-threshold surface/runtime files before the next H2 slice lands, especially the new `apt-runtime` H2 modules as actual backend/session logic is added.
+4. Grow `apt-harness` from manifest-driven samples into richer baseline corpora ingestion and browser/AdaPT comparison fixtures.
+5. Follow with the H3 sibling surface once the H2 backend path is stable enough to serve as the reference implementation.
+6. Defer cover compiler/budget-controller sophistication until the H2 public-session baseline is genuinely running over a real backend.
 
 ## Detailed implementation requirements for the next upcoming chunks
 
