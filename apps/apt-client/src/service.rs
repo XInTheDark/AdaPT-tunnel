@@ -126,13 +126,24 @@ fn uninstall_systemd_service() -> CliResult {
 fn install_launchd_service(daemon_path: &Path, root_dir: &Path) -> CliResult {
     let plist_body = render_launchd_plist(daemon_path, root_dir);
     fs::write(LAUNCHD_PLIST_PATH, plist_body)?;
+    set_launchd_plist_permissions()?;
     let _ = run_command("launchctl", ["bootout", &format!("system/{LAUNCHD_LABEL}")]);
+    run_command("launchctl", ["enable", &format!("system/{LAUNCHD_LABEL}")])?;
     run_command("launchctl", ["bootstrap", "system", LAUNCHD_PLIST_PATH])?;
-    let _ = run_command("launchctl", ["enable", &format!("system/{LAUNCHD_LABEL}")]);
     run_command(
         "launchctl",
         ["kickstart", "-k", &format!("system/{LAUNCHD_LABEL}")],
     )?;
+    Ok(())
+}
+
+fn set_launchd_plist_permissions() -> CliResult {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(LAUNCHD_PLIST_PATH, fs::Permissions::from_mode(0o644))?;
+    }
+    let _ = run_command("chown", ["root:wheel", LAUNCHD_PLIST_PATH]);
     Ok(())
 }
 
