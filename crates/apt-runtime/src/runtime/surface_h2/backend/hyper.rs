@@ -1,8 +1,14 @@
 use super::*;
+use ::hyper::{
+    body::Incoming,
+    client::conn::http2::{Builder as ClientBuilder, SendRequest},
+    rt::{Read as HyperRead, Write as HyperWrite},
+    server::conn::http2::Builder as ServerBuilder,
+    service::service_fn,
+};
 use bytes::Bytes;
 use http::{Request as HttpRequest, Response as HttpResponse, StatusCode};
 use http_body_util::{BodyExt, Full};
-use hyper::{body::Incoming, client::conn::http2::SendRequest, service::service_fn};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use std::sync::Arc;
 use tokio::{net::TcpStream, sync::Mutex};
@@ -13,8 +19,15 @@ pub struct ApiSyncH2HyperClient {
 
 impl ApiSyncH2HyperClient {
     pub async fn connect(stream: TcpStream) -> Result<Self, RuntimeError> {
-        let (sender, connection) = hyper::client::conn::http2::Builder::new(TokioExecutor::new())
-            .handshake(TokioIo::new(stream))
+        Self::connect_io(TokioIo::new(stream)).await
+    }
+
+    pub(super) async fn connect_io<I>(io: I) -> Result<Self, RuntimeError>
+    where
+        I: HyperRead + HyperWrite + Unpin + Send + 'static,
+    {
+        let (sender, connection) = ClientBuilder::new(TokioExecutor::new())
+            .handshake(io)
             .await
             .map_err(|error| RuntimeError::Http(format!("h2 client handshake failed: {error}")))?;
         tokio::spawn(async move {
@@ -56,6 +69,30 @@ where
     S: ApiSyncPublicService + Send + 'static,
     N: Fn() -> u64 + Clone + Send + Sync + 'static,
 {
+    serve_api_sync_h2_io(
+        TokioIo::new(stream),
+        request_handler,
+        admission,
+        public_service,
+        source_id,
+        now_fn,
+    )
+    .await
+}
+
+pub(super) async fn serve_api_sync_h2_io<S, N, I>(
+    io: I,
+    request_handler: ApiSyncH2RequestHandler,
+    admission: Arc<Mutex<AdmissionServer>>,
+    public_service: Arc<Mutex<S>>,
+    source_id: String,
+    now_fn: N,
+) -> Result<(), RuntimeError>
+where
+    S: ApiSyncPublicService + Send + 'static,
+    N: Fn() -> u64 + Clone + Send + Sync + 'static,
+    I: HyperRead + HyperWrite + Unpin + Send + 'static,
+{
     let service = service_fn(move |request| {
         let request_handler = request_handler.clone();
         let admission = Arc::clone(&admission);
@@ -79,8 +116,8 @@ where
             Ok::<_, std::convert::Infallible>(http_response_with_body(response))
         }
     });
-    hyper::server::conn::http2::Builder::new(TokioExecutor::new())
-        .serve_connection(TokioIo::new(stream), service)
+    ServerBuilder::new(TokioExecutor::new())
+        .serve_connection(io, service)
         .await
         .map_err(|error| RuntimeError::Http(format!("h2 server connection failed: {error}")))
 }

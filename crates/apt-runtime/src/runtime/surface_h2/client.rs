@@ -64,4 +64,21 @@ impl ApiSyncH2ClientDriver {
             .await?;
         handle_api_sync_ug4_response(&self.surface, &response_ug4, prepared_ug3.state)
     }
+
+    pub async fn establish_hidden_upgrade_with_surface_plan(
+        &self,
+        config: &ResolvedClientConfig,
+        persistent_state: &ClientPersistentState,
+        surface_plan: &crate::V2ClientSurfacePlan,
+        now_secs: u64,
+    ) -> Result<EstablishedSession, RuntimeError> {
+        let mut backend = ApiSyncH2HyperClient::connect_tls_with_surface_plan(surface_plan).await?;
+        self.establish_hidden_upgrade_with_hyper_client(
+            config,
+            persistent_state,
+            &mut backend,
+            now_secs,
+        )
+        .await
+    }
 }

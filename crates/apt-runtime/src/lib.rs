@@ -40,10 +40,12 @@ pub use quic::{
     load_certificate_der, D2_DEFAULT_PORT,
 };
 pub use runtime::{
+    build_api_sync_h2_tls_client_config, build_api_sync_h2_tls_server_config_for_surface_plan,
     handle_api_sync_ug2_response, handle_api_sync_ug4_response, prepare_api_sync_ug1_request,
     respond_api_sync_ug1_request, respond_api_sync_ug3_request, run_client, run_client_with_hooks,
-    run_server, serve_api_sync_h2_connection, ApiSyncH2ClientDriver, ApiSyncH2HyperClient,
-    ApiSyncH2RequestHandler, ApiSyncHandledRequest, ApiSyncPublicService, ClientRuntimeResult,
-    PreparedApiSyncUg1Request, PreparedApiSyncUg3Request, ServerRuntimeResult,
+    run_server, serve_api_sync_h2_connection, serve_api_sync_h2_tls_connection,
+    ApiSyncH2ClientDriver, ApiSyncH2HyperClient, ApiSyncH2RequestHandler, ApiSyncH2TlsClientConfig,
+    ApiSyncHandledRequest, ApiSyncPublicService, ClientRuntimeResult, PreparedApiSyncUg1Request,
+    PreparedApiSyncUg3Request, ServerRuntimeResult,
 };
 pub use status::{ClientStatus, RuntimeStatus, ServerStatus, SessionSummary};

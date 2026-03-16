@@ -9,7 +9,11 @@ mod server;
 #[cfg(test)]
 mod tests;
 
-pub use self::backend::{serve_api_sync_h2_connection, ApiSyncH2HyperClient};
+pub use self::backend::{
+    build_api_sync_h2_tls_client_config, build_api_sync_h2_tls_server_config_for_surface_plan,
+    serve_api_sync_h2_connection, serve_api_sync_h2_tls_connection, ApiSyncH2HyperClient,
+    ApiSyncH2TlsClientConfig,
+};
 pub use self::bridge::{
     handle_api_sync_ug2_response, handle_api_sync_ug4_response, prepare_api_sync_ug1_request,
     respond_api_sync_ug1_request, respond_api_sync_ug3_request, PreparedApiSyncUg1Request,

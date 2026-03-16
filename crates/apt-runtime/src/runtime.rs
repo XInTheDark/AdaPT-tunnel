@@ -67,10 +67,12 @@ mod transport;
 mod tests;
 
 pub use self::surface_h2::{
+    build_api_sync_h2_tls_client_config, build_api_sync_h2_tls_server_config_for_surface_plan,
     handle_api_sync_ug2_response, handle_api_sync_ug4_response, prepare_api_sync_ug1_request,
     respond_api_sync_ug1_request, respond_api_sync_ug3_request, serve_api_sync_h2_connection,
-    ApiSyncH2ClientDriver, ApiSyncH2HyperClient, ApiSyncH2RequestHandler, ApiSyncHandledRequest,
-    ApiSyncPublicService, PreparedApiSyncUg1Request, PreparedApiSyncUg3Request,
+    serve_api_sync_h2_tls_connection, ApiSyncH2ClientDriver, ApiSyncH2HyperClient,
+    ApiSyncH2RequestHandler, ApiSyncH2TlsClientConfig, ApiSyncHandledRequest, ApiSyncPublicService,
+    PreparedApiSyncUg1Request, PreparedApiSyncUg3Request,
 };
 
 use self::{d2::*, handshake::*, packets::*, pathio::*, scheduler::*, support::*, transport::*};
