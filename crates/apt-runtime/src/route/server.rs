@@ -170,8 +170,9 @@ fn ensure_linux_tunnel_route(
     interface_name: &str,
     subnet: IpNet,
 ) -> Result<(), RuntimeError> {
+    let ipv6 = matches!(subnet, IpNet::V6(_));
     let mut args = Vec::new();
-    if subnet.is_ipv6() {
+    if ipv6 {
         args.push("-6".to_string());
     }
     args.extend([
@@ -184,7 +185,7 @@ fn ensure_linux_tunnel_route(
     run_command("ip", &args)?;
 
     let mut cleanup = vec!["ip".to_string()];
-    if subnet.is_ipv6() {
+    if ipv6 {
         cleanup.push("-6".to_string());
     }
     cleanup.extend([
