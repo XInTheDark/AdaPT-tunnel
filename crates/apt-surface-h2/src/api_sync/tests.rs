@@ -1,4 +1,5 @@
 use super::*;
+use ::http::header;
 use apt_admission::{
     initiate_ug1_with_context, AdmissionConfig, AdmissionServer, AdmissionServerSecrets,
     ClientCredential, ClientSessionRequest, CredentialStore, EstablishedEnvelopeReply,
@@ -262,6 +263,24 @@ fn end_to_end_hidden_upgrade_round_trips_inside_api_sync_messages() {
     );
     assert!(client_session.masked_fallback_ticket.is_some());
     assert!(server_session.masked_fallback_ticket.is_some());
+}
+
+#[test]
+fn api_sync_http_codecs_round_trip_surface_messages() {
+    let surface = ApiSyncSurface::starter();
+    let request =
+        surface.build_state_push_request(TEST_AUTHORITY, "device-1", json!({"battery": 91}));
+    let response = surface.build_state_pull_response("device-1", json!({"battery": 91}));
+
+    let encoded_request = surface.encode_http_request(&request).unwrap();
+    let encoded_response = surface.encode_http_response(&response).unwrap();
+    let decoded_request = surface.decode_http_request(&encoded_request).unwrap();
+    let decoded_response = surface.decode_http_response(&encoded_response).unwrap();
+
+    assert_eq!(encoded_request.uri().path(), request.path);
+    assert_eq!(encoded_request.headers()[header::HOST], TEST_AUTHORITY);
+    assert_eq!(decoded_request, request);
+    assert_eq!(decoded_response, response);
 }
 
 #[test]

@@ -14,6 +14,7 @@ apt-origin.workspace = true
 apt-types.workspace = true
 base64.workspace = true
 bincode.workspace = true
+http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -25,6 +25,8 @@ pub enum RuntimeError {
     SurfaceH2(#[from] apt_surface_h2::SurfaceH2Error),
     #[error("quic transport failure: {0}")]
     Quic(String),
+    #[error("http transport failure: {0}")]
+    Http(String),
     #[error("invalid key material: {0}")]
     InvalidKeyMaterial(String),
     #[error("invalid configuration: {0}")]

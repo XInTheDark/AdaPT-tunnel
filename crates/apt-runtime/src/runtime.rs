@@ -68,9 +68,9 @@ mod tests;
 
 pub use self::surface_h2::{
     handle_api_sync_ug2_response, handle_api_sync_ug4_response, prepare_api_sync_ug1_request,
-    respond_api_sync_ug1_request, respond_api_sync_ug3_request, ApiSyncH2ClientDriver,
-    ApiSyncH2RequestHandler, ApiSyncHandledRequest, ApiSyncPublicService,
-    PreparedApiSyncUg1Request, PreparedApiSyncUg3Request,
+    respond_api_sync_ug1_request, respond_api_sync_ug3_request, serve_api_sync_h2_connection,
+    ApiSyncH2ClientDriver, ApiSyncH2HyperClient, ApiSyncH2RequestHandler, ApiSyncHandledRequest,
+    ApiSyncPublicService, PreparedApiSyncUg1Request, PreparedApiSyncUg3Request,
 };
 
 use self::{d2::*, handshake::*, packets::*, pathio::*, scheduler::*, support::*, transport::*};

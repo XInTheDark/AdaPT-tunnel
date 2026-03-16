@@ -7,6 +7,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
 use thiserror::Error;
 
+mod http;
 #[cfg(test)]
 mod tests;
 mod transport;
@@ -47,6 +48,8 @@ pub enum SurfaceH2Error {
     Serialization(#[from] Box<bincode::ErrorKind>),
     #[error("json slot error: {0}")]
     Json(&'static str),
+    #[error("http codec error: {0}")]
+    Http(String),
 }
 
 #[derive(Clone, Debug)]
